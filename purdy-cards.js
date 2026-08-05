@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.0.0";
+const PC_VERSION = "1.0.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -31,6 +31,21 @@ const PC_TOKENS = `
         --pc-bad: #ef6a6a;
         --pc-radius: 24px;
 `;
+
+/* Define an element only once. If a standalone build of the same card is still
+   registered as a dashboard resource, defining again would throw and take the
+   whole bundle down — so warn instead, and say how to fix it. */
+function pcDefine(name, cls) {
+  if (customElements.get(name)) {
+    console.warn(
+      `[purdy-cards] <${name}> is already defined by another resource. ` +
+      `Remove the standalone card's HACS entry and its dashboard resource — ` +
+      `until then the older card wins and compact/ribbon modes will not work.`
+    );
+    return;
+  }
+  customElements.define(name, cls);
+}
 
 /* Navigate to a dashboard path or open a Bubble Card hash popup. */
 function pcNavigate(node, path) {
@@ -2536,8 +2551,8 @@ class SleepPanelCard extends HTMLElement {
   }
 }
 
-customElements.define("climate-panel-card", ClimatePanelCard);
-customElements.define("sleep-panel-card", SleepPanelCard);
+pcDefine("climate-panel-card", ClimatePanelCard);
+pcDefine("sleep-panel-card", SleepPanelCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push(

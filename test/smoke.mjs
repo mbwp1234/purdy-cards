@@ -8,7 +8,7 @@ class FakeEl {
   addEventListener(){} dispatchEvent(){ return true; }
 }
 globalThis.HTMLElement = FakeEl;
-globalThis.customElements = { define:(n,c)=>{ defined[n]=c; }, get:()=>undefined };
+globalThis.customElements = { define:(n,c)=>{ defined[n]=c; }, get:(n)=>defined[n] };
 globalThis.window = { customCards: [], location:{ hash:'' } };
 globalThis.history = { pushState(){} };
 globalThis.document = { createElement:()=>({ style:{}, setAttribute(){}, appendChild(){} }) };
@@ -67,6 +67,16 @@ check('splitbar renders light 2h 40m', bar.includes('Light 2h 40m'));
 check('splitbar deep width 24.1%', bar.includes('width:24.1%'));
 s._num = () => null;
 check('splitbar empty when no data', s._splitBarHtml('night')==='');
+
+// double-define guard: a second load must warn, not throw
+let warned = '';
+const realWarn = console.warn;
+console.warn = (m) => { warned += m; };
+let threw = false;
+try { eval(src); } catch (e) { threw = true; }
+console.warn = realWarn;
+check('second load does not throw', !threw);
+check('second load warns about duplicate', /already defined by another resource/.test(warned));
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);
