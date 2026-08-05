@@ -6,6 +6,11 @@ One bundle, one HACS entry, one version number — a pair of custom Lovelace car
 |------|------------|
 | `climate-panel-card` | Full climate panel: weather strip, temperature ring with goal + hold steppers, trend graph, zone switcher, status chips, room rows. Plus a **`compact`** mode for a home screen. |
 | `sleep-panel-card` | Full infant sleep panel: composition ring with a 7-day goal marker, vitals with baseline deltas, hypnogram, recap rows. Plus a **`ribbon`** mode for a home screen. |
+| `purdy-header-card` | Greeting, date, time, weather and occupancy. |
+| `purdy-attention-card` | Rule-driven fault list. Renders nothing at all when every rule is clear. |
+| `purdy-people-card` | Presence with battery and step counts, side by side. |
+| `purdy-rooms-card` | Scrolling strip of room temperatures and humidity. |
+| `purdy-quick-card` | Grid of state-coloured action tiles. |
 
 No build step, no dependencies — plain web components.
 
@@ -111,3 +116,101 @@ Runs the bundle against DOM stubs and asserts both elements register, the shared
 | `--pc-radius` | `24px` |
 
 Per-card overrides still work (`--cpc-heat-override`, `--spc-deep-override`, and so on) and take precedence over the shared value.
+
+## Home-screen cards
+
+Five small cards that make a phone dashboard readable at a glance. They share `PC_TOKENS` with the two panels, so the whole screen reads as one surface rather than a stack of unrelated widgets.
+
+### `purdy-header-card`
+
+```yaml
+type: custom:purdy-header-card
+name: Alex
+weather: weather.home
+occupancy: input_select.house_occupancy
+```
+
+Picks the greeting from the hour and re-renders every 30s so the clock stays honest.
+
+### `purdy-attention-card`
+
+The card is a rule list. It renders **nothing** when no rule matches — no empty card, no header — so it costs zero height on a healthy day.
+
+```yaml
+type: custom:purdy-attention-card
+rules:
+  - entity: vacuum.litter_box
+    state: error
+    severity: critical
+    title: Litter box
+    detail: Error — needs reset
+  - entity: sensor.waste_drawer
+    above: 85
+    severity: warn
+    title: Waste drawer
+  - match: battery_plus_low$
+    state: "on"
+    severity: info
+    title: low batteries
+    strip: Battery low
+```
+
+Each rule takes one of `state`, `state_not`, `above` or `below`. `severity` is `critical` / `warn` / `info` and drives the dot colour; the card's left edge takes the worst severity present.
+
+A rule with `match` instead of `entity` is a **group rule**: it regex-matches entity IDs and collapses every hit into one row ("3 low batteries — …"). `strip` removes boilerplate from each friendly name. This is how battery warnings stay one line instead of eleven.
+
+Rows with an `entity` open more-info on tap.
+
+### `purdy-people-card`
+
+```yaml
+type: custom:purdy-people-card
+people:
+  - entity: person.alex
+    battery: sensor.alex_phone_battery_level
+    steps: sensor.alex_phone_steps
+  - entity: person.sam
+    battery: sensor.sam_phone_battery_level
+    steps: sensor.sam_phone_steps
+```
+
+Battery goes amber below 20%.
+
+### `purdy-rooms-card`
+
+```yaml
+type: custom:purdy-rooms-card
+rooms:
+  - name: Outside
+    temp: sensor.outside_temperature
+    humidity: sensor.outside_humidity
+    accent: true
+  - name: Living
+    temp: sensor.living_room_temperature
+    humidity: sensor.living_room_humidity
+```
+
+`accent: true` tints a room — useful for marking the outdoor reading everything else is judged against.
+
+### `purdy-quick-card`
+
+```yaml
+type: custom:purdy-quick-card
+columns: 3
+tiles:
+  - entity: light.living_room
+    name: Lights
+    tap_action: { action: toggle }
+  - entity: vacuum.litter_box
+    name: Litter
+    icon: mdi:cat
+    alert_when: [error]
+  - entity: script.nap_mode
+    name: Nap mode
+    icon: mdi:weather-night
+    tap_action:
+      action: perform-action
+      perform_action: script.nap_mode
+```
+
+Tiles colour themselves from state: `on` / `playing` / `cleaning` read as active by default, `on_when` overrides that list, and `alert_when` turns the tile red. `value_text` overrides the second line. `tap_action` supports `toggle`, `navigate`, `perform-action` and `more-info`.

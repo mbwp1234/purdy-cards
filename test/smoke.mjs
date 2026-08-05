@@ -3,7 +3,7 @@ const src = fs.readFileSync(new URL('../purdy-cards.js', import.meta.url),'utf8'
 
 const defined = {};
 class FakeEl {
-  constructor(){ this.shadowRoot=null; this._listeners={}; }
+  constructor(){ this.shadowRoot=null; this._listeners={}; this.style={}; }
   attachShadow(){ this.shadowRoot = { innerHTML:'', querySelector:()=>null, querySelectorAll:()=>[] }; return this.shadowRoot; }
   addEventListener(){} dispatchEvent(){ return true; }
 }
@@ -25,7 +25,7 @@ const check = (label, cond) => { console.log((cond?'  PASS  ':'  FAIL  ')+label)
 
 check('climate-panel-card defined', names.includes('climate-panel-card'));
 check('sleep-panel-card defined', names.includes('sleep-panel-card'));
-check('two entries in customCards', window.customCards.length===2);
+check('both panels registered in customCards', ['climate-panel-card','sleep-panel-card'].every(t => window.customCards.some(c => c.type===t)));
 
 const CPC = defined['climate-panel-card'];
 const SPC = defined['sleep-panel-card'];
@@ -67,6 +67,94 @@ check('splitbar renders light 2h 40m', bar.includes('Light 2h 40m'));
 check('splitbar deep width 24.1%', bar.includes('width:24.1%'));
 s._num = () => null;
 check('splitbar empty when no data', s._splitBarHtml('night')==='');
+
+
+// ---- home-screen cards ----
+for (const n of ['purdy-header-card','purdy-attention-card','purdy-people-card','purdy-rooms-card','purdy-quick-card'])
+  check(`${n} defined`, names.includes(n));
+check('seven entries in customCards', window.customCards.length===7);
+
+const H = defined['purdy-header-card'];
+const A = defined['purdy-attention-card'];
+const P = defined['purdy-people-card'];
+const R = defined['purdy-rooms-card'];
+const Q = defined['purdy-quick-card'];
+
+const hass = { states: {
+  'weather.home': { state:'rainy', attributes:{ temperature:73 } },
+  'input_select.house_occupancy': { state:'Home', attributes:{} },
+  'binary_sensor.parity': { state:'off', attributes:{ friendly_name:'Parity' } },
+  'binary_sensor.flash': { state:'on', attributes:{ friendly_name:'Flash' } },
+  'vacuum.litter': { state:'error', attributes:{ friendly_name:'Litter' } },
+  'sensor.drawer': { state:'92', attributes:{} },
+  'binary_sensor.a_battery_plus_low': { state:'on', attributes:{ friendly_name:'Hallway Battery low' } },
+  'binary_sensor.b_battery_plus_low': { state:'off', attributes:{ friendly_name:'Office Battery low' } },
+  'person.x': { state:'home', attributes:{ friendly_name:'Alex' } },
+  'sensor.x_batt': { state:'55', attributes:{} },
+  'sensor.x_steps': { state:'4903', attributes:{} },
+  'sensor.room_t': { state:'73.94', attributes:{} },
+  'sensor.room_h': { state:'48.6', attributes:{} },
+  'light.lr': { state:'on', attributes:{ friendly_name:'Lights' } },
+}, callService(){ this._called = true; } };
+
+// header
+const h = new H(); h.setConfig({ name:'Alex', weather:'weather.home', occupancy:'input_select.house_occupancy' });
+h.hass = hass;
+check('header renders greeting', /Good (morning|afternoon|evening), Alex/.test(h.shadowRoot.innerHTML));
+check('header renders weather temp', h.shadowRoot.innerHTML.includes('73°'));
+check('header renders occupancy', h.shadowRoot.innerHTML.includes('Home'));
+h.disconnectedCallback();
+
+// attention
+const a = new A();
+a.setConfig({ rules: [
+  { entity:'vacuum.litter', state:'error', severity:'critical', title:'Litter box', detail:'needs reset' },
+  { entity:'binary_sensor.parity', state:'off', severity:'critical', title:'Parity' },
+  { entity:'binary_sensor.flash', state:'off', severity:'critical', title:'Flash' },
+  { entity:'sensor.drawer', above:85, severity:'warn', title:'Waste drawer' },
+  { match:'battery_plus_low$', state:'on', severity:'info', title:'low batteries', strip:'Battery low' },
+]});
+a.hass = hass;
+const rows = a._rows();
+check('attention picks matching rules only', rows.length===4);
+check('attention skips non-matching (flash is on)', !rows.some(r=>r.title==='Flash'));
+check('attention numeric above rule fires', rows.some(r=>r.title==='Waste drawer'));
+check('attention battery group counts only on', rows.some(r=>r.title==='1 low batteries'));
+check('attention strips battery suffix', rows.some(r=>r.detail==='Hallway'));
+check('attention header shows count', a.shadowRoot.innerHTML.includes('· 4'));
+check('attention escalates edge to bad', a.shadowRoot.innerHTML.includes('--pc-bad'));
+
+const a2 = new A();
+a2.setConfig({ rules:[{ entity:'binary_sensor.flash', state:'off', title:'Flash' }] });
+a2.hass = hass;
+check('attention hides itself when clean', a2.shadowRoot.innerHTML==='' && a2.style.display==='none');
+
+// people
+const p = new P();
+p.setConfig({ people:[{ entity:'person.x', battery:'sensor.x_batt', steps:'sensor.x_steps' }] });
+p.hass = hass;
+check('people shows name', p.shadowRoot.innerHTML.includes('Alex'));
+check('people shows Home', p.shadowRoot.innerHTML.includes('>Home<'));
+check('people formats steps with separator', p.shadowRoot.innerHTML.includes('4,903'));
+check('people shows battery pct', p.shadowRoot.innerHTML.includes('55%'));
+
+// rooms
+const r = new R();
+r.setConfig({ rooms:[{ name:'Living', temp:'sensor.room_t', humidity:'sensor.room_h' }] });
+r.hass = hass;
+check('rooms shows temp to 1dp', r.shadowRoot.innerHTML.includes('73.9°'));
+check('rooms shows humidity', r.shadowRoot.innerHTML.includes('48.6%'));
+
+// quick
+const q = new Q();
+q.setConfig({ tiles:[
+  { entity:'light.lr', name:'Lights' },
+  { entity:'vacuum.litter', name:'Litter', alert_when:['error'] },
+]});
+q.hass = hass;
+check('quick marks on-state tile', q.shadowRoot.innerHTML.includes('class="t on'));
+check('quick marks alert tile', q.shadowRoot.innerHTML.includes('class="t alert'));
+check('quick renders 3 columns by default', q.shadowRoot.innerHTML.includes('repeat(3, 1fr)'));
 
 // double-define guard: a second load must warn, not throw
 let warned = '';

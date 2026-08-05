@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.0.1";
+const PC_VERSION = "1.1.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -2551,8 +2551,524 @@ class SleepPanelCard extends HTMLElement {
   }
 }
 
+/* ============================================================================
+ * Home-screen cards
+ *
+ * Five small elements that replace the built-in markdown/tile/grid cards on
+ * the phone dashboard. They share PC_TOKENS with the two panels above, so the
+ * whole home screen reads as one surface.
+ * ========================================================================== */
+
+/* Primitives every home-screen card uses. Kept in one string so the chip,
+   label and numeral treatments cannot drift between cards. */
+const PC_BASE = `
+  :host {
+    ${PC_TOKENS}
+    display: block;
+    font-family: var(--paper-font-body1_-_font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+    color: var(--pc-text);
+  }
+  * { box-sizing: border-box; }
+  .card {
+    background: var(--pc-panel);
+    border-radius: var(--pc-radius);
+    padding: 14px 16px;
+  }
+  .lbl {
+    font-size: 10px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--pc-muted);
+    font-weight: 500;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .spread { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .grow { flex: 1; min-width: 0; }
+  .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ha-icon { --mdc-icon-size: 21px; flex: 0 0 auto; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+    background: var(--pc-chip); color: var(--pc-muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .chip ha-icon { --mdc-icon-size: 14px; }
+  .tappable { cursor: pointer; }
+  .tappable:active { background: var(--pc-panel-2); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+`;
+
+/* Read a numeric state, or null when it is missing/non-numeric. */
+function pcNum(hass, id) {
+  if (!id || !hass || !hass.states[id]) return null;
+  const v = parseFloat(hass.states[id].state);
+  return isNaN(v) ? null : v;
+}
+
+/* Raw state string, or "" when the entity is absent. */
+function pcState(hass, id) {
+  if (!id || !hass || !hass.states[id]) return "";
+  return hass.states[id].state;
+}
+
+function pcName(hass, id, fallback) {
+  if (fallback) return fallback;
+  if (!id || !hass || !hass.states[id]) return id || "";
+  return hass.states[id].attributes.friendly_name || id;
+}
+
+function pcMoreInfo(node, entityId) {
+  if (!entityId) return;
+  const ev = new Event("hass-more-info", { bubbles: true, composed: true });
+  ev.detail = { entityId };
+  node.dispatchEvent(ev);
+}
+
+/* Run a Lovelace-style action object. Supports the subset the home screen
+   needs: navigate, toggle, perform-action, more-info. */
+function pcAction(node, hass, action, fallbackEntity) {
+  const a = action || { action: "more-info" };
+  if (a.action === "none") return;
+  if (a.action === "navigate") return pcNavigate(node, a.navigation_path);
+  if (a.action === "toggle" && fallbackEntity) {
+    return hass.callService("homeassistant", "toggle", { entity_id: fallbackEntity });
+  }
+  if (a.action === "perform-action" || a.action === "call-service") {
+    const svc = a.perform_action || a.service;
+    if (!svc || svc.indexOf(".") < 0) return;
+    const parts = svc.split(".");
+    return hass.callService(parts[0], parts[1], a.data || {}, a.target || undefined);
+  }
+  pcMoreInfo(node, a.entity || fallbackEntity);
+}
+
+/* Shared plumbing: re-render only when a watched entity actually changed. */
+class PcBaseCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass = null;
+    this._config = null;
+    this._watched = [];
+    this._last = null;
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._config) return;
+    const sig = this._watched
+      .map((id) => (hass.states[id] ? hass.states[id].state : "~"))
+      .join("|");
+    if (sig === this._last) return;
+    this._last = sig;
+    this._render();
+  }
+
+  getCardSize() {
+    return 2;
+  }
+}
+
+/* ---------------------------------------------------------------- header --*/
+
+class PurdyHeaderCard extends PcBaseCard {
+  setConfig(config) {
+    this._config = { name: "", ...config };
+    const c = this._config;
+    this._watched = [c.weather, c.occupancy].filter(Boolean);
+    this._last = null;
+    if (this._clock) clearInterval(this._clock);
+    /* The clock is the one thing no entity change drives. */
+    this._clock = setInterval(() => this._render(), 30000);
+  }
+
+  disconnectedCallback() {
+    if (this._clock) clearInterval(this._clock);
+  }
+
+  _greeting(h) {
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    const c = this._config;
+    const now = new Date();
+    const wState = pcState(this._hass, c.weather);
+    const wTemp = c.weather && this._hass.states[c.weather]
+      ? this._hass.states[c.weather].attributes.temperature
+      : null;
+    const occ = pcState(this._hass, c.occupancy);
+    const icons = {
+      rainy: "mdi:weather-rainy", pouring: "mdi:weather-pouring",
+      sunny: "mdi:weather-sunny", clear: "mdi:weather-night",
+      "clear-night": "mdi:weather-night", cloudy: "mdi:weather-cloudy",
+      partlycloudy: "mdi:weather-partly-cloudy", snowy: "mdi:weather-snowy",
+      fog: "mdi:weather-fog", windy: "mdi:weather-windy",
+      lightning: "mdi:weather-lightning", hail: "mdi:weather-hail",
+    };
+    const time = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const date = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+    const sub = [date, time, occ].filter(Boolean).join(" · ");
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${PC_BASE}
+        .wrap { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 2px 6px 0; }
+        h2 { font-size: 25px; font-weight: 650; letter-spacing: -0.025em; margin: 0; line-height: 1.1; }
+        .sub { font-size: 12.5px; color: var(--pc-muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+        .wx { display: flex; align-items: center; gap: 7px; color: var(--pc-cool); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .wx ha-icon { --mdc-icon-size: 22px; }
+      </style>
+      <div class="wrap">
+        <div>
+          <h2>${this._greeting(now.getHours())}${c.name ? ", " + c.name : ""}</h2>
+          <div class="sub">${sub}</div>
+        </div>
+        ${wTemp == null ? "" : `
+          <div class="wx">
+            <ha-icon icon="${icons[wState] || "mdi:weather-partly-cloudy"}"></ha-icon>
+            ${Math.round(wTemp)}°
+          </div>`}
+      </div>
+    `;
+  }
+
+  getCardSize() {
+    return 1;
+  }
+}
+
+/* ------------------------------------------------------------- attention --*/
+
+class PurdyAttentionCard extends PcBaseCard {
+  setConfig(config) {
+    if (!config || !Array.isArray(config.rules)) {
+      throw new Error("purdy-attention-card: 'rules' (a list) is required");
+    }
+    this._config = { title: "Needs attention", ...config };
+    const ids = [];
+    (config.rules || []).forEach((r) => {
+      if (r.entity) ids.push(r.entity);
+    });
+    this._watched = ids;
+    this._last = null;
+    /* A battery-group rule watches a whole domain, so signature-based
+       skipping cannot see it. Track the matching entities explicitly. */
+    this._batteryRule = (config.rules || []).find((r) => r.match);
+  }
+
+  set hass(hass) {
+    if (this._batteryRule && this._config) {
+      const pat = new RegExp(this._batteryRule.match);
+      this._watched = this._watched
+        .filter((id) => !pat.test(id))
+        .concat(Object.keys(hass.states).filter((id) => pat.test(id)));
+    }
+    super.hass = hass;
+  }
+
+  _matches(r) {
+    const s = pcState(this._hass, r.entity);
+    if (r.state !== undefined) return s === r.state;
+    if (r.state_not !== undefined) return s !== r.state_not && s !== "";
+    const n = pcNum(this._hass, r.entity);
+    if (r.above !== undefined) return n != null && n > r.above;
+    if (r.below !== undefined) return n != null && n < r.below;
+    return false;
+  }
+
+  _rows() {
+    const out = [];
+    (this._config.rules || []).forEach((r) => {
+      if (r.match) {
+        const pat = new RegExp(r.match);
+        const hits = Object.keys(this._hass.states)
+          .filter((id) => pat.test(id) && this._hass.states[id].state === (r.state || "on"))
+          .map((id) => (this._hass.states[id].attributes.friendly_name || id)
+            .replace(r.strip || "", "").trim());
+        if (hits.length) {
+          out.push({
+            severity: r.severity || "info",
+            title: hits.length + " " + (r.title || "items"),
+            detail: hits.join(" · "),
+            entity: null,
+          });
+        }
+        return;
+      }
+      if (this._matches(r)) {
+        out.push({
+          severity: r.severity || "warn",
+          title: r.title || pcName(this._hass, r.entity),
+          detail: r.detail || "",
+          entity: r.entity,
+        });
+      }
+    });
+    return out;
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    const rows = this._rows();
+    if (!rows.length) {
+      this.shadowRoot.innerHTML = "";
+      this.style.display = "none";
+      return;
+    }
+    this.style.display = "block";
+    const worst = rows.some((r) => r.severity === "critical") ? "critical" : "warn";
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${PC_BASE}
+        .card { border-left: 3px solid var(--edge); padding-left: 13px; }
+        .hd { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--edge); }
+        .hd .lbl { color: var(--edge); }
+        .r { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--pc-line); }
+        .r:first-of-type { border-top: none; }
+        .r .t { font-size: 13.5px; font-weight: 600; }
+        .r .d { font-size: 12px; color: var(--pc-muted); }
+        .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+        .dot.critical { background: var(--pc-bad); }
+        .dot.warn { background: var(--pc-warn); }
+        .dot.info { background: var(--pc-muted); }
+        .chev { color: var(--pc-muted); --mdc-icon-size: 16px; }
+      </style>
+      <div class="card" style="--edge: ${worst === "critical" ? "var(--pc-bad)" : "var(--pc-warn)"}">
+        <div class="hd">
+          <ha-icon icon="mdi:alert-circle-outline" style="--mdc-icon-size:16px"></ha-icon>
+          <span class="lbl">${this._config.title} · ${rows.length}</span>
+        </div>
+        ${rows.map((r, i) => `
+          <div class="r ${r.entity ? "tappable" : ""}" data-idx="${i}">
+            <span class="dot ${r.severity}"></span>
+            <div class="grow">
+              <div class="t">${r.title}</div>
+              ${r.detail ? `<div class="d">${r.detail}</div>` : ""}
+            </div>
+            ${r.entity ? `<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>` : ""}
+          </div>`).join("")}
+      </div>
+    `;
+
+    this._rowData = rows;
+    this.shadowRoot.querySelectorAll("[data-idx]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const r = this._rowData[parseInt(el.dataset.idx, 10)];
+        if (r && r.entity) pcMoreInfo(this, r.entity);
+      });
+    });
+  }
+
+  getCardSize() {
+    return 3;
+  }
+}
+
+/* ---------------------------------------------------------------- people --*/
+
+class PurdyPeopleCard extends PcBaseCard {
+  setConfig(config) {
+    if (!config || !Array.isArray(config.people)) {
+      throw new Error("purdy-people-card: 'people' (a list) is required");
+    }
+    this._config = config;
+    const ids = [];
+    config.people.forEach((p) => {
+      [p.entity, p.battery, p.steps].forEach((x) => x && ids.push(x));
+    });
+    this._watched = ids;
+    this._last = null;
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    const fmt = (n) => (n == null ? "—" : n.toLocaleString());
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${PC_BASE}
+        .wrap { display: flex; gap: 9px; }
+        .p { flex: 1; background: var(--pc-panel); border-radius: 20px; padding: 12px 13px; min-width: 0; }
+        .nm { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
+        .st { font-size: 11.5px; font-weight: 600; }
+        .st.home { color: var(--pc-good); }
+        .st.away { color: var(--pc-muted); }
+        .foot { display: flex; gap: 6px; margin-top: 10px; }
+        .mini {
+          flex: 1; background: var(--pc-panel-2); border-radius: 10px; padding: 4px 7px;
+          font-size: 11px; font-variant-numeric: tabular-nums; color: var(--pc-muted);
+          display: flex; align-items: center; gap: 4px; justify-content: center;
+        }
+        .mini ha-icon { --mdc-icon-size: 14px; }
+        .mini.low { color: var(--pc-warn); }
+      </style>
+      <div class="wrap">
+        ${this._config.people.map((p) => {
+          const state = pcState(this._hass, p.entity);
+          const home = state === "home";
+          const batt = pcNum(this._hass, p.battery);
+          const steps = pcNum(this._hass, p.steps);
+          return `
+            <div class="p tappable" data-entity="${p.entity}">
+              <div class="nm trunc">${pcName(this._hass, p.entity, p.name)}</div>
+              <div class="st ${home ? "home" : "away"}">${home ? "Home" : (state ? state.replace(/_/g, " ") : "Unknown")}</div>
+              <div class="foot">
+                ${p.battery ? `<span class="mini ${batt != null && batt < 20 ? "low" : ""}">
+                  <ha-icon icon="mdi:battery-outline"></ha-icon>${batt == null ? "—" : Math.round(batt) + "%"}
+                </span>` : ""}
+                ${p.steps ? `<span class="mini">
+                  <ha-icon icon="mdi:walk"></ha-icon>${fmt(steps == null ? null : Math.round(steps))}
+                </span>` : ""}
+              </div>
+            </div>`;
+        }).join("")}
+      </div>
+    `;
+
+    this.shadowRoot.querySelectorAll("[data-entity]").forEach((el) => {
+      el.addEventListener("click", () => pcMoreInfo(this, el.dataset.entity));
+    });
+  }
+}
+
+/* ----------------------------------------------------------------- rooms --*/
+
+class PurdyRoomsCard extends PcBaseCard {
+  setConfig(config) {
+    if (!config || !Array.isArray(config.rooms)) {
+      throw new Error("purdy-rooms-card: 'rooms' (a list) is required");
+    }
+    this._config = config;
+    const ids = [];
+    config.rooms.forEach((r) => {
+      [r.temp, r.humidity].forEach((x) => x && ids.push(x));
+    });
+    this._watched = ids;
+    this._last = null;
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${PC_BASE}
+        .strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+        .strip::-webkit-scrollbar { display: none; }
+        .rm {
+          flex: 0 0 auto; min-width: 86px;
+          background: var(--pc-panel); border-radius: 18px; padding: 11px 12px;
+        }
+        .rm.accent { background: rgba(77, 208, 225, 0.10); }
+        .rm .nm { font-size: 10.5px; color: var(--pc-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+        .rm b { display: block; font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 4px; letter-spacing: -0.02em; }
+        .rm .hum { font-size: 10.5px; color: var(--pc-muted); font-variant-numeric: tabular-nums; }
+      </style>
+      <div class="strip">
+        ${this._config.rooms.map((r) => {
+          const t = pcNum(this._hass, r.temp);
+          const h = pcNum(this._hass, r.humidity);
+          return `
+            <div class="rm ${r.accent ? "accent" : ""} tappable" data-entity="${r.temp}">
+              <span class="nm">${r.name || pcName(this._hass, r.temp)}</span>
+              <b>${t == null ? "—" : t.toFixed(1) + "°"}</b>
+              <span class="hum">${h == null ? "" : h.toFixed(1) + "%"}</span>
+            </div>`;
+        }).join("")}
+      </div>
+    `;
+
+    this.shadowRoot.querySelectorAll("[data-entity]").forEach((el) => {
+      el.addEventListener("click", () => pcMoreInfo(this, el.dataset.entity));
+    });
+  }
+}
+
+/* ----------------------------------------------------------------- quick --*/
+
+class PurdyQuickCard extends PcBaseCard {
+  setConfig(config) {
+    if (!config || !Array.isArray(config.tiles)) {
+      throw new Error("purdy-quick-card: 'tiles' (a list) is required");
+    }
+    this._config = { columns: 3, ...config };
+    this._watched = config.tiles.map((t) => t.entity).filter(Boolean);
+    this._last = null;
+  }
+
+  /* on → accent, alert → red, otherwise neutral. */
+  _tone(t) {
+    const s = pcState(this._hass, t.entity);
+    if (t.alert_when && t.alert_when.indexOf(s) >= 0) return "alert";
+    if (t.on_when) return t.on_when.indexOf(s) >= 0 ? "on" : "";
+    return s === "on" || s === "playing" || s === "cleaning" ? "on" : "";
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${PC_BASE}
+        .grid { display: grid; grid-template-columns: repeat(${this._config.columns}, 1fr); gap: 9px; }
+        .t {
+          background: var(--pc-panel); border-radius: 20px; padding: 12px 11px;
+          display: flex; flex-direction: column; gap: 7px; min-height: 84px;
+        }
+        .t ha-icon { --mdc-icon-size: 26px; color: var(--pc-muted); }
+        .t .tl { font-size: 12px; font-weight: 600; letter-spacing: -0.01em; }
+        .t .tv { font-size: 11px; color: var(--pc-muted); font-variant-numeric: tabular-nums; }
+        .t.on { background: rgba(242, 193, 78, 0.13); }
+        .t.on ha-icon, .t.on .tl { color: var(--pc-warn); }
+        .t.alert { background: rgba(239, 106, 106, 0.13); }
+        .t.alert ha-icon, .t.alert .tl { color: var(--pc-bad); }
+      </style>
+      <div class="grid">
+        ${this._config.tiles.map((t, i) => {
+          const st = this._hass.states[t.entity];
+          const raw = st ? st.state : "";
+          const unit = st && st.attributes.unit_of_measurement ? " " + st.attributes.unit_of_measurement : "";
+          const value = t.value_text || (raw ? raw.replace(/_/g, " ") + unit : "—");
+          return `
+            <div class="t ${this._tone(t)} tappable" data-idx="${i}">
+              <ha-icon icon="${t.icon || (st && st.attributes.icon) || "mdi:circle-outline"}"></ha-icon>
+              <div>
+                <div class="tl trunc">${pcName(this._hass, t.entity, t.name)}</div>
+                <div class="tv trunc">${value}</div>
+              </div>
+            </div>`;
+        }).join("")}
+      </div>
+    `;
+
+    this.shadowRoot.querySelectorAll("[data-idx]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const t = this._config.tiles[parseInt(el.dataset.idx, 10)];
+        if (t) pcAction(this, this._hass, t.tap_action, t.entity);
+      });
+    });
+  }
+
+  getCardSize() {
+    return 3;
+  }
+}
+
+
 pcDefine("climate-panel-card", ClimatePanelCard);
 pcDefine("sleep-panel-card", SleepPanelCard);
+pcDefine("purdy-header-card", PurdyHeaderCard);
+pcDefine("purdy-attention-card", PurdyAttentionCard);
+pcDefine("purdy-people-card", PurdyPeopleCard);
+pcDefine("purdy-rooms-card", PurdyRoomsCard);
+pcDefine("purdy-quick-card", PurdyQuickCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -2569,7 +3085,12 @@ window.customCards.push(
     description: "Cohesive infant sleep panel: composition ring with 7-day goal, vitals with baseline deltas, hypnogram, and recap rows. Set ribbon: true for the home-screen summary.",
     preview: false,
     documentationURL: "https://github.com/mbwp1234/purdy-cards",
-  }
+  },
+  { type: "purdy-header-card", name: "Purdy Header Card", description: "Greeting, date, weather and occupancy.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-attention-card", name: "Purdy Attention Card", description: "Rule-driven fault list. Renders nothing when the house is clean.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-people-card", name: "Purdy People Card", description: "Presence with battery and step counts, side by side.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-rooms-card", name: "Purdy Rooms Card", description: "Scrolling strip of room temperatures and humidity.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-quick-card", name: "Purdy Quick Card", description: "Grid of state-coloured action tiles.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
 );
 
 console.info(
