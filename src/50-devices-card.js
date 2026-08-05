@@ -247,7 +247,9 @@ class PurdyDevicesCard extends PcBaseCard {
     this.shadowRoot.innerHTML = `
       <style>
         ${PC_BASE}
-        .hdr { display: flex; align-items: center; gap: 11px; padding: 2px 6px 10px; }
+        .hdr { display: flex; align-items: center; gap: 11px; padding: 14px 16px; margin-bottom: 9px;
+               border-radius: var(--pc-radius); background: var(--pc-panel);
+               background-image: linear-gradient(180deg, var(--pc-tint), transparent 110px); }
         .hdr b { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
         .chip.bad { background: rgba(239,106,106,0.15); color: var(--pc-bad); }
         .chip.good { background: rgba(129,201,149,0.15); color: var(--pc-good); }

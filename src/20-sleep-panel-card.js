@@ -346,6 +346,15 @@ class SleepPanelCard extends HTMLElement {
 
   /* ---------------- sections ---------------- */
 
+  /* The configured person's own photo when there is one, falling back to the
+     generic silhouette. */
+  _avatarInner() {
+    const st = this._config.person ? this._st(this._config.person) : null;
+    const pic = st && st.attributes && st.attributes.entity_picture;
+    if (pic) return `<img src="${this._esc(pic)}" alt="" />`;
+    return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm0 10c4.4 0 8 2.2 8 5v3H4v-3c0-2.8 3.6-5 8-5Z"/></svg>`;
+  }
+
   _headerHtml(mode) {
     const c = this._config;
     const stateRaw = (this._st(c.sleep_state) || {}).state;
@@ -371,7 +380,7 @@ class SleepPanelCard extends HTMLElement {
     return `
       <div class="head">
         <div class="avatar ${mode === "recap" ? "avatar-off" : ""}" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm0 10c4.4 0 8 2.2 8 5v3H4v-3c0-2.8 3.6-5 8-5Z"/></svg>
+          ${this._avatarInner()}
         </div>
         <div class="id">
           <span class="nm">${this._esc(c.name)}</span>
@@ -873,11 +882,13 @@ class SleepPanelCard extends HTMLElement {
       .head { display: flex; align-items: center; gap: 10px; }
       .avatar {
         width: 40px; height: 40px; border-radius: 999px; flex: none;
-        display: grid; place-items: center;
+        display: grid; place-items: center; overflow: hidden;
         background: rgba(170, 120, 255, 0.16); color: var(--spc-deep);
       }
       .avatar-off { background: var(--spc-chip); color: var(--spc-muted); }
       .avatar svg { width: 22px; height: 22px; }
+      .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .avatar-off img { filter: grayscale(1); opacity: 0.65; }
       .id { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
       .nm { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
       .sub {

@@ -21,6 +21,18 @@ const PC_BASE = `
     border-radius: var(--pc-radius);
     padding: 14px 16px;
   }
+  /* Opt-in, because a card that already carries a severity colour should not
+     also be washed cool. */
+  .card.tint, .tint {
+    background-image: linear-gradient(180deg, var(--pc-tint), transparent 130px);
+  }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--pc-panel-2); color: var(--pc-muted);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; overflow: hidden;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .lbl {
     font-size: 10px;
     letter-spacing: 0.13em;
@@ -687,7 +699,7 @@ class PurdyNotificationsCard extends PcBaseCard {
         .chip.critical { background: rgba(239, 106, 106, 0.15); color: var(--pc-bad); }
         .chip.warn { background: rgba(242, 193, 78, 0.14); color: var(--pc-warn); }
       </style>
-      <div class="card">
+      <div class="card tint">
         <div class="hd">
           <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
           <span class="lbl">${this._config.title}</span>
@@ -767,6 +779,7 @@ class PurdyPeopleCard extends PcBaseCard {
         ${PC_BASE}
         .wrap { display: flex; gap: 9px; }
         .p { flex: 1; background: var(--pc-panel); border-radius: 20px; padding: 12px 13px; min-width: 0; }
+        .who { display: flex; align-items: center; gap: 9px; min-width: 0; }
         .nm { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
         .st { font-size: 11.5px; font-weight: 600; }
         .st.home { color: var(--pc-good); }
@@ -786,10 +799,20 @@ class PurdyPeopleCard extends PcBaseCard {
           const home = state === "home";
           const batt = pcNum(this._hass, p.battery);
           const steps = pcNum(this._hass, p.steps);
+          const nm = pcName(this._hass, p.entity, p.name);
+          const st = this._hass.states[p.entity];
+          const pic = st && st.attributes.entity_picture;
           return `
-            <div class="p tappable" data-entity="${p.entity}">
-              <div class="nm trunc">${pcName(this._hass, p.entity, p.name)}</div>
-              <div class="st ${home ? "home" : "away"}">${home ? "Home" : (state ? state.replace(/_/g, " ") : "Unknown")}</div>
+            <div class="p tint tappable" data-entity="${p.entity}">
+              <div class="who">
+                <div class="avatar">${
+                  pic ? `<img src="${pic}" alt="" />` : (nm || "?").charAt(0).toUpperCase()
+                }</div>
+                <div class="grow">
+                  <div class="nm trunc">${nm}</div>
+                  <div class="st ${home ? "home" : "away"}">${home ? "Home" : (state ? state.replace(/_/g, " ") : "Unknown")}</div>
+                </div>
+              </div>
               <div class="foot">
                 ${p.battery ? `<span class="mini ${batt != null && batt < 20 ? "low" : ""}">
                   <ha-icon icon="mdi:battery-outline"></ha-icon>${batt == null ? "—" : Math.round(batt) + "%"}

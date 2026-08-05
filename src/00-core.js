@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.7.2";
+const PC_VERSION = "1.8.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -30,6 +30,9 @@ const PC_TOKENS = `
         --pc-warn: #f2c14e;
         --pc-bad: #ef6a6a;
         --pc-radius: 24px;
+        /* The cool wash across the top of a panel, lifted from the climate
+           card's weather strip so every panel opens the same way. */
+        --pc-tint: rgba(77, 208, 225, 0.10);
 `;
 
 /* Define an element only once. If a standalone build of the same card is still

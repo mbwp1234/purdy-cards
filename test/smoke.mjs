@@ -457,6 +457,22 @@ const hE = new H(); hE.setConfig({ weather:'weather.home' }); hE.hass = hass;
 check('missing hass.user degrades to no name', !/, undefined/.test(hE.shadowRoot.innerHTML));
 hE.disconnectedCallback();
 
+
+// photos: real entity_picture, with sane fallbacks
+hass.states['person.pic'] = { state:'home', attributes:{ friendly_name:'Tayler', entity_picture:'/api/image/serve/abc/512x512' } };
+hass.states['person.nopic'] = { state:'home', attributes:{ friendly_name:'Sam' } };
+const pp = new P();
+pp.setConfig({ people:[{ entity:'person.pic' }, { entity:'person.nopic' }] });
+pp.hass = hass;
+const ph = pp.shadowRoot.innerHTML;
+check('people card shows the entity photo', ph.includes('src="/api/image/serve/abc/512x512"'));
+check('people card falls back to an initial', ph.includes('>S</div>'));
+check('people card carries the cool wash', ph.includes('class="p tint'));
+
+// the cool wash is a shared token, not a per-card literal
+check('tint is a shared token', /--pc-tint:/.test(src));
+check('tint applied via the token', /linear-gradient\(180deg, var\(--pc-tint\)/.test(src));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

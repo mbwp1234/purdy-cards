@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.7.2";
+const PC_VERSION = "1.8.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -30,6 +30,9 @@ const PC_TOKENS = `
         --pc-warn: #f2c14e;
         --pc-bad: #ef6a6a;
         --pc-radius: 24px;
+        /* The cool wash across the top of a panel, lifted from the climate
+           card's weather strip so every panel opens the same way. */
+        --pc-tint: rgba(77, 208, 225, 0.10);
 `;
 
 /* Define an element only once. If a standalone build of the same card is still
@@ -1866,6 +1869,15 @@ class SleepPanelCard extends HTMLElement {
 
   /* ---------------- sections ---------------- */
 
+  /* The configured person's own photo when there is one, falling back to the
+     generic silhouette. */
+  _avatarInner() {
+    const st = this._config.person ? this._st(this._config.person) : null;
+    const pic = st && st.attributes && st.attributes.entity_picture;
+    if (pic) return `<img src="${this._esc(pic)}" alt="" />`;
+    return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm0 10c4.4 0 8 2.2 8 5v3H4v-3c0-2.8 3.6-5 8-5Z"/></svg>`;
+  }
+
   _headerHtml(mode) {
     const c = this._config;
     const stateRaw = (this._st(c.sleep_state) || {}).state;
@@ -1891,7 +1903,7 @@ class SleepPanelCard extends HTMLElement {
     return `
       <div class="head">
         <div class="avatar ${mode === "recap" ? "avatar-off" : ""}" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm0 10c4.4 0 8 2.2 8 5v3H4v-3c0-2.8 3.6-5 8-5Z"/></svg>
+          ${this._avatarInner()}
         </div>
         <div class="id">
           <span class="nm">${this._esc(c.name)}</span>
@@ -2393,11 +2405,13 @@ class SleepPanelCard extends HTMLElement {
       .head { display: flex; align-items: center; gap: 10px; }
       .avatar {
         width: 40px; height: 40px; border-radius: 999px; flex: none;
-        display: grid; place-items: center;
+        display: grid; place-items: center; overflow: hidden;
         background: rgba(170, 120, 255, 0.16); color: var(--spc-deep);
       }
       .avatar-off { background: var(--spc-chip); color: var(--spc-muted); }
       .avatar svg { width: 22px; height: 22px; }
+      .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .avatar-off img { filter: grayscale(1); opacity: 0.65; }
       .id { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
       .nm { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
       .sub {
@@ -2589,6 +2603,18 @@ const PC_BASE = `
     border-radius: var(--pc-radius);
     padding: 14px 16px;
   }
+  /* Opt-in, because a card that already carries a severity colour should not
+     also be washed cool. */
+  .card.tint, .tint {
+    background-image: linear-gradient(180deg, var(--pc-tint), transparent 130px);
+  }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--pc-panel-2); color: var(--pc-muted);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; overflow: hidden;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .lbl {
     font-size: 10px;
     letter-spacing: 0.13em;
@@ -3255,7 +3281,7 @@ class PurdyNotificationsCard extends PcBaseCard {
         .chip.critical { background: rgba(239, 106, 106, 0.15); color: var(--pc-bad); }
         .chip.warn { background: rgba(242, 193, 78, 0.14); color: var(--pc-warn); }
       </style>
-      <div class="card">
+      <div class="card tint">
         <div class="hd">
           <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
           <span class="lbl">${this._config.title}</span>
@@ -3335,6 +3361,7 @@ class PurdyPeopleCard extends PcBaseCard {
         ${PC_BASE}
         .wrap { display: flex; gap: 9px; }
         .p { flex: 1; background: var(--pc-panel); border-radius: 20px; padding: 12px 13px; min-width: 0; }
+        .who { display: flex; align-items: center; gap: 9px; min-width: 0; }
         .nm { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
         .st { font-size: 11.5px; font-weight: 600; }
         .st.home { color: var(--pc-good); }
@@ -3354,10 +3381,20 @@ class PurdyPeopleCard extends PcBaseCard {
           const home = state === "home";
           const batt = pcNum(this._hass, p.battery);
           const steps = pcNum(this._hass, p.steps);
+          const nm = pcName(this._hass, p.entity, p.name);
+          const st = this._hass.states[p.entity];
+          const pic = st && st.attributes.entity_picture;
           return `
-            <div class="p tappable" data-entity="${p.entity}">
-              <div class="nm trunc">${pcName(this._hass, p.entity, p.name)}</div>
-              <div class="st ${home ? "home" : "away"}">${home ? "Home" : (state ? state.replace(/_/g, " ") : "Unknown")}</div>
+            <div class="p tint tappable" data-entity="${p.entity}">
+              <div class="who">
+                <div class="avatar">${
+                  pic ? `<img src="${pic}" alt="" />` : (nm || "?").charAt(0).toUpperCase()
+                }</div>
+                <div class="grow">
+                  <div class="nm trunc">${nm}</div>
+                  <div class="st ${home ? "home" : "away"}">${home ? "Home" : (state ? state.replace(/_/g, " ") : "Unknown")}</div>
+                </div>
+              </div>
               <div class="foot">
                 ${p.battery ? `<span class="mini ${batt != null && batt < 20 ? "low" : ""}">
                   <ha-icon icon="mdi:battery-outline"></ha-icon>${batt == null ? "—" : Math.round(batt) + "%"}
@@ -3740,7 +3777,7 @@ class PurdyRemoteCard extends PcBaseCard {
         .vbtn.muted { color: var(--pc-bad); }
       </style>
 
-      <div class="card">
+      <div class="card tint">
         <div class="hd">
           <b>${this._config.title}</b>
           <span class="spacer"></span>
@@ -4091,7 +4128,9 @@ class PurdyDevicesCard extends PcBaseCard {
     this.shadowRoot.innerHTML = `
       <style>
         ${PC_BASE}
-        .hdr { display: flex; align-items: center; gap: 11px; padding: 2px 6px 10px; }
+        .hdr { display: flex; align-items: center; gap: 11px; padding: 14px 16px; margin-bottom: 9px;
+               border-radius: var(--pc-radius); background: var(--pc-panel);
+               background-image: linear-gradient(180deg, var(--pc-tint), transparent 110px); }
         .hdr b { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
         .chip.bad { background: rgba(239,106,106,0.15); color: var(--pc-bad); }
         .chip.good { background: rgba(129,201,149,0.15); color: var(--pc-good); }
