@@ -267,9 +267,11 @@ const rhass = { states: {
 }, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
 
 const rc = new RC();
+rhass.states['media_player.lr'] = { state:'on', attributes:{ is_volume_muted:false } };
+rhass.states['media_player.br'] = { state:'off', attributes:{} };
 rc.setConfig({ tvs:[
-  { name:'Living Room', remote:'remote.lr', app_sensor:'sensor.lr_app' },
-  { name:'Bedroom', remote:'remote.br', app_sensor:'sensor.br_app' },
+  { name:'Living Room', remote:'remote.lr', media_player:'media_player.lr', app_sensor:'sensor.lr_app' },
+  { name:'Bedroom', remote:'remote.br', media_player:'media_player.br', app_sensor:'sensor.br_app' },
 ], apps:[
   { name:'Netflix', brand:'netflix', activity:'com.netflix.ninja' },
   { name:'Twitch', brand:'twitch', activity:'tv.twitch.android.app' },
@@ -289,6 +291,23 @@ check('d-pad targets the selected remote', sent[2].entity_id==='remote.lr' && se
 rc._launch('com.netflix.ninja');
 const launched = rhass._calls.find(c => c[1]==='turn_on');
 check('app launch passes activity', launched[2].activity==='com.netflix.ninja');
+
+
+// volume steps rather than sets: Samsung advertises VOLUME_SET but never honours it
+check('volume renders step buttons, not a slider', rh.includes('id="volup"') && !rh.includes('type="range"'));
+rc._step(1);
+const vup = rhass._calls.find(c => c[1]==='volume_up');
+check('volume up targets the media player', vup && vup[2].entity_id==='media_player.lr');
+rc._step(-1);
+check('volume down targets the media player', rhass._calls.some(c => c[1]==='volume_down'));
+rc._toggleMute();
+const mu = rhass._calls.find(c => c[1]==='volume_mute');
+check('mute targets the media player', mu && mu[2].entity_id==='media_player.lr');
+rc._power();
+const pw = rhass._calls.find(c => c[0]==='media_player' && (c[1]==='turn_off'||c[1]==='turn_on'));
+check('power prefers the media player over the remote', !!pw);
+check('on-state reads from the media player', rc._isOn({media_player:'media_player.lr', remote:'remote.br'}) === true);
+check('off media player reads as off', rc._isOn({media_player:'media_player.br', remote:'remote.lr'}) === false);
 
 // switching to an off TV collapses the remote body
 rc._touched = true; rc._sel = 1; rc._render();
