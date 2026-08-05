@@ -383,10 +383,11 @@ dc3.setConfig({ title:'X', groups:[{ name:'Litter',
 dhass.states['binary_sensor.parity'] = { state:'off', attributes:{} };
 dc3._hass = dhass; dc3._render();
 const m1 = dc3.shadowRoot.innerHTML;
-check('meter renders a fill bar on the collapsed row', m1.includes('class="mtrack"'));
+check('meter renders a full-width bar on the collapsed row', m1.includes('class="mwrap"') && m1.includes('class="bar"'));
 check('meter warns above threshold', m1.includes('var(--pc-warn)'));
 dc3._open[0] = true; dc3._render();
 const m2 = dc3.shadowRoot.innerHTML;
+check('meter is hidden once the group is open', !m2.includes('class="mwrap"'));
 check('problem sensor off maps to OK', m2.includes('>OK<'));
 check('problem sensor off is coloured good', m2.includes('goodv'));
 

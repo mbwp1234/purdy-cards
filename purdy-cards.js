@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.6.1";
+const PC_VERSION = "1.6.2";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -3817,21 +3817,18 @@ class PurdyDevicesCard extends PcBaseCard {
     }
   }
 
-  /* A miniature of the same fill bar used inside the body, so a collapsed row
-     reads with the identical vocabulary as an expanded one. */
+  /* The same labelled fill bar the body uses, shown on a collapsed row so a
+     shut group still carries its level at a glance. Hidden once the group is
+     open, because the body renders it there. */
   _meterHtml(m) {
-    const v = pcNum(this._hass, m.entity);
-    if (v == null) return "";
-    const max = m.max || 100;
-    const p = Math.max(0, Math.min(100, (v / max) * 100));
-    const warn = m.warn_above == null ? 80 : m.warn_above;
-    const crit = m.critical_above == null ? 95 : m.critical_above;
-    const col = p >= crit ? "var(--pc-bad)" : p >= warn ? "var(--pc-warn)" : "var(--pc-cool)";
-    return `
-      <div class="meter" title="${Math.round(v)}%">
-        <div class="mtrack"><i style="width:${p.toFixed(0)}%;background:${col}"></i></div>
-        <span class="mval num" style="color:${col}">${Math.round(v)}${m.suffix || "%"}</span>
-      </div>`;
+    return this._barHtml({
+      entity: m.entity,
+      label: m.label || "",
+      max: m.max,
+      warn_above: m.warn_above,
+      critical_above: m.critical_above,
+      suffix: m.suffix,
+    });
   }
 
   _sparkHtml(sp) {
@@ -3990,10 +3987,10 @@ class PurdyDevicesCard extends PcBaseCard {
               <div class="ttl">${g.name}</div>
               ${chips ? `<div class="smry num">${chips}</div>` : ""}
             </div>
-            ${g.meter ? this._meterHtml(g.meter) : ""}
             ${g.sparkline ? this._sparkHtml(g.sparkline) : ""}
             ${faults ? `<span class="chip bad"><span class="cdot"></span>${faults}</span>` : ""}
           </div>
+          ${!open && g.meter ? `<div class="mwrap">${this._meterHtml(g.meter)}</div>` : ""}
           ${open ? `<div class="body" data-body="${gi}">${this._bodyHtml(g.body || {}, g)}</div>` : ""}
         </div>`;
     }).join("");
@@ -4046,10 +4043,7 @@ class PurdyDevicesCard extends PcBaseCard {
         .dock .lnk { --mdc-icon-size: 15px; color: var(--pc-muted); }
 
         .spark { width: 62px; height: 22px; flex: 0 0 auto; opacity: 0.9; }
-        .meter { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
-        .mtrack { width: 54px; height: 6px; border-radius: 3px; background: var(--pc-track); overflow: hidden; }
-        .mtrack i { display: block; height: 100%; border-radius: 3px; }
-        .mval { font-size: 11px; font-weight: 600; min-width: 30px; text-align: right; }
+        .mwrap { padding: 0 16px 14px; margin-top: -2px; }
         .faults { margin-bottom: 12px; }
         .frow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--pc-line); }
         .frow:first-child { border-top: none; }
