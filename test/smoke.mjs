@@ -255,6 +255,46 @@ check('centre shows relative time', /\d+m ago/.test(html));
 check('centre offers restore on dismissed', html.includes('data-restore="2"'));
 check('unread chips drop zero counts', html.includes('3 Warning') && !html.includes('0 Alert'));
 
+
+// ---- remote card ----
+check('purdy-remote-card defined', names.includes('purdy-remote-card'));
+const RC = defined['purdy-remote-card'];
+const rhass = { states: {
+  'remote.lr': { state:'on', attributes:{} },
+  'remote.br': { state:'off', attributes:{} },
+  'sensor.lr_app': { state:'Twitch', attributes:{} },
+  'sensor.br_app': { state:'Idle', attributes:{} },
+}, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
+
+const rc = new RC();
+rc.setConfig({ tvs:[
+  { name:'Living Room', remote:'remote.lr', app_sensor:'sensor.lr_app' },
+  { name:'Bedroom', remote:'remote.br', app_sensor:'sensor.br_app' },
+], apps:[
+  { name:'Netflix', brand:'netflix', activity:'com.netflix.ninja' },
+  { name:'Twitch', brand:'twitch', activity:'tv.twitch.android.app' },
+]});
+rc.hass = rhass;
+const rh = rc.shadowRoot.innerHTML;
+check('remote auto-selects the TV that is on', rc._sel === 0);
+check('remote shows the running app', rh.includes('Twitch'));
+check('remote draws brand art inline, not an iconset', rh.includes('#E50914') && rh.includes('#9146FF'));
+check('remote has no empty spacer cards', !rh.includes('markdown'));
+check('remote renders the d-pad', rh.includes('data-cmd="DPAD_CENTER"'));
+check('remote marks the live TV in the selector', rh.includes('class="live"'));
+
+rc._send('DPAD_UP');
+const sent = rhass._calls.find(c => c[1]==='send_command');
+check('d-pad targets the selected remote', sent[2].entity_id==='remote.lr' && sent[2].command==='DPAD_UP');
+rc._launch('com.netflix.ninja');
+const launched = rhass._calls.find(c => c[1]==='turn_on');
+check('app launch passes activity', launched[2].activity==='com.netflix.ninja');
+
+// switching to an off TV collapses the remote body
+rc._touched = true; rc._sel = 1; rc._render();
+const rh2 = rc.shadowRoot.innerHTML;
+check('off TV hides the remote body', rh2.includes('is off') && !rh2.includes('DPAD_CENTER'));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
