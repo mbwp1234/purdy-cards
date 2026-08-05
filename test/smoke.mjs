@@ -473,6 +473,27 @@ check('people card carries the cool wash', ph.includes('class="p tint'));
 check('tint is a shared token', /--pc-tint:/.test(src));
 check('tint applied via the token', /linear-gradient\(180deg, var\(--pc-tint\)/.test(src));
 
+
+// the header range must come from the bedtime helpers, not the history window
+const sr = new SPC();
+sr.setConfig({ sleep_state:'sensor.s', person:'person.joel',
+  session:{ start:'input_datetime.bed', end:'input_datetime.wake' } });
+const srHass = { states:{
+  'sensor.s': { state:'unavailable', attributes:{} },
+  'input_datetime.bed': { state:'2026-08-04 19:21:09', attributes:{} },
+  'input_datetime.wake': { state:'2026-08-05 07:18:53', attributes:{} },
+} };
+sr._hass = srHass;
+const range = sr._sessionRange();
+check('session range reads the bedtime helper', new Date(range.t0).getHours() === 19);
+check('session range reads the wake helper', new Date(range.t1).getHours() === 7);
+check('session helpers are watched', sr._watched.includes('input_datetime.bed') && sr._watched.includes('input_datetime.wake'));
+
+const sr2 = new SPC();
+sr2.setConfig({ sleep_state:'sensor.s' });
+sr2._hass = srHass;
+check('no session config degrades to the derived span', sr2._sessionRange() === null);
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
