@@ -432,6 +432,31 @@ for (const n of names) {
   check(n + ' stub config is valid', ok);
 }
 
+
+// the greeting should follow whoever is signed in
+const hassBrian = { ...hass, user:{ name:'Brian Purdy', id:'u1' } };
+const hassTay   = { ...hass, user:{ name:'Tayler', id:'u2' } };
+
+const hA = new H(); hA.setConfig({ weather:'weather.home' }); hA.hass = hassBrian;
+check('greeting uses the signed-in user first name', /Good (morning|afternoon|evening), Brian</.test(hA.shadowRoot.innerHTML));
+hA.disconnectedCallback();
+
+const hB = new H(); hB.setConfig({ weather:'weather.home' }); hB.hass = hassTay;
+check('a different user gets their own name', /Good (morning|afternoon|evening), Tayler</.test(hB.shadowRoot.innerHTML));
+hB.disconnectedCallback();
+
+const hC = new H(); hC.setConfig({ name:'Alex', weather:'weather.home' }); hC.hass = hassTay;
+check('an explicit name overrides the viewer', hC.shadowRoot.innerHTML.includes(', Alex'));
+hC.disconnectedCallback();
+
+const hD = new H(); hD.setConfig({ name:'', weather:'weather.home' }); hD.hass = hassTay;
+check('empty name means no name at all', !hD.shadowRoot.innerHTML.includes(','.concat(' Tayler')));
+hD.disconnectedCallback();
+
+const hE = new H(); hE.setConfig({ weather:'weather.home' }); hE.hass = hass;
+check('missing hass.user degrades to no name', !/, undefined/.test(hE.shadowRoot.innerHTML));
+hE.disconnectedCallback();
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
