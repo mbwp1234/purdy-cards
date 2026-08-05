@@ -342,6 +342,38 @@ const sp = new SPC();
 sp.setConfig({ sleep_state:'sensor.s', hypnogram:{ start_entity:'input_datetime.bed', max_hours:14 } });
 check('hypnogram watches the bedtime anchor', sp._watched.includes('input_datetime.bed'));
 
+
+// ---- v1.6.0: url action, fault detail, sparkline ----
+let opened = null;
+globalThis.window.open = (u) => { opened = u; };
+
+const dc2 = new DC();
+dc2.setConfig({ title:'NAS',
+  groups:[{ name:'Stats',
+    faults:[{entity:'binary_sensor.parity', state:'on', label:'Parity', detail:'Check failed'}],
+    sparkline:{ entity:'sensor.array', hours:24, warn_above:80 },
+    body:{ buttons:[{name:'Dashboard', tap_action:{action:'url', url_path:'http://nas/Dashboard'}}] } }]});
+dc2._hass = dhass;
+dc2._spark = { 'sensor.array': [70, 75, 82, 86] };
+dc2._sparkAt = Date.now();
+dc2._render();
+const d3 = dc2.shadowRoot.innerHTML;
+check('sparkline renders on the collapsed row', d3.includes('<svg class="spark"'));
+check('sparkline warns when the latest value is high', d3.includes('var(--pc-warn)'));
+
+// device_class problem: on = fault, off = healthy
+check('problem sensor off is NOT a fault', dc2._faultCount([{entity:'binary_sensor.parity', state:'on'}]) === 0);
+dhass.states['binary_sensor.parity'] = { state:'on', attributes:{ friendly_name:'Parity' } };
+check('problem sensor on IS a fault', dc2._faultCount([{entity:'binary_sensor.parity', state:'on'}]) === 1);
+
+dc2._open[0] = true; dc2._render();
+const d4 = dc2.shadowRoot.innerHTML;
+check('faulted group lists each fault by name', d4.includes('Parity') && d4.includes('Check failed'));
+check('fault rows open more-info', d4.includes('data-info="binary_sensor.parity"'));
+
+check('url action branch exists in pcAction', /a\.action === "url"/.test(src));
+check('url action opens a new tab', /window\.open\(a\.url_path/.test(src));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

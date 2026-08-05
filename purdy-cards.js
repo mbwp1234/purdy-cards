@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.5.0";
+const PC_VERSION = "1.6.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -2650,6 +2650,10 @@ function pcAction(node, hass, action, fallbackEntity) {
   if (a.action === "toggle" && fallbackEntity) {
     return hass.callService("homeassistant", "toggle", { entity_id: fallbackEntity });
   }
+  if (a.action === "url") {
+    if (a.url_path) window.open(a.url_path, a.new_tab === false ? "_self" : "_blank");
+    return;
+  }
   if (a.action === "perform-action" || a.action === "call-service") {
     const svc = a.perform_action || a.service;
     if (!svc || svc.indexOf(".") < 0) return;
@@ -3771,10 +3775,66 @@ class PurdyDevicesCard extends PcBaseCard {
       if (b.bar) add(b.bar.entity);
       (b.stats || []).forEach((s) => add(s.entity));
       (b.switch_groups || []).forEach((sg) => (sg.items || []).forEach((i) => add(i.entity)));
+      if (g.sparkline) add(g.sparkline.entity);
     });
     this._watched = ids;
     this._last = null;
     this._open = {};
+    this._spark = {};
+    this._sparkAt = 0;
+  }
+
+  /* Trend lines for the collapsed rows. Fetched on a timer rather than on
+     every state change, because history is expensive and a sparkline does not
+     need to be live to the second. */
+  async _fetchSparks() {
+    const groups = (this._config.groups || []).filter((g) => g.sparkline);
+    if (!groups.length || !this._hass) return;
+    if (Date.now() - this._sparkAt < 5 * 60 * 1000) return;
+    this._sparkAt = Date.now();
+    const ids = groups.map((g) => g.sparkline.entity);
+    const hours = Math.max(...groups.map((g) => g.sparkline.hours || 24));
+    const start = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+    try {
+      const res = await this._hass.callApi(
+        "GET",
+        `history/period/${start}?filter_entity_id=${ids.join(",")}&minimal_response&no_attributes`
+      );
+      const out = {};
+      (res || []).forEach((series) => {
+        if (!series || !series.length) return;
+        const id = series[0].entity_id;
+        if (!id) return;
+        out[id] = series
+          .map((e) => parseFloat(e.state))
+          .filter((v) => !isNaN(v));
+      });
+      this._spark = out;
+      this._render();
+    } catch (err) {
+      /* History unavailable is not worth breaking the card over. */
+    }
+  }
+
+  _sparkHtml(sp) {
+    const vals = this._spark[sp.entity];
+    if (!vals || vals.length < 2) return "";
+    const w = 62, h = 22;
+    const lo = sp.min != null ? sp.min : Math.min(...vals);
+    const hi = sp.max != null ? sp.max : Math.max(...vals);
+    const range = hi - lo || 1;
+    const step = w / (vals.length - 1);
+    const pts = vals
+      .map((v, i) => `${(i * step).toFixed(1)},${(h - 2 - ((v - lo) / range) * (h - 4)).toFixed(1)}`)
+      .join(" ");
+    const last = vals[vals.length - 1];
+    const warn = sp.warn_above == null ? 80 : sp.warn_above;
+    const col = last >= warn ? "var(--pc-warn)" : "var(--pc-cool)";
+    return `
+      <svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>`;
   }
 
   _faultCount(list) {
@@ -3845,8 +3905,31 @@ class PurdyDevicesCard extends PcBaseCard {
     }).join("");
   }
 
-  _bodyHtml(b) {
+  _faultListHtml(list) {
+    const hits = (list || []).filter((f) => {
+      const st = pcState(this._hass, f.entity);
+      if (f.state !== undefined) return st === f.state;
+      if (f.state_not !== undefined) return st !== f.state_not && st !== "";
+      return false;
+    });
+    if (!hits.length) return "";
+    return `
+      <div class="faults">
+        ${hits.map((f) => `
+          <div class="frow tappable" data-info="${f.entity}">
+            <span class="fdot"></span>
+            <div class="grow">
+              <div class="fn">${f.label || pcName(this._hass, f.entity)}</div>
+              <div class="fd">${f.detail || pcState(this._hass, f.entity)}</div>
+            </div>
+            <ha-icon icon="mdi:chevron-right"></ha-icon>
+          </div>`).join("")}
+      </div>`;
+  }
+
+  _bodyHtml(b, g) {
     let h = "";
+    if (g && g.faults) h += this._faultListHtml(g.faults);
     if (b.bar) h += this._barHtml(b.bar);
     if (b.stats) h += this._statsHtml(b.stats);
     if (b.switch_groups) h += this._switchesHtml(b.switch_groups);
@@ -3886,9 +3969,10 @@ class PurdyDevicesCard extends PcBaseCard {
               <div class="ttl">${g.name}</div>
               ${chips ? `<div class="smry num">${chips}</div>` : ""}
             </div>
+            ${g.sparkline ? this._sparkHtml(g.sparkline) : ""}
             ${faults ? `<span class="chip bad"><span class="cdot"></span>${faults}</span>` : ""}
           </div>
-          ${open ? `<div class="body" data-body="${gi}">${this._bodyHtml(g.body || {})}</div>` : ""}
+          ${open ? `<div class="body" data-body="${gi}">${this._bodyHtml(g.body || {}, g)}</div>` : ""}
         </div>`;
     }).join("");
 
@@ -3939,6 +4023,14 @@ class PurdyDevicesCard extends PcBaseCard {
         .dock.off > ha-icon, .dock.off .nm { color: var(--pc-muted); }
         .dock .lnk { --mdc-icon-size: 15px; color: var(--pc-muted); }
 
+        .spark { width: 62px; height: 22px; flex: 0 0 auto; opacity: 0.9; }
+        .faults { margin-bottom: 12px; }
+        .frow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--pc-line); }
+        .frow:first-child { border-top: none; }
+        .fdot { width: 7px; height: 7px; border-radius: 50%; background: var(--pc-bad); flex: 0 0 auto; }
+        .fn { font-size: 13px; font-weight: 600; }
+        .fd { font-size: 11.5px; color: var(--pc-muted); }
+        .frow ha-icon { --mdc-icon-size: 16px; color: var(--pc-muted); }
         .chiprow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
         .btnrow { display: flex; gap: 8px; margin-top: 11px; }
         .btnrow button {
@@ -3963,6 +4055,13 @@ class PurdyDevicesCard extends PcBaseCard {
       ${groupsHtml}
     `;
 
+    this._fetchSparks();
+    this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        pcMoreInfo(this, el.dataset.info);
+      });
+    });
     this.shadowRoot.querySelectorAll("[data-grp]").forEach((el) => {
       el.addEventListener("click", () => {
         const i = parseInt(el.dataset.grp, 10);
