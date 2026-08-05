@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.1.0";
+const PC_VERSION = "1.2.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -2755,21 +2755,63 @@ class PurdyAttentionCard extends PcBaseCard {
     (config.rules || []).forEach((r) => {
       if (r.entity) ids.push(r.entity);
     });
+    if (config.dismiss_store) ids.push(config.dismiss_store);
     this._watched = ids;
     this._last = null;
-    /* A battery-group rule watches a whole domain, so signature-based
-       skipping cannot see it. Track the matching entities explicitly. */
     this._batteryRule = (config.rules || []).find((r) => r.match);
+    this._logged = {};
   }
 
-  set hass(hass) {
-    if (this._batteryRule && this._config) {
-      const pat = new RegExp(this._batteryRule.match);
-      this._watched = this._watched
-        .filter((id) => !pat.test(id))
-        .concat(Object.keys(hass.states).filter((id) => pat.test(id)));
+  /* A rule needs a stable id so a dismissal survives a re-render. Prefer an
+     explicit key; fall back to a slug of the title. */
+  _key(r, i) {
+    if (r.key) return r.key;
+    const t = r.title || r.entity || String(i);
+    return t.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 12);
+  }
+
+  /* Store format is "key:epoch|key:epoch" — compact enough that a dozen
+     dismissals fit inside input_text's 255-character ceiling. */
+  _dismissals() {
+    const raw = pcState(this._hass, this._config.dismiss_store);
+    const out = {};
+    if (!raw || raw === "unknown") return out;
+    raw.split("|").forEach((pair) => {
+      const bits = pair.split(":");
+      if (bits.length === 2 && bits[0]) out[bits[0]] = parseInt(bits[1], 10) || 0;
+    });
+    return out;
+  }
+
+  _writeDismissals(map) {
+    const val = Object.keys(map)
+      .map((k) => k + ":" + map[k])
+      .join("|")
+      .slice(0, 255);
+    this._hass.callService("input_text", "set_value", {
+      entity_id: this._config.dismiss_store,
+      value: val,
+    });
+  }
+
+  /* When did this rule's condition last change? A dismissal older than that
+     means the fault re-fired, so the row comes back. */
+  _firedAt(r) {
+    if (r.entity && this._hass.states[r.entity]) {
+      return Math.floor(new Date(this._hass.states[r.entity].last_changed).getTime() / 1000);
     }
-    super.hass = hass;
+    if (r.match) {
+      const pat = new RegExp(r.match);
+      let newest = 0;
+      Object.keys(this._hass.states).forEach((id) => {
+        if (!pat.test(id)) return;
+        if (this._hass.states[id].state !== (r.state || "on")) return;
+        const t = Math.floor(new Date(this._hass.states[id].last_changed).getTime() / 1000);
+        if (t > newest) newest = t;
+      });
+      return newest;
+    }
+    return 0;
   }
 
   _matches(r) {
@@ -2782,9 +2824,10 @@ class PurdyAttentionCard extends PcBaseCard {
     return false;
   }
 
-  _rows() {
+  /* Every rule that currently matches, before dismissals are applied. */
+  _raised() {
     const out = [];
-    (this._config.rules || []).forEach((r) => {
+    (this._config.rules || []).forEach((r, i) => {
       if (r.match) {
         const pat = new RegExp(r.match);
         const hits = Object.keys(this._hass.states)
@@ -2793,29 +2836,105 @@ class PurdyAttentionCard extends PcBaseCard {
             .replace(r.strip || "", "").trim());
         if (hits.length) {
           out.push({
+            key: this._key(r, i), rule: r,
             severity: r.severity || "info",
             title: hits.length + " " + (r.title || "items"),
             detail: hits.join(" · "),
             entity: null,
+            firedAt: this._firedAt(r),
           });
         }
         return;
       }
       if (this._matches(r)) {
         out.push({
+          key: this._key(r, i), rule: r,
           severity: r.severity || "warn",
           title: r.title || pcName(this._hass, r.entity),
           detail: r.detail || "",
           entity: r.entity,
+          firedAt: this._firedAt(r),
         });
       }
     });
     return out;
   }
 
+  _rows() {
+    const dis = this._dismissals();
+    const now = Math.floor(Date.now() / 1000);
+    return this._raised().filter((row) => {
+      const at = dis[row.key];
+      if (!at) return true;
+      /* Re-show once the condition changes again... */
+      if (row.firedAt > at) return true;
+      /* ...or once the snooze window lapses. */
+      const hrs = this._config.dismiss_hours;
+      if (hrs && now - at > hrs * 3600) return true;
+      return false;
+    });
+  }
+
+  _dismiss(row) {
+    const map = this._dismissals();
+    map[row.key] = Math.floor(Date.now() / 1000);
+    this._writeDismissals(map);
+    if (this._config.log_to) this._closeLog(row);
+    this._last = null;
+    this._render();
+  }
+
+  /* --- notification log ------------------------------------------------- */
+
+  async _items() {
+    if (!this._config.log_to) return [];
+    const res = await this._hass.callWS({
+      type: "todo/item/list",
+      entity_id: this._config.log_to,
+    });
+    return (res && res.items) || [];
+  }
+
+  /* One open log entry per raised rule. The key lives in the description so
+     the entry can be found again without depending on the wording. */
+  async _syncLog(rows) {
+    if (!this._config.log_to || !rows.length) return;
+    const items = await this._items();
+    for (const row of rows) {
+      const tag = "[" + row.key + "]";
+      const open = items.find(
+        (it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed"
+      );
+      if (open) continue;
+      if (this._logged[row.key] === row.firedAt) continue;
+      this._logged[row.key] = row.firedAt;
+      this._hass.callService("todo", "add_item", {
+        entity_id: this._config.log_to,
+        item: row.title,
+        description: tag + " " + row.severity + " · " + (row.detail || "") +
+          " · raised " + new Date(row.firedAt * 1000).toISOString(),
+      });
+    }
+  }
+
+  async _closeLog(row) {
+    const items = await this._items();
+    const tag = "[" + row.key + "]";
+    const open = items.find(
+      (it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed"
+    );
+    if (!open) return;
+    this._hass.callService("todo", "update_item", {
+      entity_id: this._config.log_to,
+      item: open.uid,
+      status: "completed",
+    });
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
     const rows = this._rows();
+    if (this._config.log_to) this._syncLog(this._raised());
     if (!rows.length) {
       this.shadowRoot.innerHTML = "";
       this.style.display = "none";
@@ -2823,6 +2942,7 @@ class PurdyAttentionCard extends PcBaseCard {
     }
     this.style.display = "block";
     const worst = rows.some((r) => r.severity === "critical") ? "critical" : "warn";
+    const canDismiss = !!this._config.dismiss_store;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -2830,6 +2950,13 @@ class PurdyAttentionCard extends PcBaseCard {
         .card { border-left: 3px solid var(--edge); padding-left: 13px; }
         .hd { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--edge); }
         .hd .lbl { color: var(--edge); }
+        .hd .spacer { flex: 1; }
+        .all {
+          font-size: 11px; color: var(--pc-muted); cursor: pointer;
+          background: var(--pc-chip); border: 0; border-radius: 999px;
+          padding: 3px 9px; font-family: inherit;
+        }
+        .all:hover { color: var(--pc-text); }
         .r { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--pc-line); }
         .r:first-of-type { border-top: none; }
         .r .t { font-size: 13.5px; font-weight: 600; }
@@ -2838,36 +2965,262 @@ class PurdyAttentionCard extends PcBaseCard {
         .dot.critical { background: var(--pc-bad); }
         .dot.warn { background: var(--pc-warn); }
         .dot.info { background: var(--pc-muted); }
-        .chev { color: var(--pc-muted); --mdc-icon-size: 16px; }
+        .x {
+          flex: 0 0 auto; border: 0; background: var(--pc-chip); cursor: pointer;
+          width: 26px; height: 26px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          color: var(--pc-muted); padding: 0;
+        }
+        .x:hover { color: var(--pc-text); background: var(--pc-panel-2); }
+        .x ha-icon { --mdc-icon-size: 15px; }
+        .x:focus-visible, .all:focus-visible { outline: 2px solid var(--pc-cool); outline-offset: 2px; }
       </style>
       <div class="card" style="--edge: ${worst === "critical" ? "var(--pc-bad)" : "var(--pc-warn)"}">
         <div class="hd">
           <ha-icon icon="mdi:alert-circle-outline" style="--mdc-icon-size:16px"></ha-icon>
           <span class="lbl">${this._config.title} · ${rows.length}</span>
+          <span class="spacer"></span>
+          ${canDismiss && rows.length > 1
+            ? `<button class="all" type="button" id="all">Dismiss all</button>` : ""}
         </div>
         ${rows.map((r, i) => `
-          <div class="r ${r.entity ? "tappable" : ""}" data-idx="${i}">
+          <div class="r">
             <span class="dot ${r.severity}"></span>
-            <div class="grow">
+            <div class="grow ${r.entity ? "tappable" : ""}" data-info="${r.entity || ""}">
               <div class="t">${r.title}</div>
               ${r.detail ? `<div class="d">${r.detail}</div>` : ""}
             </div>
-            ${r.entity ? `<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>` : ""}
+            ${canDismiss
+              ? `<button class="x" type="button" data-idx="${i}" aria-label="Dismiss ${r.title}">
+                   <ha-icon icon="mdi:close"></ha-icon>
+                 </button>`
+              : `<ha-icon icon="mdi:chevron-right" style="--mdc-icon-size:16px;color:var(--pc-muted)"></ha-icon>`}
           </div>`).join("")}
       </div>
     `;
 
     this._rowData = rows;
+    this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => {
+      if (!el.dataset.info) return;
+      el.addEventListener("click", () => pcMoreInfo(this, el.dataset.info));
+    });
     this.shadowRoot.querySelectorAll("[data-idx]").forEach((el) => {
-      el.addEventListener("click", () => {
-        const r = this._rowData[parseInt(el.dataset.idx, 10)];
-        if (r && r.entity) pcMoreInfo(this, r.entity);
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._dismiss(this._rowData[parseInt(el.dataset.idx, 10)]);
       });
     });
+    const all = this.shadowRoot.getElementById("all");
+    if (all) {
+      all.addEventListener("click", () => {
+        const map = this._dismissals();
+        const now = Math.floor(Date.now() / 1000);
+        this._rowData.forEach((r) => {
+          map[r.key] = now;
+          if (this._config.log_to) this._closeLog(r);
+        });
+        this._writeDismissals(map);
+        this._last = null;
+        this._render();
+      });
+    }
   }
 
   getCardSize() {
     return 3;
+  }
+}
+
+/* --------------------------------------------------------- notifications --*/
+
+/* Reads the todo list the attention card logs into, so dismissed items stay
+   readable instead of vanishing. */
+class PurdyNotificationsCard extends PcBaseCard {
+  setConfig(config) {
+    if (!config || !config.entity) {
+      throw new Error("purdy-notifications-card: 'entity' (a todo list) is required");
+    }
+    this._config = { title: "Notifications", max: 50, unread: [], ...config };
+    this._watched = [config.entity].concat(
+      (this._config.unread || []).map((u) => u.entity)
+    );
+    this._last = null;
+    this._items = null;
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (!this._config) return;
+    /* Refetch when the list changes; re-render alone when only a counter did. */
+    const sig = this._watched.map((id) => pcState(hass, id)).join("|");
+    if (!first && sig === this._last) return;
+    const listChanged = first || pcState(hass, this._config.entity) !== this._listSig;
+    this._last = sig;
+    this._listSig = pcState(hass, this._config.entity);
+    if (listChanged) this._fetch();
+    else this._render();
+  }
+
+  /* Unread counters from an upstream system (Unraid, for instance). Zero
+     counts are dropped so a quiet source shows nothing at all. */
+  _unreadHtml() {
+    const chips = (this._config.unread || [])
+      .map((u) => ({ ...u, n: pcNum(this._hass, u.entity) }))
+      .filter((u) => u.n != null && u.n > 0);
+    if (!chips.length) return "";
+    return `
+      <div class="chips">
+        ${chips.map((u) => `
+          <span class="chip ${u.severity || "info"} tappable" data-info="${u.entity}">
+            <span class="cdot"></span>${u.n} ${u.label || pcName(this._hass, u.entity)}
+          </span>`).join("")}
+      </div>`;
+  }
+
+  async _fetch() {
+    const res = await this._hass.callWS({
+      type: "todo/item/list",
+      entity_id: this._config.entity,
+    });
+    this._items = (res && res.items) || [];
+    this._render();
+  }
+
+  /* The attention card encodes "[key] severity · detail · raised <iso>". */
+  _parse(it) {
+    const d = it.description || "";
+    const sev = /\b(critical|warn|info)\b/.exec(d);
+    const iso = /raised (\S+)/.exec(d);
+    let detail = d.replace(/^\[[^\]]*\]\s*/, "").replace(/\braised \S+\s*/, "");
+    detail = detail.replace(/^(critical|warn|info)\s*·?\s*/, "").replace(/·\s*$/, "").trim();
+    return {
+      uid: it.uid,
+      summary: it.summary,
+      severity: sev ? sev[1] : "info",
+      detail,
+      at: iso ? new Date(iso[1]).getTime() : null,
+      done: it.status === "completed",
+    };
+  }
+
+  _rel(ms) {
+    if (!ms) return "";
+    const s = Math.floor((Date.now() - ms) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+
+  _render() {
+    if (!this._hass || !this._config || !this._items) return;
+    const parsed = this._items.map((it) => this._parse(it));
+    parsed.sort((a, b) => (b.at || 0) - (a.at || 0));
+    const active = parsed.filter((p) => !p.done).slice(0, this._config.max);
+    const done = parsed.filter((p) => p.done).slice(0, this._config.max);
+
+    const row = (p) => `
+      <div class="n ${p.done ? "done" : ""}">
+        <span class="dot ${p.severity}"></span>
+        <div class="grow">
+          <div class="t">${p.summary}</div>
+          ${p.detail ? `<div class="d">${p.detail}</div>` : ""}
+        </div>
+        <span class="when num">${this._rel(p.at)}</span>
+        ${p.done
+          ? `<button class="act" type="button" data-restore="${p.uid}" aria-label="Restore">
+               <ha-icon icon="mdi:restore"></ha-icon></button>`
+          : `<button class="act" type="button" data-done="${p.uid}" aria-label="Dismiss">
+               <ha-icon icon="mdi:close"></ha-icon></button>`}
+      </div>`;
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${PC_BASE}
+        .hd { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+        .hd .spacer { flex: 1; }
+        .sec { margin-top: 12px; }
+        .sec:first-of-type { margin-top: 6px; }
+        .n { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--pc-line); }
+        .n:first-of-type { border-top: none; }
+        .n .t { font-size: 13.5px; font-weight: 600; }
+        .n .d { font-size: 12px; color: var(--pc-muted); }
+        .n.done .t, .n.done .d { color: var(--pc-muted); }
+        .n.done .t { font-weight: 500; text-decoration: line-through; text-decoration-color: var(--pc-line); }
+        .when { font-size: 11px; color: var(--pc-muted); white-space: nowrap; }
+        .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+        .dot.critical { background: var(--pc-bad); }
+        .dot.warn { background: var(--pc-warn); }
+        .dot.info { background: var(--pc-muted); }
+        .n.done .dot { opacity: 0.45; }
+        .act {
+          flex: 0 0 auto; border: 0; background: var(--pc-chip); cursor: pointer;
+          width: 26px; height: 26px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          color: var(--pc-muted); padding: 0;
+        }
+        .act:hover { color: var(--pc-text); }
+        .act ha-icon { --mdc-icon-size: 15px; }
+        .act:focus-visible, .clear:focus-visible { outline: 2px solid var(--pc-cool); outline-offset: 2px; }
+        .clear {
+          font-size: 11px; color: var(--pc-muted); cursor: pointer;
+          background: var(--pc-chip); border: 0; border-radius: 999px;
+          padding: 3px 9px; font-family: inherit;
+        }
+        .empty { color: var(--pc-muted); font-size: 13px; padding: 10px 0 4px; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+        .chip .cdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .chip.critical { background: rgba(239, 106, 106, 0.15); color: var(--pc-bad); }
+        .chip.warn { background: rgba(242, 193, 78, 0.14); color: var(--pc-warn); }
+      </style>
+      <div class="card">
+        <div class="hd">
+          <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
+          <span class="lbl">${this._config.title}</span>
+          <span class="spacer"></span>
+          ${done.length ? `<button class="clear" type="button" id="clear">Clear history</button>` : ""}
+        </div>
+        ${this._unreadHtml()}
+
+        ${active.length ? `
+          <div class="sec">
+            <span class="lbl">Active · ${active.length}</span>
+            ${active.map(row).join("")}
+          </div>` : `<div class="empty">Nothing active — the house is quiet.</div>`}
+
+        ${done.length ? `
+          <div class="sec">
+            <span class="lbl">Dismissed · ${done.length}</span>
+            ${done.map(row).join("")}
+          </div>` : ""}
+      </div>
+    `;
+
+    const call = (uid, status) =>
+      this._hass.callService("todo", "update_item", {
+        entity_id: this._config.entity, item: uid, status,
+      });
+
+    this.shadowRoot.querySelectorAll("[data-done]").forEach((el) => {
+      el.addEventListener("click", () => { call(el.dataset.done, "completed"); this._fetch(); });
+    });
+    this.shadowRoot.querySelectorAll("[data-restore]").forEach((el) => {
+      el.addEventListener("click", () => { call(el.dataset.restore, "needs_action"); this._fetch(); });
+    });
+    const clear = this.shadowRoot.getElementById("clear");
+    if (clear) {
+      clear.addEventListener("click", () => {
+        this._hass.callService("todo", "remove_completed_items", {
+          entity_id: this._config.entity,
+        });
+        setTimeout(() => this._fetch(), 400);
+      });
+    }
+  }
+
+  getCardSize() {
+    return 5;
   }
 }
 
@@ -3069,6 +3422,7 @@ pcDefine("purdy-attention-card", PurdyAttentionCard);
 pcDefine("purdy-people-card", PurdyPeopleCard);
 pcDefine("purdy-rooms-card", PurdyRoomsCard);
 pcDefine("purdy-quick-card", PurdyQuickCard);
+pcDefine("purdy-notifications-card", PurdyNotificationsCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -3090,7 +3444,8 @@ window.customCards.push(
   { type: "purdy-attention-card", name: "Purdy Attention Card", description: "Rule-driven fault list. Renders nothing when the house is clean.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-people-card", name: "Purdy People Card", description: "Presence with battery and step counts, side by side.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-rooms-card", name: "Purdy Rooms Card", description: "Scrolling strip of room temperatures and humidity.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
-  { type: "purdy-quick-card", name: "Purdy Quick Card", description: "Grid of state-coloured action tiles.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
+  { type: "purdy-quick-card", name: "Purdy Quick Card", description: "Grid of state-coloured action tiles.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-notifications-card", name: "Purdy Notifications Card", description: "Notification centre backed by a todo list; keeps dismissed items readable.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
 );
 
 console.info(

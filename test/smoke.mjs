@@ -4,7 +4,7 @@ const src = fs.readFileSync(new URL('../purdy-cards.js', import.meta.url),'utf8'
 const defined = {};
 class FakeEl {
   constructor(){ this.shadowRoot=null; this._listeners={}; this.style={}; }
-  attachShadow(){ this.shadowRoot = { innerHTML:'', querySelector:()=>null, querySelectorAll:()=>[] }; return this.shadowRoot; }
+  attachShadow(){ this.shadowRoot = { innerHTML:'', querySelector:()=>null, querySelectorAll:()=>[], getElementById:()=>null }; return this.shadowRoot; }
   addEventListener(){} dispatchEvent(){ return true; }
 }
 globalThis.HTMLElement = FakeEl;
@@ -72,7 +72,7 @@ check('splitbar empty when no data', s._splitBarHtml('night')==='');
 // ---- home-screen cards ----
 for (const n of ['purdy-header-card','purdy-attention-card','purdy-people-card','purdy-rooms-card','purdy-quick-card'])
   check(`${n} defined`, names.includes(n));
-check('seven entries in customCards', window.customCards.length===7);
+check('every defined element is in customCards', names.every(n => window.customCards.some(c => c.type===n)) && window.customCards.length===names.length);
 
 const H = defined['purdy-header-card'];
 const A = defined['purdy-attention-card'];
@@ -155,6 +155,72 @@ q.hass = hass;
 check('quick marks on-state tile', q.shadowRoot.innerHTML.includes('class="t on'));
 check('quick marks alert tile', q.shadowRoot.innerHTML.includes('class="t alert'));
 check('quick renders 3 columns by default', q.shadowRoot.innerHTML.includes('repeat(3, 1fr)'));
+
+
+// ---- dismissal + notification centre ----
+check('purdy-notifications-card defined', names.includes('purdy-notifications-card'));
+const N = defined['purdy-notifications-card'];
+
+const now = Math.floor(Date.now()/1000);
+const iso = (t) => new Date(t*1000).toISOString();
+const hass2 = { states: {
+  'binary_sensor.parity': { state:'off', attributes:{friendly_name:'Parity'}, last_changed: iso(now-3600) },
+  'input_text.dismissed': { state:'', attributes:{} },
+  'sensor.unread_warn': { state:'3', attributes:{} },
+  'sensor.unread_alert': { state:'0', attributes:{} },
+  'todo.nc': { state:'2', attributes:{} },
+}, _calls: [], callService(d,s,data){ this._calls.push([d,s,data]); },
+   callWS(){ return Promise.resolve({items:[]}); } };
+
+const ad = new A();
+ad.setConfig({ dismiss_store:'input_text.dismissed', rules:[
+  { key:'parity', entity:'binary_sensor.parity', state:'off', severity:'critical', title:'Parity' },
+]});
+ad.hass = hass2;
+check('dismissible row renders an x button', ad.shadowRoot.innerHTML.includes('data-idx="0"'));
+ad._dismiss(ad._rows()[0]);
+const wrote = hass2._calls.find(c => c[1]==='set_value');
+check('dismiss writes to store', !!wrote && /^parity:\d+$/.test(wrote[2].value));
+
+// simulate the store now holding that dismissal
+hass2.states['input_text.dismissed'] = { state: wrote[2].value, attributes:{} };
+ad._last = null; ad.hass = hass2;
+check('dismissed row is hidden', ad._rows().length===0);
+
+// the fault re-firing brings it back
+hass2.states['binary_sensor.parity'] = { state:'off', attributes:{friendly_name:'Parity'}, last_changed: iso(now+60) };
+ad._last = null; ad.hass = hass2;
+check('re-fired fault reappears after dismissal', ad._rows().length===1);
+
+// snooze window
+const ad2 = new A();
+ad2.setConfig({ dismiss_store:'input_text.dismissed', dismiss_hours:1, rules:[
+  { key:'parity', entity:'binary_sensor.parity', state:'off', title:'Parity' },
+]});
+hass2.states['binary_sensor.parity'] = { state:'off', attributes:{friendly_name:'Parity'}, last_changed: iso(now-7200) };
+hass2.states['input_text.dismissed'] = { state:'parity:'+(now-7200), attributes:{} };
+ad2.hass = hass2;
+check('snooze lapses after dismiss_hours', ad2._rows().length===1);
+
+// notification centre parsing
+const nc = new N();
+nc.setConfig({ entity:'todo.nc', unread:[
+  { entity:'sensor.unread_alert', label:'Alert', severity:'critical' },
+  { entity:'sensor.unread_warn', label:'Warning', severity:'warn' },
+]});
+nc._hass = hass2;
+nc._items = [
+  { uid:'1', summary:'Parity invalid', status:'needs_action', description:'[parity] critical · Invalid · raised '+iso(now-600) },
+  { uid:'2', summary:'Version update', status:'completed', description:'[unraid] info · MeTube · raised '+iso(now-9000) },
+];
+nc._render();
+const html = nc.shadowRoot.innerHTML;
+check('centre splits active and dismissed', html.includes('Active · 1') && html.includes('Dismissed · 1'));
+check('centre parses severity', html.includes('dot critical'));
+check('centre strips the key tag from detail', html.includes('Invalid') && !html.includes('[parity]'));
+check('centre shows relative time', /\d+m ago/.test(html));
+check('centre offers restore on dismissed', html.includes('data-restore="2"'));
+check('unread chips drop zero counts', html.includes('3 Warning') && !html.includes('0 Alert'));
 
 // double-define guard: a second load must warn, not throw
 let warned = '';

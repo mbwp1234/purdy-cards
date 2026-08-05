@@ -11,6 +11,7 @@ One bundle, one HACS entry, one version number — a pair of custom Lovelace car
 | `purdy-people-card` | Presence with battery and step counts, side by side. |
 | `purdy-rooms-card` | Scrolling strip of room temperatures and humidity. |
 | `purdy-quick-card` | Grid of state-coloured action tiles. |
+| `purdy-notifications-card` | Notification centre backed by a todo list — keeps dismissed items readable. |
 
 No build step, no dependencies — plain web components.
 
@@ -161,6 +162,26 @@ A rule with `match` instead of `entity` is a **group rule**: it regex-matches en
 
 Rows with an `entity` open more-info on tap.
 
+#### Dismissing
+
+Add a `dismiss_store` and every row gets an × (plus a *Dismiss all* when more than one is showing).
+
+```yaml
+type: custom:purdy-attention-card
+dismiss_store: input_text.attention_dismissed
+dismiss_hours: 12                   # optional snooze ceiling
+log_to: todo.notification_center    # optional history
+rules: [...]
+```
+
+`dismiss_store` is an `input_text` holding `key:epoch|key:epoch`. Each rule gets a stable `key` (set one explicitly, or it is slugged from the title), which is what a dismissal is recorded against.
+
+**A dismissal is an acknowledgement, not a mute.** A row stays hidden only while the underlying condition is unchanged — if the entity changes state again, the fault has re-fired and the row comes back. `dismiss_hours` adds a ceiling so a long-running fault resurfaces on its own.
+
+The compact `key:epoch` encoding matters: `input_text` caps at 255 characters, which fits roughly a dozen dismissals. Keep keys short.
+
+With `log_to` set, each newly raised rule is written to a todo list and dismissing marks it completed — that list is what `purdy-notifications-card` reads.
+
 ### `purdy-people-card`
 
 ```yaml
@@ -214,3 +235,57 @@ tiles:
 ```
 
 Tiles colour themselves from state: `on` / `playing` / `cleaning` read as active by default, `on_when` overrides that list, and `alert_when` turns the tile red. `value_text` overrides the second line. `tap_action` supports `toggle`, `navigate`, `perform-action` and `more-info`.
+
+### `purdy-notifications-card`
+
+A notification centre. It reads a todo list, so dismissed items stay readable instead of vanishing — which is the whole point.
+
+```yaml
+type: custom:purdy-notifications-card
+entity: todo.notification_center
+title: Notifications
+max: 50
+unread:
+  - entity: sensor.unraid_notifications_unread_alert
+    label: Alert
+    severity: critical
+  - entity: sensor.unraid_notifications_unread_warning
+    label: Warning
+    severity: warn
+  - entity: sensor.unraid_notifications_unread_info
+    label: Info
+```
+
+Items are split into **Active** and **Dismissed**. Active rows can be dismissed; dismissed rows can be restored. *Clear history* removes completed items for good.
+
+`unread` is an optional row of counter chips for an upstream system that tracks its own unread state — Unraid, for instance. Zero counts are dropped, so a quiet source shows nothing.
+
+#### Feeding it from elsewhere
+
+Anything that can call `todo.add_item` can appear here. Encode the metadata in the description:
+
+```
+[<key>] <severity> · <detail> · raised <iso timestamp>
+```
+
+`severity` is `critical` / `warn` / `info`; `<key>` is used to find the entry again when it is dismissed. An automation mirroring an upstream notification entity looks like:
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: event.unraid_notification
+    not_to: [unknown, unavailable]
+    not_from: [unknown, unavailable]
+actions:
+  - variables:
+      sev: >-
+        {% set t = trigger.to_state.attributes.event_type | default('info') %}
+        {{ 'critical' if t == 'alert' else ('warn' if t == 'warning' else 'info') }}
+  - action: todo.add_item
+    target: { entity_id: todo.notification_center }
+    data:
+      item: "{{ trigger.to_state.attributes.subject }}"
+      description: >-
+        [unraid] {{ sev }} · {{ trigger.to_state.attributes.description }}
+        · raised {{ trigger.to_state.attributes.timestamp }}
+```
