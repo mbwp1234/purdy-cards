@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.7.0";
+const PC_VERSION = "1.7.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -3564,8 +3564,11 @@ class PurdyRemoteCard extends PcBaseCard {
   }
 
   _isOn(t) {
-    const s = pcState(this._hass, t.remote);
-    return s === "on";
+    if (t.media_player && this._hass.states[t.media_player]) {
+      const ms = pcState(this._hass, t.media_player);
+      return ms !== "off" && ms !== "unavailable" && ms !== "unknown" && ms !== "";
+    }
+    return pcState(this._hass, t.remote) === "on";
   }
 
   /* Default to whichever television is actually on. */
@@ -3589,25 +3592,19 @@ class PurdyRemoteCard extends PcBaseCard {
     this._hass.callService("remote", "turn_on", { entity_id: t.remote, activity });
   }
 
-  _vol(t) {
-    const st = this._hass.states[t.media_player];
-    const v = st && st.attributes.volume_level;
-    return v == null ? 0 : Math.round(v * 100);
-  }
-
   _muted(t) {
     const st = this._hass.states[t.media_player];
     return !!(st && st.attributes.is_volume_muted);
   }
 
-  /* Volume goes through the media player, not remote.send_command. Key names
-     differ per platform (Samsung, Android TV, Chromecast) but volume_set is
-     the same everywhere. */
-  _setVol(pct) {
+  /* Volume steps rather than sets. Samsung's Tizen websocket advertises
+     VOLUME_SET but never honours it and reports volume_level as 0 forever,
+     so an absolute slider is meaningless. VOLUME_STEP works everywhere. */
+  _step(dir) {
     const t = this._tv();
     if (!t.media_player) return;
-    this._hass.callService("media_player", "volume_set", {
-      entity_id: t.media_player, volume_level: Math.max(0, Math.min(100, pct)) / 100,
+    this._hass.callService("media_player", dir > 0 ? "volume_up" : "volume_down", {
+      entity_id: t.media_player,
     });
   }
 
@@ -3621,10 +3618,15 @@ class PurdyRemoteCard extends PcBaseCard {
 
   _power() {
     const t = this._tv();
+    const on = this._isOn(t);
+    if (t.media_player && this._hass.states[t.media_player]) {
+      this._hass.callService("media_player", on ? "turn_off" : "turn_on", {
+        entity_id: t.media_player,
+      });
+      return;
+    }
     if (!t.remote) return;
-    this._hass.callService("remote", this._isOn(t) ? "turn_off" : "turn_on", {
-      entity_id: t.remote,
-    });
+    this._hass.callService("remote", on ? "turn_off" : "turn_on", { entity_id: t.remote });
   }
 
   _render() {
@@ -3715,13 +3717,11 @@ class PurdyRemoteCard extends PcBaseCard {
                 cursor: pointer; background: var(--pc-chip); color: var(--pc-muted);
                 display: flex; align-items: center; justify-content: center; }
         .vbtn ha-icon { --mdc-icon-size: 18px; }
-        .slider { flex: 1; -webkit-appearance: none; appearance: none; height: 8px;
-                  border-radius: 5px; background: var(--pc-track); outline: none; }
-        .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px;
-                  border-radius: 50%; background: var(--pc-cool); cursor: pointer; }
-        .slider::-moz-range-thumb { width: 18px; height: 18px; border: 0;
-                  border-radius: 50%; background: var(--pc-cool); cursor: pointer; }
-        .vnum { font-size: 13px; font-weight: 650; min-width: 26px; text-align: right; }
+        .vstep { flex: 1; height: 40px; border-radius: 14px; border: 0; cursor: pointer;
+                 background: var(--pc-panel-2); color: var(--pc-text);
+                 display: flex; align-items: center; justify-content: center; }
+        .vstep:active { background: var(--pc-chip); }
+        .vbtn.muted { color: var(--pc-bad); }
       </style>
 
       <div class="card">
@@ -3754,12 +3754,15 @@ class PurdyRemoteCard extends PcBaseCard {
 
         ${on && t.media_player && this._hass.states[t.media_player] ? `
           <div class="vol">
-            <button class="vbtn" type="button" id="mute" aria-label="Mute">
+            <button class="vstep" type="button" id="voldown" aria-label="Volume down">
+              <ha-icon icon="mdi:volume-minus"></ha-icon>
+            </button>
+            <button class="vbtn ${this._muted(t) ? "muted" : ""}" type="button" id="mute" aria-label="Mute">
               <ha-icon icon="${this._muted(t) ? "mdi:volume-off" : "mdi:volume-high"}"></ha-icon>
             </button>
-            <input class="slider" type="range" min="0" max="100" step="1"
-                   value="${this._vol(t)}" id="vol" aria-label="Volume" />
-            <span class="num vnum">${this._vol(t)}</span>
+            <button class="vstep" type="button" id="volup" aria-label="Volume up">
+              <ha-icon icon="mdi:volume-plus"></ha-icon>
+            </button>
           </div>` : ""}
 
         ${!on ? `<div class="off-note">${t.name} is off — turn it on to use the remote.</div>` : `
@@ -3812,8 +3815,10 @@ class PurdyRemoteCard extends PcBaseCard {
     if (p) p.addEventListener("click", () => this._power());
     const m = this.shadowRoot.getElementById("mute");
     if (m) m.addEventListener("click", () => this._toggleMute());
-    const v = this.shadowRoot.getElementById("vol");
-    if (v) v.addEventListener("change", (e) => this._setVol(parseInt(e.target.value, 10)));
+    const vu = this.shadowRoot.getElementById("volup");
+    if (vu) vu.addEventListener("click", () => this._step(1));
+    const vd = this.shadowRoot.getElementById("voldown");
+    if (vd) vd.addEventListener("click", () => this._step(-1));
   }
 
   getCardSize() {
