@@ -157,6 +157,18 @@ check('quick marks alert tile', q.shadowRoot.innerHTML.includes('class="t alert'
 check('quick renders 3 columns by default', q.shadowRoot.innerHTML.includes('repeat(3, 1fr)'));
 
 
+
+// value_entity: second line reads from a different entity
+hass.states['sensor.drawer_pct'] = { state:'77', attributes:{ unit_of_measurement:'%' } };
+const q2 = new Q();
+q2.setConfig({ tiles:[
+  { entity:'vacuum.litter', name:'Litter', value_entity:'sensor.drawer_pct', alert_when:['error'] },
+]});
+q2.hass = hass;
+check('value_entity drives the second line', q2.shadowRoot.innerHTML.includes('77 %'));
+check('value_entity keeps tone from the main entity', q2.shadowRoot.innerHTML.includes('class="t alert'));
+check('value_entity is watched for updates', q2._watched.includes('sensor.drawer_pct'));
+
 // ---- dismissal + notification centre ----
 check('purdy-notifications-card defined', names.includes('purdy-notifications-card'));
 const N = defined['purdy-notifications-card'];

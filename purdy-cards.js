@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.2.0";
+const PC_VERSION = "1.2.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -3352,7 +3352,9 @@ class PurdyQuickCard extends PcBaseCard {
       throw new Error("purdy-quick-card: 'tiles' (a list) is required");
     }
     this._config = { columns: 3, ...config };
-    this._watched = config.tiles.map((t) => t.entity).filter(Boolean);
+    this._watched = config.tiles
+      .reduce((acc, t) => acc.concat([t.entity, t.value_entity]), [])
+      .filter(Boolean);
     this._last = null;
   }
 
@@ -3386,8 +3388,11 @@ class PurdyQuickCard extends PcBaseCard {
       <div class="grid">
         ${this._config.tiles.map((t, i) => {
           const st = this._hass.states[t.entity];
-          const raw = st ? st.state : "";
-          const unit = st && st.attributes.unit_of_measurement ? " " + st.attributes.unit_of_measurement : "";
+          /* The second line can come from a different entity — a tile for the
+             vacuum that reads out its waste drawer, for instance. */
+          const vs = this._hass.states[t.value_entity || t.entity];
+          const raw = vs ? vs.state : "";
+          const unit = vs && vs.attributes.unit_of_measurement ? " " + vs.attributes.unit_of_measurement : "";
           const value = t.value_text || (raw ? raw.replace(/_/g, " ") + unit : "—");
           return `
             <div class="t ${this._tone(t)} tappable" data-idx="${i}">
