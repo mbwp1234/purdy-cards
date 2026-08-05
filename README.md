@@ -98,6 +98,16 @@ vitals:
 
 Both modes accept `navigate`. A value starting with `#` opens a Bubble Card popup; anything else is treated as a dashboard path. Taps on interactive children — steppers, zone buttons, chips — are excluded, so the link never fights the controls.
 
+## Building
+
+`purdy-cards.js` is generated. Edit `src/` and rebuild:
+
+```
+node build.mjs
+```
+
+Numeric filename prefixes define concatenation order — `00-core.js` first (version, shared tokens, `pcDefine`, `pcNavigate`), `90-register.js` last. HACS serves a single file; that is the only reason the bundle is one.
+
 ## Tests
 
 ```

@@ -391,6 +391,28 @@ check('meter is hidden once the group is open', !m2.includes('class="mwrap"'));
 check('problem sensor off maps to OK', m2.includes('>OK<'));
 check('problem sensor off is coloured good', m2.includes('goodv'));
 
+
+// group-rule entities are folded into the watch list (regression: the set-hass
+// override was lost in the v1.2.0 rewrite, so a low battery alone never rendered)
+const ag = new A();
+ag.setConfig({ rules:[{ match:'battery_plus_low$', state:'on', title:'low batteries' }] });
+ag.hass = hass;
+check('group rule watches its matching entities', ag._watched.includes('binary_sensor.a_battery_plus_low'));
+check('group rule memoises the registry scan', !!ag._mCache && Array.isArray(ag._mCache['battery_plus_low$']));
+const firstScan = ag._mCache['battery_plus_low$'];
+ag.hass = hass;
+check('memoised scan is reused, not rebuilt', ag._mCache['battery_plus_low$'] === firstScan);
+
+// every card offers a stub config for the picker
+for (const n of names) {
+  const C = defined[n];
+  if (!C.getStubConfig) { check(n + ' has getStubConfig', false); continue; }
+  const stub = C.getStubConfig(hass);
+  let ok = true;
+  try { const inst = new C(); inst.setConfig(stub); } catch (e) { ok = false; }
+  check(n + ' stub config is valid', ok);
+}
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

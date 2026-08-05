@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.6.2";
+const PC_VERSION = "1.7.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -2693,6 +2693,11 @@ class PcBaseCard extends HTMLElement {
 /* ---------------------------------------------------------------- header --*/
 
 class PurdyHeaderCard extends PcBaseCard {
+  static getStubConfig(hass) {
+    const w = Object.keys(hass.states).find((e) => e.startsWith("weather."));
+    return { name: "", weather: w || "weather.home" };
+  }
+
   setConfig(config) {
     this._config = { name: "", ...config };
     const c = this._config;
@@ -2765,6 +2770,13 @@ class PurdyHeaderCard extends PcBaseCard {
 /* ------------------------------------------------------------- attention --*/
 
 class PurdyAttentionCard extends PcBaseCard {
+  static getStubConfig() {
+    return {
+      title: "Needs attention",
+      rules: [{ entity: "binary_sensor.problem", state: "on", severity: "warn", title: "Problem" }],
+    };
+  }
+
   setConfig(config) {
     if (!config || !Array.isArray(config.rules)) {
       throw new Error("purdy-attention-card: 'rules' (a list) is required");
@@ -2777,8 +2789,40 @@ class PurdyAttentionCard extends PcBaseCard {
     if (config.dismiss_store) ids.push(config.dismiss_store);
     this._watched = ids;
     this._last = null;
-    this._batteryRule = (config.rules || []).find((r) => r.match);
+    this._groupRule = (config.rules || []).find((r) => r.match);
     this._logged = {};
+  }
+
+  /* Group rules match by regex across the whole registry. Rescanning ~1300
+     entities on every state change is wasteful, so the id list is cached and
+     rebuilt only when the registry size changes or the cache ages out. */
+  _matching(pattern) {
+    const size = Object.keys(this._hass.states).length;
+    const now = Date.now();
+    if (!this._mCache || this._mSize !== size || now - this._mAt > 60000) {
+      this._mCache = {};
+      this._mSize = size;
+      this._mAt = now;
+    }
+    if (!this._mCache[pattern]) {
+      const pat = new RegExp(pattern);
+      this._mCache[pattern] = Object.keys(this._hass.states).filter((id) => pat.test(id));
+    }
+    return this._mCache[pattern];
+  }
+
+  /* A group rule's entities are not known at setConfig time, so fold them
+     into the watch list here — otherwise a battery going low on its own
+     would never re-render the card. */
+  set hass(hass) {
+    if (this._groupRule && this._config) {
+      this._hass = hass;
+      const pat = new RegExp(this._groupRule.match);
+      this._watched = this._watched
+        .filter((id) => !pat.test(id))
+        .concat(this._matching(this._groupRule.match));
+    }
+    super.hass = hass;
   }
 
   /* A rule needs a stable id so a dismissal survives a re-render. Prefer an
@@ -2820,11 +2864,9 @@ class PurdyAttentionCard extends PcBaseCard {
       return Math.floor(new Date(this._hass.states[r.entity].last_changed).getTime() / 1000);
     }
     if (r.match) {
-      const pat = new RegExp(r.match);
       let newest = 0;
-      Object.keys(this._hass.states).forEach((id) => {
-        if (!pat.test(id)) return;
-        if (this._hass.states[id].state !== (r.state || "on")) return;
+      this._matching(r.match).forEach((id) => {
+        if (!this._hass.states[id] || this._hass.states[id].state !== (r.state || "on")) return;
         const t = Math.floor(new Date(this._hass.states[id].last_changed).getTime() / 1000);
         if (t > newest) newest = t;
       });
@@ -2848,9 +2890,8 @@ class PurdyAttentionCard extends PcBaseCard {
     const out = [];
     (this._config.rules || []).forEach((r, i) => {
       if (r.match) {
-        const pat = new RegExp(r.match);
-        const hits = Object.keys(this._hass.states)
-          .filter((id) => pat.test(id) && this._hass.states[id].state === (r.state || "on"))
+        const hits = this._matching(r.match)
+          .filter((id) => this._hass.states[id] && this._hass.states[id].state === (r.state || "on"))
           .map((id) => (this._hass.states[id].attributes.friendly_name || id)
             .replace(r.strip || "", "").trim());
         if (hits.length) {
@@ -3055,6 +3096,11 @@ class PurdyAttentionCard extends PcBaseCard {
 /* Reads the todo list the attention card logs into, so dismissed items stay
    readable instead of vanishing. */
 class PurdyNotificationsCard extends PcBaseCard {
+  static getStubConfig(hass) {
+    const t = Object.keys(hass.states).find((e) => e.startsWith("todo."));
+    return { entity: t || "todo.notification_center", title: "Notifications" };
+  }
+
   setConfig(config) {
     if (!config || !config.entity) {
       throw new Error("purdy-notifications-card: 'entity' (a todo list) is required");
@@ -3246,6 +3292,11 @@ class PurdyNotificationsCard extends PcBaseCard {
 /* ---------------------------------------------------------------- people --*/
 
 class PurdyPeopleCard extends PcBaseCard {
+  static getStubConfig(hass) {
+    const people = Object.keys(hass.states).filter((e) => e.startsWith("person.")).slice(0, 2);
+    return { people: (people.length ? people : ["person.someone"]).map((e) => ({ entity: e })) };
+  }
+
   setConfig(config) {
     if (!config || !Array.isArray(config.people)) {
       throw new Error("purdy-people-card: 'people' (a list) is required");
@@ -3313,6 +3364,13 @@ class PurdyPeopleCard extends PcBaseCard {
 /* ----------------------------------------------------------------- rooms --*/
 
 class PurdyRoomsCard extends PcBaseCard {
+  static getStubConfig(hass) {
+    const t = Object.keys(hass.states)
+      .filter((e) => hass.states[e].attributes.device_class === "temperature")
+      .slice(0, 3);
+    return { rooms: (t.length ? t : ["sensor.temperature"]).map((e) => ({ temp: e })) };
+  }
+
   setConfig(config) {
     if (!config || !Array.isArray(config.rooms)) {
       throw new Error("purdy-rooms-card: 'rooms' (a list) is required");
@@ -3366,6 +3424,11 @@ class PurdyRoomsCard extends PcBaseCard {
 /* ----------------------------------------------------------------- quick --*/
 
 class PurdyQuickCard extends PcBaseCard {
+  static getStubConfig(hass) {
+    const l = Object.keys(hass.states).filter((e) => e.startsWith("light.")).slice(0, 3);
+    return { columns: 3, tiles: (l.length ? l : ["light.example"]).map((e) => ({ entity: e })) };
+  }
+
   setConfig(config) {
     if (!config || !Array.isArray(config.tiles)) {
       throw new Error("purdy-quick-card: 'tiles' (a list) is required");
@@ -3477,6 +3540,11 @@ const PC_BRANDS = {
 };
 
 class PurdyRemoteCard extends PcBaseCard {
+  static getStubConfig(hass) {
+    const r = Object.keys(hass.states).find((e) => e.startsWith("remote."));
+    return { tvs: [{ name: "TV", remote: r || "remote.tv" }], apps: [] };
+  }
+
   setConfig(config) {
     if (!config || !Array.isArray(config.tvs) || !config.tvs.length) {
       throw new Error("purdy-remote-card: 'tvs' (a list) is required");
@@ -3759,6 +3827,10 @@ class PurdyRemoteCard extends PcBaseCard {
    carries the numbers you would have opened it for, so most visits end without
    expanding anything. A group holding a fault shows it while still closed. */
 class PurdyDevicesCard extends PcBaseCard {
+  static getStubConfig() {
+    return { title: "Devices", groups: [{ name: "Group", chips: [], body: {} }] };
+  }
+
   setConfig(config) {
     if (!config || !Array.isArray(config.groups)) {
       throw new Error("purdy-devices-card: 'groups' (a list) is required");
