@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.2.1";
+const PC_VERSION = "1.3.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -3353,7 +3353,7 @@ class PurdyQuickCard extends PcBaseCard {
     }
     this._config = { columns: 3, ...config };
     this._watched = config.tiles
-      .reduce((acc, t) => acc.concat([t.entity, t.value_entity]), [])
+      .reduce((acc, t) => acc.concat([t.entity, t.value_entity, t.bar_entity]), [])
       .filter(Boolean);
     this._last = null;
   }
@@ -3384,6 +3384,10 @@ class PurdyQuickCard extends PcBaseCard {
         .t.on ha-icon, .t.on .tl { color: var(--pc-warn); }
         .t.alert { background: rgba(239, 106, 106, 0.13); }
         .t.alert ha-icon, .t.alert .tl { color: var(--pc-bad); }
+        .t.hasbar { position: relative; overflow: hidden; padding-bottom: 15px; }
+        .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--pc-track); }
+        .fill i { display: block; height: 100%; transition: width 0.3s ease; }
+        @media (prefers-reduced-motion: reduce) { .fill i { transition: none; } }
       </style>
       <div class="grid">
         ${this._config.tiles.map((t, i) => {
@@ -3394,13 +3398,29 @@ class PurdyQuickCard extends PcBaseCard {
           const raw = vs ? vs.state : "";
           const unit = vs && vs.attributes.unit_of_measurement ? " " + vs.attributes.unit_of_measurement : "";
           const value = t.value_text || (raw ? raw.replace(/_/g, " ") + unit : "—");
+          /* An optional fill bar. Colour tracks the level, not the tile tone —
+             a nearly-full waste tank should read amber even when the machine
+             itself is idle and healthy. */
+          let bar = "";
+          if (t.bar_entity) {
+            const pct = pcNum(this._hass, t.bar_entity);
+            if (pct != null) {
+              const max = t.bar_max || 100;
+              const p = Math.max(0, Math.min(100, (pct / max) * 100));
+              const warn = t.bar_warn_above == null ? 80 : t.bar_warn_above;
+              const crit = t.bar_critical_above == null ? 95 : t.bar_critical_above;
+              const col = p >= crit ? "var(--pc-bad)" : p >= warn ? "var(--pc-warn)" : "var(--pc-cool)";
+              bar = `<div class="fill"><i style="width:${p.toFixed(0)}%;background:${col}"></i></div>`;
+            }
+          }
           return `
-            <div class="t ${this._tone(t)} tappable" data-idx="${i}">
+            <div class="t ${this._tone(t)} ${bar ? "hasbar" : ""} tappable" data-idx="${i}">
               <ha-icon icon="${t.icon || (st && st.attributes.icon) || "mdi:circle-outline"}"></ha-icon>
               <div>
                 <div class="tl trunc">${pcName(this._hass, t.entity, t.name)}</div>
                 <div class="tv trunc">${value}</div>
               </div>
+              ${bar}
             </div>`;
         }).join("")}
       </div>

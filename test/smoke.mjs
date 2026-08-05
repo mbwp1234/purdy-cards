@@ -169,6 +169,27 @@ check('value_entity drives the second line', q2.shadowRoot.innerHTML.includes('7
 check('value_entity keeps tone from the main entity', q2.shadowRoot.innerHTML.includes('class="t alert'));
 check('value_entity is watched for updates', q2._watched.includes('sensor.drawer_pct'));
 
+
+// fill bar
+hass.states['sensor.fill_low'] = { state:'35', attributes:{} };
+hass.states['sensor.fill_high'] = { state:'88', attributes:{} };
+hass.states['sensor.fill_crit'] = { state:'97', attributes:{} };
+const q3 = new Q();
+q3.setConfig({ tiles:[
+  { entity:'light.lr', name:'A', bar_entity:'sensor.fill_low' },
+  { entity:'light.lr', name:'B', bar_entity:'sensor.fill_high' },
+  { entity:'light.lr', name:'C', bar_entity:'sensor.fill_crit' },
+  { entity:'light.lr', name:'D' },
+]});
+q3.hass = hass;
+const h3 = q3.shadowRoot.innerHTML;
+check('bar renders at the right width', h3.includes('width:35%'));
+check('bar is cool below the warn threshold', h3.includes('width:35%;background:var(--pc-cool)'));
+check('bar warns above 80', h3.includes('width:88%;background:var(--pc-warn)'));
+check('bar goes critical above 95', h3.includes('width:97%;background:var(--pc-bad)'));
+check('tiles without bar_entity get no bar', (h3.match(/class="fill"/g) || []).length === 3);
+check('bar_entity is watched', q3._watched.includes('sensor.fill_high'));
+
 // ---- dismissal + notification centre ----
 check('purdy-notifications-card defined', names.includes('purdy-notifications-card'));
 const N = defined['purdy-notifications-card'];
