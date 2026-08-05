@@ -68,6 +68,43 @@ check('splitbar deep width 24.1%', bar.includes('width:24.1%'));
 s._num = () => null;
 check('splitbar empty when no data', s._splitBarHtml('night')==='');
 
+// _sleepSpan must chart the LAST session only. Shape taken from real history:
+// last night's tail is still inside the window when tonight starts, and the
+// two must not be drawn as one span with a dead gap between them.
+const T = (hhmm) => new Date(`2026-08-05T${hhmm}:00-04:00`).getTime();
+const spanCard = new SPC();
+spanCard.setConfig({ sleep_state:'sensor.sleep_state' });
+spanCard._history['sensor.sleep_state'] = [
+  { t:T('03:35'), v:'light_sleep' },
+  { t:T('04:27'), v:'awake' },
+  { t:T('04:30'), v:'light_sleep' },
+  { t:T('07:13'), v:'awake' },
+  { t:T('07:17'), v:'light_sleep' },
+  { t:T('07:18'), v:'awake' },
+  { t:T('07:31'), v:'unavailable' },
+  { t:T('19:17'), v:'unknown' },
+  { t:T('19:18'), v:'awake' },
+  { t:T('19:25'), v:'light_sleep' },
+];
+const span = spanCard._sleepSpan();
+check('span starts at tonight, not last night', span && span.t0===T('19:25'));
+check('open session runs to now', span && span.t1 > T('19:25'));
+
+// A short awake blip inside a night must not split the session.
+spanCard._history['sensor.sleep_state'] = [
+  { t:T('19:25'), v:'light_sleep' },
+  { t:T('21:00'), v:'awake' },
+  { t:T('21:04'), v:'deep_sleep' },
+  { t:T('22:00'), v:'awake' },
+];
+const span2 = spanCard._sleepSpan();
+check('4-minute wake does not split the session', span2 && span2.t0===T('19:25'));
+check('span ends where sleep stopped', span2 && span2.t1===T('22:00'));
+
+// Awake alone is charted but never opens a session.
+spanCard._history['sensor.sleep_state'] = [{ t:T('19:18'), v:'awake' }];
+check('no span when nothing asleep', spanCard._sleepSpan()===null);
+
 
 // ---- home-screen cards ----
 for (const n of ['purdy-header-card','purdy-attention-card','purdy-people-card','purdy-rooms-card','purdy-quick-card'])

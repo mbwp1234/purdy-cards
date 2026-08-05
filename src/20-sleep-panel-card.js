@@ -1,10 +1,11 @@
-const SPC_VERSION = "1.1.0";
+const SPC_VERSION = "1.2.0";
 
 const SPC_DEFAULTS = {
   name: "Sleep",
   ring: { max_hours: 12 },
   hypnogram: {
     max_hours: 14,
+    session_gap_minutes: 90,
     bars: 150,
     levels: { awake: "high", light_sleep: "mid", deep_sleep: "low" },
     colors: { awake: "#FFA74E", light_sleep: "#50A0FF", deep_sleep: "#AA78FF" },
@@ -14,6 +15,11 @@ const SPC_DEFAULTS = {
 
 // Sleep states we chart. Everything else (unknown, unavailable) is a gap.
 const SPC_TRACKED = ["awake", "light_sleep", "deep_sleep"];
+
+// Of those, the ones that mean a session is running. `awake` is charted inside
+// a session but never opens one or holds one open, so the wake-up that ended
+// last night does not keep it alive into tonight.
+const SPC_SLEEPING = ["light_sleep", "deep_sleep"];
 
 class SleepPanelCard extends HTMLElement {
   constructor() {
@@ -160,6 +166,11 @@ class SleepPanelCard extends HTMLElement {
     return String(v ?? "").trim().toLowerCase().replace(/\s+/g, "_");
   }
 
+  /** Actually asleep — `awake` is charted but does not delimit a session. */
+  _isSleepingState(v) {
+    return SPC_SLEEPING.includes(this._norm(v));
+  }
+
   _isAsleepState(v) {
     return SPC_TRACKED.includes(this._norm(v));
   }
@@ -303,23 +314,38 @@ class SleepPanelCard extends HTMLElement {
   }
 
   /**
-   * The span worth charting: trims leading and trailing gaps so Night shows
-   * this session and Recap shows last night, without needing a configured
-   * window.
+   * The span worth charting: the *most recent* sleep session, so Night shows
+   * tonight and Recap shows last night, without needing a configured window.
+   *
+   * The history window deliberately reaches back far enough to still hold the
+   * tail of the previous night once a new one starts, so first-asleep to
+   * last-asleep would glue two nights together with a dead gap between them.
+   * Walk back from the last sleep reading instead and stop at the first break
+   * longer than `session_gap_minutes` — sock-off (`unavailable`), `unknown`
+   * and long awake stretches end a session, while the brief awake blips
+   * inside a night do not.
    */
   _sleepSpan() {
     const events = this._history[this._config.sleep_state] || [];
     if (!events.length) return null;
 
-    let first = -1;
-    let last = -1;
+    const asleep = [];
     events.forEach((e, i) => {
-      if (this._isAsleepState(e.v)) {
-        if (first === -1) first = i;
-        last = i;
-      }
+      if (this._isSleepingState(e.v)) asleep.push(i);
     });
-    if (first === -1) return null;
+    if (!asleep.length) return null;
+
+    const gapMs = (this._config.hypnogram.session_gap_minutes || 90) * 60000;
+    const last = asleep[asleep.length - 1];
+    let first = last;
+    for (let k = asleep.length - 1; k > 0; k--) {
+      const cur = asleep[k];
+      const prev = asleep[k - 1];
+      // `prev`'s sleep state ended when the next event replaced it.
+      const prevEnd = events[prev + 1] ? events[prev + 1].t : events[prev].t;
+      if (events[cur].t - prevEnd > gapMs) break;
+      first = prev;
+    }
 
     const t0 = events[first].t;
     // The session ends where the sensor stopped reporting a sleep state,
