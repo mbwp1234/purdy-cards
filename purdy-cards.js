@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.7.1";
+const PC_VERSION = "1.7.2";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -2695,11 +2695,12 @@ class PcBaseCard extends HTMLElement {
 class PurdyHeaderCard extends PcBaseCard {
   static getStubConfig(hass) {
     const w = Object.keys(hass.states).find((e) => e.startsWith("weather."));
-    return { name: "", weather: w || "weather.home" };
+    /* No name key at all, so the greeting follows whoever is signed in. */
+    return { weather: w || "weather.home" };
   }
 
   setConfig(config) {
-    this._config = { name: "", ...config };
+    this._config = { ...config };
     const c = this._config;
     this._watched = [c.weather, c.occupancy].filter(Boolean);
     this._last = null;
@@ -2716,6 +2717,21 @@ class PurdyHeaderCard extends PcBaseCard {
     if (h < 12) return "Good morning";
     if (h < 17) return "Good afternoon";
     return "Good evening";
+  }
+
+  /* Who is actually holding the phone. A dashboard shared by a household
+     should not greet everyone by the same name, so the logged-in user wins
+     unless the config names someone explicitly.
+
+     - name omitted   -> the viewer's own first name
+     - name: "Alex"   -> always Alex
+     - name: ""       -> no name at all */
+  _who() {
+    const c = this._config;
+    if (c.name !== undefined) return c.name;
+    const u = this._hass && this._hass.user;
+    if (!u || !u.name) return "";
+    return String(u.name).trim().split(/\s+/)[0];
   }
 
   _render() {
@@ -2750,7 +2766,7 @@ class PurdyHeaderCard extends PcBaseCard {
       </style>
       <div class="wrap">
         <div>
-          <h2>${this._greeting(now.getHours())}${c.name ? ", " + c.name : ""}</h2>
+          <h2>${this._greeting(now.getHours())}${this._who() ? ", " + this._who() : ""}</h2>
           <div class="sub">${sub}</div>
         </div>
         ${wTemp == null ? "" : `
