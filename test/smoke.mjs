@@ -295,6 +295,53 @@ rc._touched = true; rc._sel = 1; rc._render();
 const rh2 = rc.shadowRoot.innerHTML;
 check('off TV hides the remote body', rh2.includes('is off') && !rh2.includes('DPAD_CENTER'));
 
+
+// ---- devices card ----
+check('purdy-devices-card defined', names.includes('purdy-devices-card'));
+const DC = defined['purdy-devices-card'];
+const dhass = { states: {
+  'sensor.up': { state:'10d 2h', attributes:{} },
+  'sensor.cpu': { state:'9.0', attributes:{ unit_of_measurement:'%' } },
+  'binary_sensor.parity': { state:'off', attributes:{} },
+  'binary_sensor.flash': { state:'on', attributes:{} },
+  'sensor.array': { state:'85.6', attributes:{ unit_of_measurement:'%' } },
+  'switch.a': { state:'on', attributes:{} },
+  'switch.b': { state:'off', attributes:{} },
+}, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
+
+const dc = new DC();
+dc.setConfig({ title:'PurdyNAS', subtitle_entity:'sensor.up',
+  faults:[{entity:'binary_sensor.parity',state:'off'},{entity:'binary_sensor.flash',state:'off'}],
+  groups:[
+    { name:'Stats', chips:['sensor.cpu','sensor.array'],
+      faults:[{entity:'binary_sensor.parity',state:'off'}],
+      body:{ bar:{entity:'sensor.array',label:'Array',warn_above:80},
+             stats:[{label:'CPU',entity:'sensor.cpu'},{label:'Parity',entity:'binary_sensor.parity',bad_when:['off']}] } },
+    { name:'Docker', chips:[], body:{ switch_groups:[{name:'Media',items:[
+        {entity:'switch.a',name:'Jellyfin',url:'http://x'},{entity:'switch.b',name:'MeTube'}]}] } },
+    { divider:'Robots' },
+    { name:'Floor', chips:[], body:{ buttons:[{name:'Start'}] } },
+  ]});
+dc.hass = dhass;
+const dh = dc.shadowRoot.innerHTML;
+check('devices counts only real faults', dh.includes('1 fault'));
+check('devices renders summary chips on the closed row', dh.includes('9.0 % · 85.6 %'));
+check('devices auto-opens a faulted group', dh.includes('data-body="0"'));
+check('devices keeps clean groups closed', !dh.includes('data-body="1"'));
+check('devices renders the divider', dh.includes('Robots'));
+check('devices bar warns above threshold', dh.includes('var(--pc-warn)'));
+// expanding Docker reveals the container grid
+dc._open[1] = true; dc._render();
+const dh2 = dc.shadowRoot.innerHTML;
+check('devices marks running containers', dh2.includes('dock run') && dh2.includes('dock off'));
+check('devices shows a link only for running containers', (dh2.match(/data-url/g)||[]).length === 1);
+check('devices toggles a container on tap', dh2.includes('data-toggle="switch.a"'));
+
+// ---- hypnogram anchoring ----
+const sp = new SPC();
+sp.setConfig({ sleep_state:'sensor.s', hypnogram:{ start_entity:'input_datetime.bed', max_hours:14 } });
+check('hypnogram watches the bedtime anchor', sp._watched.includes('input_datetime.bed'));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

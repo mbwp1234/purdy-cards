@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.4.0";
+const PC_VERSION = "1.5.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -1594,6 +1594,7 @@ class SleepPanelCard extends HTMLElement {
     (c.vitals || []).forEach((v) => { add(v.entity); add(v.last_night); add(v.baseline); });
     if (c.wakeups) { add(c.wakeups.live); add(c.wakeups.last_night); add(c.wakeups.baseline); }
     if (c.bedtime) { add(c.bedtime.entity); add(c.bedtime.baseline); add(c.bedtime.datetime); }
+    if (c.hypnogram) add(c.hypnogram.start_entity);
     if (c.room) { add(c.room.temp); add(c.room.humidity); add(c.room.overnight_avg); }
     (c.chips || []).forEach((ch) => {
       add(ch.entity); add(ch.timer); add(ch.since);
@@ -1777,8 +1778,22 @@ class SleepPanelCard extends HTMLElement {
     if (!this._hass) return;
     const ids = this._historyEntities();
     if (!ids.length) return;
-    const hours = this._config.hypnogram.max_hours || 14;
-    const start = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+    const hyp = this._config.hypnogram;
+    /* A window anchored to "now" slides forward all day, so by the afternoon
+       the front of the night has fallen out of it. When a bedtime entity is
+       configured, fetch from bedtime instead so the whole session is covered
+       however late it is read. */
+    let startMs = Date.now() - (hyp.max_hours || 14) * 3600 * 1000;
+    const anchor = hyp.start_entity && this._hass.states[hyp.start_entity];
+    if (anchor && anchor.state) {
+      const t = Date.parse(String(anchor.state).replace(" ", "T"));
+      if (!isNaN(t) && t < Date.now()) {
+        /* Pad before bedtime so the drop-off is visible, and never reach back
+           further than the recorder is likely to hold. */
+        startMs = Math.max(t - 30 * 60 * 1000, Date.now() - 48 * 3600 * 1000);
+      }
+    }
+    const start = new Date(startMs).toISOString();
     try {
       const res = await this._hass.callApi(
         "GET",
@@ -3502,6 +3517,36 @@ class PurdyRemoteCard extends PcBaseCard {
     this._hass.callService("remote", "turn_on", { entity_id: t.remote, activity });
   }
 
+  _vol(t) {
+    const st = this._hass.states[t.media_player];
+    const v = st && st.attributes.volume_level;
+    return v == null ? 0 : Math.round(v * 100);
+  }
+
+  _muted(t) {
+    const st = this._hass.states[t.media_player];
+    return !!(st && st.attributes.is_volume_muted);
+  }
+
+  /* Volume goes through the media player, not remote.send_command. Key names
+     differ per platform (Samsung, Android TV, Chromecast) but volume_set is
+     the same everywhere. */
+  _setVol(pct) {
+    const t = this._tv();
+    if (!t.media_player) return;
+    this._hass.callService("media_player", "volume_set", {
+      entity_id: t.media_player, volume_level: Math.max(0, Math.min(100, pct)) / 100,
+    });
+  }
+
+  _toggleMute() {
+    const t = this._tv();
+    if (!t.media_player) return;
+    this._hass.callService("media_player", "volume_mute", {
+      entity_id: t.media_player, is_volume_muted: !this._muted(t),
+    });
+  }
+
   _power() {
     const t = this._tv();
     if (!t.remote) return;
@@ -3593,6 +3638,18 @@ class PurdyRemoteCard extends PcBaseCard {
         .row button:active { background: var(--pc-chip); }
         button:focus-visible { outline: 2px solid var(--pc-cool); outline-offset: 2px; }
         .off-note { text-align: center; color: var(--pc-muted); font-size: 12.5px; padding: 18px 0 6px; }
+        .vol { display: flex; align-items: center; gap: 11px; margin: 0 0 14px; }
+        .vbtn { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; border: 0;
+                cursor: pointer; background: var(--pc-chip); color: var(--pc-muted);
+                display: flex; align-items: center; justify-content: center; }
+        .vbtn ha-icon { --mdc-icon-size: 18px; }
+        .slider { flex: 1; -webkit-appearance: none; appearance: none; height: 8px;
+                  border-radius: 5px; background: var(--pc-track); outline: none; }
+        .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px;
+                  border-radius: 50%; background: var(--pc-cool); cursor: pointer; }
+        .slider::-moz-range-thumb { width: 18px; height: 18px; border: 0;
+                  border-radius: 50%; background: var(--pc-cool); cursor: pointer; }
+        .vnum { font-size: 13px; font-weight: 650; min-width: 26px; text-align: right; }
       </style>
 
       <div class="card">
@@ -3623,6 +3680,16 @@ class PurdyRemoteCard extends PcBaseCard {
           </button>
         </div>
 
+        ${on && t.media_player && this._hass.states[t.media_player] ? `
+          <div class="vol">
+            <button class="vbtn" type="button" id="mute" aria-label="Mute">
+              <ha-icon icon="${this._muted(t) ? "mdi:volume-off" : "mdi:volume-high"}"></ha-icon>
+            </button>
+            <input class="slider" type="range" min="0" max="100" step="1"
+                   value="${this._vol(t)}" id="vol" aria-label="Volume" />
+            <span class="num vnum">${this._vol(t)}</span>
+          </div>` : ""}
+
         ${!on ? `<div class="off-note">${t.name} is off — turn it on to use the remote.</div>` : `
           <span class="lbl">Apps</span>
           <div class="apps">
@@ -3652,11 +3719,6 @@ class PurdyRemoteCard extends PcBaseCard {
             ${key("mdi:play-pause", "MEDIA_PLAY_PAUSE")}
             ${key("mdi:fast-forward", "MEDIA_FAST_FORWARD")}
           </div>
-          <div class="row">
-            ${key("mdi:volume-minus", "VOLUME_DOWN")}
-            ${key("mdi:volume-mute", "MUTE")}
-            ${key("mdi:volume-plus", "VOLUME_UP")}
-          </div>
         `}
       </div>
     `;
@@ -3676,10 +3738,267 @@ class PurdyRemoteCard extends PcBaseCard {
     });
     const p = this.shadowRoot.getElementById("pwr");
     if (p) p.addEventListener("click", () => this._power());
+    const m = this.shadowRoot.getElementById("mute");
+    if (m) m.addEventListener("click", () => this._toggleMute());
+    const v = this.shadowRoot.getElementById("vol");
+    if (v) v.addEventListener("change", (e) => this._setVol(parseInt(e.target.value, 10)));
   }
 
   getCardSize() {
     return 12;
+  }
+}
+
+/* ----------------------------------------------------------------- devices --*/
+
+/* A stack of collapsible groups. Everything starts closed and each closed row
+   carries the numbers you would have opened it for, so most visits end without
+   expanding anything. A group holding a fault shows it while still closed. */
+class PurdyDevicesCard extends PcBaseCard {
+  setConfig(config) {
+    if (!config || !Array.isArray(config.groups)) {
+      throw new Error("purdy-devices-card: 'groups' (a list) is required");
+    }
+    this._config = { ...config };
+    const ids = [];
+    const add = (x) => x && typeof x === "string" && ids.push(x);
+    add(config.subtitle_entity);
+    (config.faults || []).forEach((f) => add(f.entity));
+    (config.groups || []).forEach((g) => {
+      (g.chips || []).forEach(add);
+      (g.faults || []).forEach((f) => add(f.entity));
+      const b = g.body || {};
+      if (b.bar) add(b.bar.entity);
+      (b.stats || []).forEach((s) => add(s.entity));
+      (b.switch_groups || []).forEach((sg) => (sg.items || []).forEach((i) => add(i.entity)));
+    });
+    this._watched = ids;
+    this._last = null;
+    this._open = {};
+  }
+
+  _faultCount(list) {
+    return (list || []).filter((f) => {
+      const s = pcState(this._hass, f.entity);
+      if (f.state !== undefined) return s === f.state;
+      if (f.state_not !== undefined) return s !== f.state_not && s !== "";
+      return false;
+    }).length;
+  }
+
+  _chipText(id) {
+    const st = this._hass.states[id];
+    if (!st) return "—";
+    const unit = st.attributes.unit_of_measurement || "";
+    const v = st.state;
+    return isNaN(parseFloat(v)) ? v.replace(/_/g, " ") : v + (unit ? " " + unit : "");
+  }
+
+  _barHtml(bar) {
+    const v = pcNum(this._hass, bar.entity);
+    if (v == null) return "";
+    const max = bar.max || 100;
+    const p = Math.max(0, Math.min(100, (v / max) * 100));
+    const warn = bar.warn_above == null ? 80 : bar.warn_above;
+    const crit = bar.critical_above == null ? 95 : bar.critical_above;
+    const col = p >= crit ? "var(--pc-bad)" : p >= warn ? "var(--pc-warn)" : "var(--pc-cool)";
+    return `
+      <div class="spread"><span class="lbl">${bar.label || ""}</span>
+        <span class="num" style="font-size:12.5px;color:${col}">${Math.round(v)}${bar.suffix || "%"}</span></div>
+      <div class="bar"><i style="width:${p.toFixed(0)}%;background:${col}"></i></div>`;
+  }
+
+  _statsHtml(stats) {
+    return `<div class="stats">${stats.map((s) => {
+      const st = this._hass.states[s.entity];
+      const raw = st ? st.state : "—";
+      let cls = "";
+      if (s.bad_when && s.bad_when.indexOf(raw) >= 0) cls = "badv";
+      else if (s.good_when && s.good_when.indexOf(raw) >= 0) cls = "goodv";
+      const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+      const txt = s.text || (isNaN(parseFloat(raw)) ? raw.replace(/_/g, " ") : raw + unit);
+      return `<div class="stat"><span class="lbl">${s.label}</span><b class="${cls}">${txt}</b></div>`;
+    }).join("")}</div>`;
+  }
+
+  _switchesHtml(groups) {
+    return groups.map((sg) => {
+      const items = sg.items || [];
+      const on = items.filter((i) => pcState(this._hass, i.entity) === "on").length;
+      return `
+        <div class="grouphd"><span class="lbl">${sg.name}</span><span class="line"></span>
+          <span class="lbl num">${on} / ${items.length}</span></div>
+        <div class="dgrid">
+          ${items.map((i) => {
+            const isOn = pcState(this._hass, i.entity) === "on";
+            return `
+              <div class="dock ${isOn ? "run" : "off"}">
+                <ha-icon icon="${i.icon || "mdi:cube-outline"}" data-toggle="${i.entity}" class="tappable"></ha-icon>
+                <div class="grow tappable" data-toggle="${i.entity}">
+                  <div class="nm trunc">${i.name}</div>
+                  <div class="st">${isOn ? "Running" : "Stopped"}</div>
+                </div>
+                ${i.url && isOn ? `<ha-icon class="lnk tappable" icon="mdi:open-in-new" data-url="${i.url}"></ha-icon>` : ""}
+              </div>`;
+          }).join("")}
+        </div>`;
+    }).join("");
+  }
+
+  _bodyHtml(b) {
+    let h = "";
+    if (b.bar) h += this._barHtml(b.bar);
+    if (b.stats) h += this._statsHtml(b.stats);
+    if (b.switch_groups) h += this._switchesHtml(b.switch_groups);
+    if (b.chips) {
+      h += `<div class="chiprow">${b.chips.map((c) =>
+        `<span class="chip ${c.style || ""}">${c.text || this._chipText(c.entity)}</span>`).join("")}</div>`;
+    }
+    if (b.buttons) {
+      h += `<div class="btnrow">${b.buttons.map((btn, i) =>
+        `<button type="button" data-btn="${i}">${btn.name}</button>`).join("")}</div>`;
+    }
+    return h;
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    const c = this._config;
+    const topFaults = this._faultCount(c.faults);
+
+    let idx = -1;
+    const groupsHtml = (c.groups || []).map((g) => {
+      if (g.divider) {
+        return `<div class="secbreak"><span class="lbl">${g.divider}</span><span class="line"></span></div>`;
+      }
+      idx += 1;
+      const gi = idx;
+      const faults = this._faultCount(g.faults);
+      /* A fault forces the group open — minimising must never hide a problem. */
+      const open = this._open[gi] === undefined ? faults > 0 : this._open[gi];
+      const chips = (g.chips || []).map((id) => this._chipText(id)).join(" · ");
+      return `
+        <div class="acc ${faults ? "faulted" : ""}">
+          <div class="summary tappable" data-grp="${gi}">
+            <ha-icon class="chev ${open ? "open" : ""}" icon="mdi:chevron-right"></ha-icon>
+            ${g.icon ? `<ha-icon class="gi" icon="${g.icon}"></ha-icon>` : ""}
+            <div class="grow">
+              <div class="ttl">${g.name}</div>
+              ${chips ? `<div class="smry num">${chips}</div>` : ""}
+            </div>
+            ${faults ? `<span class="chip bad"><span class="cdot"></span>${faults}</span>` : ""}
+          </div>
+          ${open ? `<div class="body" data-body="${gi}">${this._bodyHtml(g.body || {})}</div>` : ""}
+        </div>`;
+    }).join("");
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${PC_BASE}
+        .hdr { display: flex; align-items: center; gap: 11px; padding: 2px 6px 10px; }
+        .hdr b { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
+        .chip.bad { background: rgba(239,106,106,0.15); color: var(--pc-bad); }
+        .chip.good { background: rgba(129,201,149,0.15); color: var(--pc-good); }
+        .chip.warn { background: rgba(242,193,78,0.14); color: var(--pc-warn); }
+        .chip .cdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+        .acc { background: var(--pc-panel); border-radius: var(--pc-radius); overflow: hidden; margin-bottom: 9px; }
+        .acc.faulted { border-left: 3px solid var(--pc-bad); }
+        .summary { display: flex; align-items: center; gap: 11px; padding: 13px 16px; }
+        .chev { --mdc-icon-size: 18px; color: var(--pc-muted); transition: transform 0.18s ease; }
+        .chev.open { transform: rotate(90deg); }
+        @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
+        .gi { color: var(--pc-muted); }
+        .ttl { font-size: 14.5px; font-weight: 650; letter-spacing: -0.012em; }
+        .smry { font-size: 11.5px; color: var(--pc-muted); }
+        .body { padding: 0 16px 15px; }
+
+        .secbreak { display: flex; align-items: center; gap: 10px; margin: 16px 6px 8px; }
+        .secbreak .line { flex: 1; height: 1px; background: var(--pc-line); }
+        .secbreak .lbl { letter-spacing: 0.16em; }
+
+        .bar { height: 6px; border-radius: 3px; background: var(--pc-track); overflow: hidden; margin-top: 7px; }
+        .bar i { display: block; height: 100%; border-radius: 3px; }
+
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+        .stat { background: var(--pc-panel-2); border-radius: 14px; padding: 9px 10px; }
+        .stat .lbl { display: block; margin-bottom: 4px; }
+        .stat b { font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.015em; }
+        .stat b.badv { color: var(--pc-bad); }
+        .stat b.goodv { color: var(--pc-good); }
+
+        .grouphd { display: flex; align-items: center; gap: 8px; margin: 15px 0 0; color: var(--pc-muted); }
+        .grouphd .line { flex: 1; height: 1px; background: var(--pc-line); }
+        .dgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; }
+        .dock { background: var(--pc-panel-2); border-radius: 14px; padding: 9px 10px;
+                display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .dock .nm { font-size: 12.5px; font-weight: 600; letter-spacing: -0.01em; }
+        .dock .st { font-size: 10.5px; color: var(--pc-muted); }
+        .dock.run { background: rgba(129,201,149,0.11); }
+        .dock.run > ha-icon { color: var(--pc-good); }
+        .dock.off > ha-icon, .dock.off .nm { color: var(--pc-muted); }
+        .dock .lnk { --mdc-icon-size: 15px; color: var(--pc-muted); }
+
+        .chiprow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+        .btnrow { display: flex; gap: 8px; margin-top: 11px; }
+        .btnrow button {
+          flex: 1; height: 42px; border: 0; border-radius: 14px; cursor: pointer;
+          background: var(--pc-panel-2); color: var(--pc-text); font-family: inherit;
+          font-size: 13px; font-weight: 600;
+        }
+        .btnrow button:active { background: var(--pc-chip); }
+        button:focus-visible, .tappable:focus-visible { outline: 2px solid var(--pc-cool); outline-offset: 2px; }
+      </style>
+
+      <div class="hdr">
+        ${c.icon ? `<ha-icon icon="${c.icon}" style="--mdc-icon-size:26px;color:var(--pc-cool)"></ha-icon>` : ""}
+        <div class="grow">
+          <b>${c.title || "Devices"}</b>
+          ${c.subtitle_entity ? `<div class="lbl">${pcState(this._hass, c.subtitle_entity)}</div>` : ""}
+        </div>
+        ${topFaults
+          ? `<span class="chip bad"><span class="cdot"></span>${topFaults} fault${topFaults > 1 ? "s" : ""}</span>`
+          : `<span class="chip good"><span class="cdot"></span>Healthy</span>`}
+      </div>
+      ${groupsHtml}
+    `;
+
+    this.shadowRoot.querySelectorAll("[data-grp]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const i = parseInt(el.dataset.grp, 10);
+        const cur = this._open[i] === undefined
+          ? this._faultCount((this._config.groups.filter((g) => !g.divider)[i] || {}).faults) > 0
+          : this._open[i];
+        this._open[i] = !cur;
+        this._render();
+      });
+    });
+    this.shadowRoot.querySelectorAll("[data-toggle]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._hass.callService("homeassistant", "toggle", { entity_id: el.dataset.toggle });
+      });
+    });
+    this.shadowRoot.querySelectorAll("[data-url]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.open(el.dataset.url, "_blank");
+      });
+    });
+    this.shadowRoot.querySelectorAll("[data-btn]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const body = el.closest("[data-body]");
+        const gi = parseInt(body.dataset.body, 10);
+        const g = this._config.groups.filter((x) => !x.divider)[gi];
+        const btn = ((g.body || {}).buttons || [])[parseInt(el.dataset.btn, 10)];
+        if (btn) pcAction(this, this._hass, btn.tap_action, btn.entity);
+      });
+    });
+  }
+
+  getCardSize() {
+    return 10;
   }
 }
 
@@ -3692,6 +4011,7 @@ pcDefine("purdy-rooms-card", PurdyRoomsCard);
 pcDefine("purdy-quick-card", PurdyQuickCard);
 pcDefine("purdy-notifications-card", PurdyNotificationsCard);
 pcDefine("purdy-remote-card", PurdyRemoteCard);
+pcDefine("purdy-devices-card", PurdyDevicesCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -3715,7 +4035,8 @@ window.customCards.push(
   { type: "purdy-rooms-card", name: "Purdy Rooms Card", description: "Scrolling strip of room temperatures and humidity.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-quick-card", name: "Purdy Quick Card", description: "Grid of state-coloured action tiles.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-notifications-card", name: "Purdy Notifications Card", description: "Notification centre backed by a todo list; keeps dismissed items readable.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
-  { type: "purdy-remote-card", name: "Purdy Remote Card", description: "Android TV remote with a device selector, brand app grid and circular d-pad.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
+  { type: "purdy-remote-card", name: "Purdy Remote Card", description: "Android TV remote with a device selector, brand app grid and circular d-pad.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-devices-card", name: "Purdy Devices Card", description: "Collapsible device groups with summary lines; faults stay visible while collapsed.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
 );
 
 console.info(
