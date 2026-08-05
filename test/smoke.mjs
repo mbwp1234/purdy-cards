@@ -42,15 +42,15 @@ check('no unresolved template placeholder', !cs.includes('${') && !ss.includes('
 
 // instantiate + setConfig
 const c = new CPC();
-c.setConfig({ thermostat:'climate.gttc', compact:true, navigate:'#Climate' });
+c.setConfig({ thermostat:'climate.thermostat', compact:true, navigate:'#climate' });
 check('climate setConfig(compact) ok', c._config.compact===true);
 check('climate getCardSize compact = 3', c.getCardSize()===3);
-const c2 = new CPC(); c2.setConfig({ thermostat:'climate.gttc' });
+const c2 = new CPC(); c2.setConfig({ thermostat:'climate.thermostat' });
 check('climate getCardSize full = 6', c2.getCardSize()===6);
 check('climate _renderCompact exists', typeof c._renderCompact === 'function');
 
 const s = new SPC();
-s.setConfig({ sleep_state:'sensor.owlet_sock_sleep_state', ribbon:true, navigate:'#joel' });
+s.setConfig({ sleep_state:'sensor.sleep_state', ribbon:true, navigate:'#sleep' });
 check('sleep setConfig(ribbon) ok', s._config.ribbon===true);
 check('sleep getCardSize ribbon = 3', s.getCardSize()===3);
 const s2 = new SPC(); s2.setConfig({ sleep_state:'sensor.x' });

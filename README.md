@@ -1,11 +1,11 @@
 # Purdy Cards
 
-One bundle, one HACS entry, one version number — the custom Lovelace cards for this house.
+One bundle, one HACS entry, one version number — a pair of custom Lovelace cards for Home Assistant.
 
 | Card | What it is |
 |------|------------|
-| `climate-panel-card` | Full climate panel: weather strip, temperature ring with goal + hold steppers, trend graph, zone switcher, status chips, room rows. Plus a **`compact`** mode for the home screen. |
-| `sleep-panel-card` | Full infant sleep panel: composition ring with a 7-day goal marker, vitals with baseline deltas, hypnogram, recap rows. Plus a **`ribbon`** mode for the home screen. |
+| `climate-panel-card` | Full climate panel: weather strip, temperature ring with goal + hold steppers, trend graph, zone switcher, status chips, room rows. Plus a **`compact`** mode for a home screen. |
+| `sleep-panel-card` | Full infant sleep panel: composition ring with a 7-day goal marker, vitals with baseline deltas, hypnogram, recap rows. Plus a **`ribbon`** mode for a home screen. |
 
 No build step, no dependencies — plain web components.
 
@@ -17,7 +17,7 @@ Here the tokens live in one `PC_TOKENS` block that both cards derive from, so a 
 
 ## Install
 
-HACS → three-dots → **Custom repositories** → add `mbwp1234/purdy-cards`, category **Dashboard**. Then download it. HACS registers the resource automatically:
+HACS → three-dots → **Custom repositories** → add this repository, category **Dashboard**. Then download it. HACS registers the resource automatically:
 
 ```
 /hacsfiles/purdy-cards/purdy-cards.js
@@ -25,7 +25,9 @@ HACS → three-dots → **Custom repositories** → add `mbwp1234/purdy-cards`, 
 
 ### Migrating from the standalone cards
 
-Both cards keep their original type strings, so **no dashboard config changes are needed**. Install this pack, then remove the old `climate-panel-card` and `sleep-panel-card` HACS entries. The old repos stay published so existing installs keep working.
+Both cards keep their original type strings, so **no dashboard config changes are needed**. Install this pack, then remove the old `climate-panel-card` and `sleep-panel-card` HACS entries **and their dashboard resources**.
+
+That last part matters: if a standalone resource stays registered, both bundles try to define the same custom elements. The pack warns to the console and skips rather than throwing, which means the *older* card wins and the `compact` / `ribbon` modes silently do nothing.
 
 ## Compact and ribbon modes
 
@@ -38,23 +40,25 @@ Renders the weather strip, hero ring and zone row. Skips the graph, chips and ro
 ```yaml
 type: custom:climate-panel-card
 compact: true
-navigate: "#Climate"
-thermostat: climate.t6_pro_z_wave_programmable_thermostat_with_smartstart
+navigate: "#climate"
+thermostat: climate.thermostat
 goal: climate.gttc
-weather: weather.kcho
+weather: weather.home
 outside:
-  temp: sensor.outside_thermometer_humidity_temperature
-  humidity: sensor.outside_thermometer_humidity_humidity
+  temp: sensor.outside_temperature
+  humidity: sensor.outside_humidity
 zones:
   select: select.gttc_active_zone
   options:
-    - option: 1st Floor
+    - option: 1st floor
       label: 1st floor
-      temp: sensor.gttc_1st_floor_temp
+      temp: sensor.first_floor_temp
     - option: 2nd Floor
       label: 2nd floor
-      temp: sensor.gttc_2nd_floor_temp
+      temp: sensor.second_floor_temp
 ```
+
+`goal` and `zones.select` above point at [Goal Temp Thermostat Control](https://github.com/mbwp1234/Goal-Temp-Thermostat-Control); any climate entity and any `select` work equally well.
 
 ### `sleep-panel-card` with `ribbon: true`
 
@@ -63,24 +67,26 @@ Renders the header, vitals and a flattened deep/light bar. Skips the ring, hypno
 ```yaml
 type: custom:sleep-panel-card
 ribbon: true
-navigate: "#joel"
-sleep_state: sensor.owlet_sock_sleep_state
-name: Joel
-age: sensor.joel_s_age
+navigate: "#sleep"
+sleep_state: sensor.sleep_state
+name: Baby
+age: sensor.baby_age
 active_when:
-  entity: input_boolean.joel_sleep_started
+  entity: input_boolean.sleep_started
   state: "on"
 ring:
-  deep: sensor.joel_deep_sleep_today
-  light: sensor.joel_light_sleep_today
-  deep_last_night: input_number.joel_deep_sleep_last_night
-  light_last_night: input_number.joel_light_sleep_last_night
+  deep: sensor.deep_sleep_today
+  light: sensor.light_sleep_today
+  deep_last_night: input_number.deep_sleep_last_night
+  light_last_night: input_number.light_sleep_last_night
 vitals:
-  - entity: sensor.owlet_sock_heart_rate
-    baseline: sensor.joel_7d_baseline_hr
-  - entity: sensor.owlet_sock_o2_saturation
-    baseline: sensor.joel_7d_baseline_o2
+  - entity: sensor.sock_heart_rate
+    baseline: sensor.baseline_hr
+  - entity: sensor.sock_o2_saturation
+    baseline: sensor.baseline_o2
 ```
+
+`sleep_state` expects one of `unknown` / `awake` / `light_sleep` / `deep_sleep`.
 
 ### `navigate`
 
@@ -92,7 +98,7 @@ Both modes accept `navigate`. A value starting with `#` opens a Bubble Card popu
 node test/smoke.mjs
 ```
 
-Runs the bundle against DOM stubs and asserts both elements register, the shared tokens resolve into each card's stylesheet, the compact and ribbon paths exist, and the split-bar maths is right.
+Runs the bundle against DOM stubs and asserts both elements register, the shared tokens resolve into each card's stylesheet, the compact and ribbon paths exist, the split-bar maths is right, and a duplicate load warns instead of throwing.
 
 ## Shared tokens
 
