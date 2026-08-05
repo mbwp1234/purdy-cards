@@ -75,6 +75,7 @@ class SleepPanelCard extends HTMLElement {
     if (c.wakeups) { add(c.wakeups.live); add(c.wakeups.last_night); add(c.wakeups.baseline); }
     if (c.bedtime) { add(c.bedtime.entity); add(c.bedtime.baseline); add(c.bedtime.datetime); }
     if (c.hypnogram) add(c.hypnogram.start_entity);
+    if (c.session) { add(c.session.start); add(c.session.end); }
     if (c.room) { add(c.room.temp); add(c.room.humidity); add(c.room.overnight_avg); }
     (c.chips || []).forEach((ch) => {
       add(ch.entity); add(ch.timer); add(ch.since);
@@ -264,7 +265,8 @@ class SleepPanelCard extends HTMLElement {
        configured, fetch from bedtime instead so the whole session is covered
        however late it is read. */
     let startMs = Date.now() - (hyp.max_hours || 14) * 3600 * 1000;
-    const anchor = hyp.start_entity && this._hass.states[hyp.start_entity];
+    const anchorId = hyp.start_entity || (this._config.session || {}).start;
+    const anchor = anchorId && this._hass.states[anchorId];
     if (anchor && anchor.state) {
       const t = Date.parse(String(anchor.state).replace(" ", "T"));
       if (!isNaN(t) && t < Date.now()) {
@@ -346,6 +348,24 @@ class SleepPanelCard extends HTMLElement {
 
   /* ---------------- sections ---------------- */
 
+  /* The recorded session, read straight from the bedtime/wake helpers.
+     Deriving the header range from fetched history is fragile: the window is
+     anchored to now, so by the afternoon its own left edge gets reported as
+     the bedtime. These helpers are written once per night and never drift. */
+  _sessionRange() {
+    const sess = this._config.session;
+    if (!sess) return null;
+    const at = (id) => {
+      const st = this._st(id);
+      if (!st || !st.state) return null;
+      const t = Date.parse(String(st.state).replace(" ", "T"));
+      return Number.isFinite(t) ? t : null;
+    };
+    const t0 = at(sess.start);
+    if (!t0) return null;
+    return { t0, t1: at(sess.end) || Date.now() };
+  }
+
   /* The configured person's own photo when there is one, falling back to the
      generic silhouette. */
   _avatarInner() {
@@ -369,7 +389,7 @@ class SleepPanelCard extends HTMLElement {
     const pillText = mode === "recap" ? "Sock off" : label || "No reading";
 
     const age = c.age ? (this._st(c.age) || {}).state : null;
-    const span = this._sleepSpan();
+    const span = this._sessionRange() || this._sleepSpan();
     let sub = age ? this._esc(age) : "";
     if (span) {
       const t0 = this._clock(new Date(span.t0));
