@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.6.0";
+const PC_VERSION = "1.6.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -3776,6 +3776,7 @@ class PurdyDevicesCard extends PcBaseCard {
       (b.stats || []).forEach((s) => add(s.entity));
       (b.switch_groups || []).forEach((sg) => (sg.items || []).forEach((i) => add(i.entity)));
       if (g.sparkline) add(g.sparkline.entity);
+      if (g.meter) add(g.meter.entity);
     });
     this._watched = ids;
     this._last = null;
@@ -3814,6 +3815,23 @@ class PurdyDevicesCard extends PcBaseCard {
     } catch (err) {
       /* History unavailable is not worth breaking the card over. */
     }
+  }
+
+  /* A miniature of the same fill bar used inside the body, so a collapsed row
+     reads with the identical vocabulary as an expanded one. */
+  _meterHtml(m) {
+    const v = pcNum(this._hass, m.entity);
+    if (v == null) return "";
+    const max = m.max || 100;
+    const p = Math.max(0, Math.min(100, (v / max) * 100));
+    const warn = m.warn_above == null ? 80 : m.warn_above;
+    const crit = m.critical_above == null ? 95 : m.critical_above;
+    const col = p >= crit ? "var(--pc-bad)" : p >= warn ? "var(--pc-warn)" : "var(--pc-cool)";
+    return `
+      <div class="meter" title="${Math.round(v)}%">
+        <div class="mtrack"><i style="width:${p.toFixed(0)}%;background:${col}"></i></div>
+        <span class="mval num" style="color:${col}">${Math.round(v)}${m.suffix || "%"}</span>
+      </div>`;
   }
 
   _sparkHtml(sp) {
@@ -3876,7 +3894,10 @@ class PurdyDevicesCard extends PcBaseCard {
       if (s.bad_when && s.bad_when.indexOf(raw) >= 0) cls = "badv";
       else if (s.good_when && s.good_when.indexOf(raw) >= 0) cls = "goodv";
       const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
-      const txt = s.text || (isNaN(parseFloat(raw)) ? raw.replace(/_/g, " ") : raw + unit);
+      /* A device_class: problem sensor reads on/off, which is meaningless in a
+         stat tile. `map` turns it into words. */
+      const mapped = s.map && s.map[raw] !== undefined ? s.map[raw] : null;
+      const txt = s.text || mapped || (isNaN(parseFloat(raw)) ? raw.replace(/_/g, " ") : raw + unit);
       return `<div class="stat"><span class="lbl">${s.label}</span><b class="${cls}">${txt}</b></div>`;
     }).join("")}</div>`;
   }
@@ -3969,6 +3990,7 @@ class PurdyDevicesCard extends PcBaseCard {
               <div class="ttl">${g.name}</div>
               ${chips ? `<div class="smry num">${chips}</div>` : ""}
             </div>
+            ${g.meter ? this._meterHtml(g.meter) : ""}
             ${g.sparkline ? this._sparkHtml(g.sparkline) : ""}
             ${faults ? `<span class="chip bad"><span class="cdot"></span>${faults}</span>` : ""}
           </div>
@@ -4024,6 +4046,10 @@ class PurdyDevicesCard extends PcBaseCard {
         .dock .lnk { --mdc-icon-size: 15px; color: var(--pc-muted); }
 
         .spark { width: 62px; height: 22px; flex: 0 0 auto; opacity: 0.9; }
+        .meter { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+        .mtrack { width: 54px; height: 6px; border-radius: 3px; background: var(--pc-track); overflow: hidden; }
+        .mtrack i { display: block; height: 100%; border-radius: 3px; }
+        .mval { font-size: 11px; font-weight: 600; min-width: 30px; text-align: right; }
         .faults { margin-bottom: 12px; }
         .frow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--pc-line); }
         .frow:first-child { border-top: none; }

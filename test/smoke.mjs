@@ -374,6 +374,22 @@ check('fault rows open more-info', d4.includes('data-info="binary_sensor.parity"
 check('url action branch exists in pcAction', /a\.action === "url"/.test(src));
 check('url action opens a new tab', /window\.open\(a\.url_path/.test(src));
 
+
+// meter on the collapsed row + stat value mapping
+const dc3 = new DC();
+dc3.setConfig({ title:'X', groups:[{ name:'Litter',
+  meter:{ entity:'sensor.array', warn_above:75 },
+  body:{ stats:[{label:'Parity', entity:'binary_sensor.parity', map:{off:'OK', on:'Problem'}, bad_when:['on'], good_when:['off']}] } }]});
+dhass.states['binary_sensor.parity'] = { state:'off', attributes:{} };
+dc3._hass = dhass; dc3._render();
+const m1 = dc3.shadowRoot.innerHTML;
+check('meter renders a fill bar on the collapsed row', m1.includes('class="mtrack"'));
+check('meter warns above threshold', m1.includes('var(--pc-warn)'));
+dc3._open[0] = true; dc3._render();
+const m2 = dc3.shadowRoot.innerHTML;
+check('problem sensor off maps to OK', m2.includes('>OK<'));
+check('problem sensor off is coloured good', m2.includes('goodv'));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
