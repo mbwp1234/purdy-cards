@@ -5249,10 +5249,71 @@ class PurdyShellCard extends PcBaseCard {
     this._eventTimer = setInterval(() => this._fetchEvents(), 30 * 60 * 1000);
   }
 
+  /* The skeleton is built once. Everything after this is a patch into one of
+     these four slots, so the stylesheet is parsed once rather than on every
+     state change, and untouched regions keep their DOM — which is what keeps
+     scroll position, focus and the artwork <img> alive between repaints. */
+  _mount() {
+    this.shadowRoot.innerHTML = `
+      <style>${PurdyShellCard.styles}</style>
+      <div class="ps-ground"></div>
+      <div class="ps-stat" id="ps-stat"></div>
+      <div class="ps-col" id="ps-col"></div>
+      <div id="ps-sheetslot"></div>
+      <div class="ps-fade"></div>
+      <div class="ps-dockwrap" id="ps-dockwrap"></div>`;
+    this._mounted = true;
+  }
+
+  /* Write only when the string actually differs. Identical output must not
+     touch the DOM at all — that is the whole point. */
+  _patch(id, html) {
+    const el = this.shadowRoot.getElementById(id);
+    if (!el || el._psHtml === html) return;
+    el._psHtml = html;
+    el.innerHTML = html;
+  }
+
+  /* Sections are keyed so a self-hiding one can come and go without disturbing
+     its neighbours, and so an unchanged section is left entirely alone. */
+  _patchSections(list) {
+    const col = this.shadowRoot.getElementById("ps-col");
+    if (!col) return;
+    const have = new Map();
+    Array.from(col.children).forEach((n) => have.set(n.dataset.sect, n));
+
+    let prev = null;
+    list.forEach((s) => {
+      let node = have.get(s.key);
+      if (node) {
+        have.delete(s.key);
+        if (node._psHtml !== s.html) {
+          node._psHtml = s.html;
+          node.innerHTML = s.html;
+        }
+      } else {
+        node = document.createElement("div");
+        node.dataset.sect = s.key;
+        node._psHtml = s.html;
+        node.innerHTML = s.html;
+      }
+      const cls = s.open ? "ps-sect open" : "ps-sect";
+      if (node.className !== cls) node.className = cls;
+      /* Re-inserting a node that is already in place would detach and
+         re-attach it, losing focus for no reason. */
+      const want = prev ? prev.nextSibling : col.firstChild;
+      if (node !== want) col.insertBefore(node, want);
+      prev = node;
+    });
+
+    have.forEach((n) => n.remove());
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
     /* Repainting mid-drag would rip the slider out from under the thumb. */
     if (this._dragging) return;
+    if (!this._mounted) this._mount();
     const c = this._config;
     const now = new Date();
     const who = this._who();
@@ -5273,7 +5334,8 @@ class PurdyShellCard extends PcBaseCard {
       windy: "mdi:weather-windy", lightning: "mdi:weather-lightning", hail: "mdi:weather-hail",
     };
 
-    const sections = c.sections.map((raw, i) => {
+    const sections = [];
+    c.sections.forEach((raw, i) => {
       const sec = { key: raw.key || raw.type + i, ...raw };
       const body = {
         sleep: () => this._secSleep(sec),
@@ -5286,10 +5348,9 @@ class PurdyShellCard extends PcBaseCard {
         systems: () => this._secSystems(sec),
         tv: () => this._secTv(sec),
       }[sec.type]();
-      if (!body) return "";   // a self-hiding section takes its divider with it
-      const open = this._open === sec.key;
-      return `<div class="ps-sect ${open ? "open" : ""}" data-sect="${psEsc(sec.key)}">${body}</div>`;
-    }).join("");
+      if (!body) return;   // a self-hiding section takes its divider with it
+      sections.push({ key: sec.key, html: body, open: this._open === sec.key });
+    });
 
     const np = this._nowPlaying();
     const dock = (c.dock || []).map((d, i) => {
@@ -5301,11 +5362,7 @@ class PurdyShellCard extends PcBaseCard {
 
     const npArt = np && np.st.attributes.entity_picture_local;
 
-    this.shadowRoot.innerHTML = `
-      <style>${PurdyShellCard.styles}</style>
-      <div class="ps-ground"></div>
-
-      <div class="ps-stat">
+    this._patch("ps-stat", `
         <div>
           <h2>${this._greeting()}${who ? `,<br>${psEsc(who)}` : ""}</h2>
           <div class="ps-d">${now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
@@ -5318,15 +5375,13 @@ class PurdyShellCard extends PcBaseCard {
           <button class="ps-chip ${worst}" type="button" id="ps-alert">
             <span class="ps-dot"></span>${faults.length ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention` : "All clear"}
           </button>
-        </div>
-      </div>
+        </div>`);
 
-      <div class="ps-col">${sections}</div>
+    this._patchSections(sections);
 
-      ${this._sheetHtml(faults)}
+    this._patch("ps-sheetslot", this._sheetHtml(faults));
 
-      <div class="ps-fade"></div>
-      <div class="ps-dockwrap">
+    this._patch("ps-dockwrap", `
         ${np ? `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
           <div class="ps-mart">${npArt
             ? `<img src="${psEsc(npArt)}" alt="" />`
@@ -5339,19 +5394,48 @@ class PurdyShellCard extends PcBaseCard {
             <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
               ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
         </div>` : ""}
-        <div class="ps-dock">${dock}</div>
-      </div>`;
+        <div class="ps-dock">${dock}</div>`);
 
     this._bind();
     this._bindScrub();
   }
 
+  /* Bind exactly once per element. _bind runs after every patch, but a patch
+     leaves unchanged regions untouched — so without this guard each repaint
+     would stack another copy of every listener onto the surviving nodes. */
+  _each(sel, fn) {
+    this.shadowRoot.querySelectorAll(sel).forEach((el) => {
+      if (!this._claim(el, sel)) return;
+      fn(el);
+    });
+  }
+
+  _one(id, fn) {
+    const el = this.shadowRoot.getElementById(id);
+    if (!el || !this._claim(el, "#" + id)) return;
+    fn(el);
+  }
+
+  /* Marked per selector, not per element. One node can match more than one
+     pass — a graph container is both [data-scrub] and, being inside a section,
+     reachable from other selectors — and a single boolean would let the first
+     pass claim it and the second silently skip it. That is the same shape of
+     failure as a handler that is defined but never called. */
+  _claim(el, key) {
+    if (!el._psBound) el._psBound = {};
+    if (el._psBound[key]) return false;
+    el._psBound[key] = true;
+    return true;
+  }
+
+  /* Handlers are attached once per element and then outlive many repaints, so
+     nothing here may close over `hass` or `config` — a handler bound on the
+     first render would otherwise still be reading that first render's states
+     an hour later. Every handler reads this._hass / this._config live. */
   _bind() {
     const root = this.shadowRoot;
-    const hass = this._hass;
-    const c = this._config;
 
-    root.querySelectorAll("[data-open]").forEach((el) => {
+    this._each("[data-open]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const k = el.dataset.open;
@@ -5365,7 +5449,7 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-info]").forEach((el) => {
+    this._each("[data-info]", (el) => {
       if (!el.dataset.info) return;
       el.addEventListener("click", (e) => {
         if (e.target.closest("button")) return;
@@ -5375,7 +5459,7 @@ class PurdyShellCard extends PcBaseCard {
 
     /* Two-tap confirm for anything destructive: the first tap arms, the
        second runs. A modal would be heavier than the action deserves. */
-    root.querySelectorAll("[data-arm]").forEach((el) => {
+    this._each("[data-arm]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const k = el.dataset.arm;
@@ -5389,11 +5473,11 @@ class PurdyShellCard extends PcBaseCard {
         this._armed = null;
         clearTimeout(this._armTimer);
         if (k === "hold") {
-          const sec = c.sections.find((x) => x.type === "climate");
+          const sec = this._config.sections.find((x) => x.type === "climate");
           const svc = sec && sec.hold && sec.hold.cancel_service;
           if (svc && svc.indexOf(".") > 0) {
             const parts = svc.split(".");
-            hass.callService(parts[0], parts[1], (sec.hold.cancel_data) || {});
+            this._hass.callService(parts[0], parts[1], (sec.hold.cancel_data) || {});
           }
           this._render();
         } else if (k === "sdel") {
@@ -5402,7 +5486,7 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-dismiss]").forEach((el) => {
+    this._each("[data-dismiss]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const rows = this._faults();
@@ -5411,15 +5495,15 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-tvoff]").forEach((el) => {
+    this._each("[data-tvoff]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const id = el.dataset.tvoff;
-        hass.callService(id.split(".")[0], "turn_off", { entity_id: id });
+        this._hass.callService(id.split(".")[0], "turn_off", { entity_id: id });
       });
     });
 
-    root.querySelectorAll("[data-scope]").forEach((el) => {
+    this._each("[data-scope]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const v = el.dataset.scope;
@@ -5429,7 +5513,7 @@ class PurdyShellCard extends PcBaseCard {
         this._render();
       });
     });
-    root.querySelectorAll("[data-sday]").forEach((el) => {
+    this._each("[data-sday]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         this._schedDay = el.dataset.sday;
@@ -5438,7 +5522,7 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-sedit]").forEach((el) => {
+    this._each("[data-sedit]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const v = el.dataset.sedit;
@@ -5448,23 +5532,21 @@ class PurdyShellCard extends PcBaseCard {
         this._render();
       });
     });
-    const sSave = root.getElementById("ps-ssave");
-    if (sSave) sSave.addEventListener("click", (e) => { e.stopPropagation(); this._schedSave(); });
-    const sCancel = root.getElementById("ps-scancel");
-    if (sCancel) sCancel.addEventListener("click", (e) => {
+    this._one("ps-ssave", (el) =>
+      el.addEventListener("click", (e) => { e.stopPropagation(); this._schedSave(); }));
+    this._one("ps-scancel", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       this._schedEdit = null; this._schedNote = null; this._armed = null; this._render();
-    });
+    }));
     /* Typing must not be eaten by the repaint, so the field owns its value
        until the query is submitted. */
-    root.querySelectorAll("[data-f]").forEach((el) => {
+    this._each("[data-f]", (el) => {
       el.addEventListener("pointerdown", () => { this._dragging = true; });
       el.addEventListener("blur", () => { this._dragging = false; });
       el.addEventListener("click", (e) => e.stopPropagation());
     });
 
-    const q = root.getElementById("ps-q");
-    if (q) {
+    this._one("ps-q", (q) => {
       q.addEventListener("focus", () => { this._dragging = true; });
       q.addEventListener("blur", () => { this._dragging = false; });
       q.addEventListener("click", (e) => e.stopPropagation());
@@ -5475,14 +5557,13 @@ class PurdyShellCard extends PcBaseCard {
         this._runSearch();
       });
       q.addEventListener("search", () => { this._query = q.value; this._dragging = false; this._runSearch(); });
-    }
-    const qc = root.getElementById("ps-qclear");
-    if (qc) qc.addEventListener("click", (e) => {
+    });
+    this._one("ps-qclear", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       this._query = ""; this._results = null; this._dragging = false; this._render();
-    });
+    }));
 
-    root.querySelectorAll("[data-play]").forEach((el) => {
+    this._each("[data-play]", (el) => {
       const item = () => {
         const list = el.dataset.from === "recent" ? this._recent : (this._results || []);
         return list[parseInt(el.dataset.play, 10)];
@@ -5510,7 +5591,7 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-pinplay]").forEach((el) => {
+    this._each("[data-pinplay]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const p = this._pins[parseInt(el.dataset.pinplay, 10)];
@@ -5518,7 +5599,7 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-sheet]").forEach((el) => {
+    this._each("[data-sheet]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const k = el.dataset.sheet;
@@ -5527,52 +5608,49 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    const alertBtn = root.getElementById("ps-alert");
-    if (alertBtn) {
-      alertBtn.addEventListener("click", () => {
-        this._sheet = this._sheet === "alerts" ? null : "alerts";
-        this._render();
-      });
-    }
+    this._one("ps-alert", (el) => el.addEventListener("click", () => {
+      this._sheet = this._sheet === "alerts" ? null : "alerts";
+      this._render();
+    }));
     ["ps-close", "ps-scrim"].forEach((id) => {
-      const el = root.getElementById(id);
-      if (el) el.addEventListener("click", () => { this._sheet = null; this._render(); });
+      this._one(id, (el) =>
+        el.addEventListener("click", () => { this._sheet = null; this._render(); }));
     });
 
-    root.querySelectorAll("[data-step]").forEach((el) => {
+    this._each("[data-step]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        const sec = c.sections.find((s) => s.type === "climate");
+        const sec = this._config.sections.find((s) => s.type === "climate");
         if (!sec) return;
         const id = sec.goal || sec.thermostat;
-        const st = hass.states[id];
+        const st = this._hass.states[id];
         if (!st || st.attributes.temperature == null) return;
         const next = st.attributes.temperature + parseInt(el.dataset.step, 10) * (sec.step || 1);
-        hass.callService("climate", "set_temperature", { entity_id: id, temperature: next });
+        this._hass.callService("climate", "set_temperature", { entity_id: id, temperature: next });
       });
     });
 
-    root.querySelectorAll("[data-zone]").forEach((el) => {
+    this._each("[data-zone]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        const sec = c.sections.find((s) => s.type === "climate");
+        const sec = this._config.sections.find((s) => s.type === "climate");
         if (!sec || !sec.zones || !sec.zones.select) return;
-        hass.callService("select", "select_option", {
+        this._hass.callService("select", "select_option", {
           entity_id: sec.zones.select, option: el.dataset.zone,
         });
       });
     });
 
-    root.querySelectorAll("[data-tile]").forEach((el) => {
+    this._each("[data-tile]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        const sec = c.sections.find((s) => s.type === "quick");
+        const sec = this._config.sections.find((s) => s.type === "quick");
         const t = sec && sec.tiles[parseInt(el.dataset.tile, 10)];
-        if (t) pcAction(this, hass, t.tap_action, t.entity);
+        if (t) pcAction(this, this._hass, t.tap_action, t.entity);
       });
     });
 
-    root.querySelectorAll("[data-group]").forEach((el) => {
+    this._each("[data-group]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const k = el.dataset.group;
@@ -5582,52 +5660,52 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-toggle]").forEach((el) => {
+    this._each("[data-toggle]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        hass.callService("homeassistant", "toggle", { entity_id: el.dataset.toggle });
+        this._hass.callService("homeassistant", "toggle", { entity_id: el.dataset.toggle });
       });
     });
 
-    root.querySelectorAll("[data-url]").forEach((el) => {
+    this._each("[data-url]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         window.open(el.dataset.url, "_blank");
       });
     });
 
-    root.querySelectorAll("[data-mp]").forEach((el) => {
+    this._each("[data-mp]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        hass.callService("media_player", "media_play_pause", { entity_id: el.dataset.entity });
+        this._hass.callService("media_player", "media_play_pause", { entity_id: el.dataset.entity });
       });
     });
 
-    root.querySelectorAll("[data-mpc]").forEach((el) => {
+    this._each("[data-mpc]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const ids = el.dataset.all === "1" ? this._targets() : [el.dataset.entity].filter(Boolean);
         if (!ids.length) return;
-        hass.callService("media_player", el.dataset.mpc, { entity_id: ids });
+        this._hass.callService("media_player", el.dataset.mpc, { entity_id: ids });
       });
     });
 
-    root.querySelectorAll("[data-mute]").forEach((el) => {
+    this._each("[data-mute]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (!el.dataset.mute) return;
-        hass.callService("media_player", "volume_mute", {
+        this._hass.callService("media_player", "volume_mute", {
           entity_id: el.dataset.mute, is_volume_muted: el.dataset.muted !== "true",
         });
       });
     });
 
-    root.querySelectorAll("[data-vol]").forEach((el) => {
+    this._each("[data-vol]", (el) => {
       const hold = () => { this._dragging = true; };
       const release = () => {
         this._dragging = false;
         if (!el.dataset.vol) return;
-        hass.callService("media_player", "volume_set", {
+        this._hass.callService("media_player", "volume_set", {
           entity_id: el.dataset.vol, volume_level: parseInt(el.value, 10) / 100,
         });
       };
@@ -5648,7 +5726,7 @@ class PurdyShellCard extends PcBaseCard {
 
     /* Tapping a room picks it as the target. It used to open the built-in
        more-info dialog, which is not what "choose a speaker" means. */
-    root.querySelectorAll("[data-pick]").forEach((el) => {
+    this._each("[data-pick]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         this._togglePick(el.dataset.pick);
@@ -5659,52 +5737,52 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
-    root.querySelectorAll("[data-pin]").forEach((el) => {
+    this._each("[data-pin]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         this._togglePin(el.dataset.pin, el.dataset.pinname, el.dataset.pinkind);
       });
     });
 
-    root.querySelectorAll("[data-preset]").forEach((el) => {
+    this._each("[data-preset]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        const sec = c.sections.find((s) => s.type === "music");
+        const sec = this._config.sections.find((s) => s.type === "music");
         const p = sec && (sec.presets || [])[parseInt(el.dataset.preset, 10)];
         const np = this._nowPlaying();
         const target = np ? np.entity : (sec.default_player || (sec.players[0] || {}).entity);
         if (!p || !target) return;
-        hass.callService("music_assistant", "play_media", {
+        this._hass.callService("music_assistant", "play_media", {
           entity_id: target, media_id: p.uri, media_type: p.media_type || "playlist",
         });
       });
     });
 
-    root.querySelectorAll("[data-dbtn]").forEach((el) => {
+    this._each("[data-dbtn]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const [di, bi] = el.dataset.dbtn.split("|").map((x) => parseInt(x, 10));
-        const sec = c.sections.find((x) => x.type === "systems");
+        const sec = this._config.sections.find((x) => x.type === "systems");
         const b = sec && ((sec.devices || [])[di] || {}).buttons;
-        if (b && b[bi]) pcAction(this, hass, b[bi].tap_action, null);
+        if (b && b[bi]) pcAction(this, this._hass, b[bi].tap_action, null);
       });
     });
 
-    root.querySelectorAll("[data-gbtn]").forEach((el) => {
+    this._each("[data-gbtn]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const [gname, idx] = el.dataset.gbtn.split("|");
-        const sec = c.sections.find((s) => s.type === "systems");
+        const sec = this._config.sections.find((s) => s.type === "systems");
         const g = sec && (sec.groups || []).find((x) => x.name === gname);
         const b = g && (g.buttons || [])[parseInt(idx, 10)];
-        if (b) pcAction(this, hass, b.tap_action, null);
+        if (b) pcAction(this, this._hass, b.tap_action, null);
       });
     });
 
-    root.querySelectorAll("[data-dock]").forEach((el) => {
+    this._each("[data-dock]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        const d = (c.dock || [])[parseInt(el.dataset.dock, 10)];
+        const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
         if (d.section) {
           psClosePopup();
@@ -5743,7 +5821,7 @@ class PurdyShellCard extends PcBaseCard {
    */
   _bindScrub() {
     const root = this.shadowRoot;
-    root.querySelectorAll("[data-scrub]").forEach((box) => {
+    this._each("[data-scrub]", (box) => {
       const kind = box.dataset.scrub;
       const cross = box.querySelector(".ps-cross");
       /* The readout lives ABOVE the plot, in normal flow, because a tooltip

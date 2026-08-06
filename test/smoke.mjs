@@ -1,5 +1,10 @@
 import fs from 'fs';
 const src = fs.readFileSync(new URL('../purdy-cards.js', import.meta.url),'utf8');
+/* The shell owns the patching render model; the standalone cards still repaint
+   whole and are correct to. Assertions about binding must not sweep them in. */
+const shellSrc = ['70-shell-core','71-shell-sections','72-shell-schedule','73-shell-music','74-shell-alerts']
+  .map((f) => fs.readFileSync(new URL(`../src/${f}.js`, import.meta.url),'utf8'))
+  .join('\n');
 
 const defined = {};
 class FakeEl {
@@ -899,13 +904,136 @@ check('a tap that turned into a drag does not leave a stale readout', src.includ
 
 /* The scrubber was written but never wired: an unrelated edit moved the
    render tail, a string replace silently missed, and _bindScrub sat there
-   uncalled. Assert it is actually invoked, not merely defined. */
-check('_bindScrub is called from the render, not just defined',
-  /this\._bind\(\);\s*this\._bindScrub\(\);/.test(src));
-check('every graph container is bound', (() => {
-  const defs = (src.match(/data-scrub="/g) || []).length;
-  return defs >= 2 && src.includes('querySelectorAll("[data-scrub]")');
+   uncalled through three releases.
+
+   The lesson generalises past that one method, so assert the shape rather
+   than the call site: any _bind* that is defined must also be invoked
+   somewhere. A handler wired by a single line is exactly the thing a failed
+   string replace deletes without any test noticing. */
+check('every _bind* method defined is also called', (() => {
+  const defined = new Set();
+  const re = /^\s{2}(?:async\s+)?(_bind[A-Za-z0-9_$]*)\s*\(/gm;
+  let m;
+  while ((m = re.exec(src))) defined.add(m[1]);
+  if (!defined.size) return false;
+  const orphans = [...defined].filter(
+    (n) => !new RegExp(`this\\.${n}\\s*\\(`).test(src)
+  );
+  if (orphans.length) console.log('    uncalled:', orphans.join(', '));
+  return orphans.length === 0;
 })());
+check('the graph containers are wired through the bind-once helper', (() => {
+  const defs = (shellSrc.match(/data-scrub="/g) || []).length;
+  return defs >= 2 && /_each\("\[data-scrub\]"/.test(shellSrc);
+})());
+
+/* Patching leaves untouched nodes in place, so a second bind pass would stack
+   a duplicate listener on every survivor. */
+check('binding is guarded so an element is never wired twice',
+  /_each\(sel, fn\)[\s\S]{0,200}this\._claim\(el, sel\)/.test(shellSrc) &&
+  /_one\(id, fn\)[\s\S]{0,200}this\._claim\(el, "#" \+ id\)/.test(shellSrc));
+/* A single boolean marker would let the first pass to touch a node claim it
+   and every later pass skip it — which is how a graph stops being wired. */
+check('the bind guard is keyed per selector, not one flag per element', (() => {
+  const c = shellSrc.slice(shellSrc.indexOf('  _claim(el, key) {'));
+  return /el\._psBound\[key\]/.test(c) && !/el\._psBound = true/.test(shellSrc);
+})());
+
+const shclaim = new SH();
+shclaim.setConfig({ sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+const dual = { _psBound: undefined };
+check('one node can be claimed by two different selectors',
+  shclaim._claim(dual, '[data-scrub]') && shclaim._claim(dual, '[data-info]'));
+check('the same selector never claims the same node twice',
+  !shclaim._claim(dual, '[data-scrub]'));
+check('no shell bind loop bypasses the guard',
+  !/root\.querySelectorAll\("\[data-/.test(shellSrc));
+/* Handlers now outlive many repaints, so closing over hass would pin them to
+   the states present on the render that happened to bind them. */
+check('shell bind handlers read hass live rather than capturing it', (() => {
+  const b = shellSrc.slice(shellSrc.indexOf('  _bind() {'), shellSrc.indexOf('  _bindScrub() {'));
+  return b.length > 500 && !/const hass = this\._hass;/.test(b) && !/\bhass\./.test(b);
+})());
+
+/* ---------------------------------------------- section reconciliation -- */
+/* The whole point of patching is that an unchanged section is not touched,
+   so the interesting assertions are about writes that do NOT happen. The
+   stub DOM above answers null to everything, which would let every one of
+   these pass vacuously — hence a real enough mini-DOM. */
+class MiniNode {
+  constructor() { this.dataset = {}; this.className = ''; this._html = ''; this.writes = 0; this.parent = null; this.kids = []; }
+  get innerHTML() { return this._html; }
+  set innerHTML(v) { this._html = v; this.writes++; }
+  get children() { return this.kids; }
+  get firstChild() { return this.kids[0] || null; }
+  get nextSibling() {
+    if (!this.parent) return null;
+    return this.parent.kids[this.parent.kids.indexOf(this) + 1] || null;
+  }
+  insertBefore(node, ref) {
+    if (node.parent) {
+      const j = node.parent.kids.indexOf(node);
+      if (j >= 0) node.parent.kids.splice(j, 1);
+    }
+    const at = ref ? this.kids.indexOf(ref) : this.kids.length;
+    this.kids.splice(at < 0 ? this.kids.length : at, 0, node);
+    node.parent = this;
+    return node;
+  }
+  remove() {
+    if (!this.parent) return;
+    const i = this.parent.kids.indexOf(this);
+    if (i >= 0) this.parent.kids.splice(i, 1);
+    this.parent = null;
+  }
+}
+const savedDoc = globalThis.document;
+globalThis.document = { createElement: () => new MiniNode() };
+
+const shrec = new SH();
+shrec.setConfig({ sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+const col = new MiniNode();
+shrec.shadowRoot = { getElementById: (id) => (id === 'ps-col' ? col : null), querySelectorAll: () => [] };
+
+shrec._patchSections([
+  { key: 'a', html: '<i>A</i>', open: false },
+  { key: 'b', html: '<i>B</i>', open: false },
+]);
+check('sections mount in config order', col.kids.map((n) => n.dataset.sect).join(',') === 'a,b');
+const [nodeA, nodeB] = col.kids;
+const writesA = nodeA.writes;
+
+shrec._patchSections([
+  { key: 'a', html: '<i>A</i>', open: false },
+  { key: 'b', html: '<i>B2</i>', open: false },
+]);
+check('an unchanged section is not rewritten', nodeA.writes === writesA);
+check('a changed section is rewritten in place', nodeB._html === '<i>B2</i>' && col.kids[1] === nodeB);
+check('identical nodes are kept, not recreated', col.kids[0] === nodeA);
+
+shrec._patchSections([{ key: 'b', html: '<i>B2</i>', open: true }]);
+check('a section that stops rendering is removed', col.kids.length === 1 && col.kids[0] === nodeB);
+check('the open class follows the open key', nodeB.className === 'ps-sect open');
+check('removing a neighbour does not rewrite the survivor', nodeB._html === '<i>B2</i>');
+
+shrec._patchSections([
+  { key: 'c', html: '<i>C</i>', open: false },
+  { key: 'b', html: '<i>B2</i>', open: false },
+]);
+check('a returning section lands in its configured slot',
+  col.kids.map((n) => n.dataset.sect).join(',') === 'c,b');
+
+/* _patch is the same contract for the four fixed slots. */
+const slot = new MiniNode();
+shrec.shadowRoot = { getElementById: () => slot, querySelectorAll: () => [] };
+shrec._patch('ps-stat', '<b>x</b>');
+const w1 = slot.writes;
+shrec._patch('ps-stat', '<b>x</b>');
+check('an identical slot write is skipped', slot.writes === w1);
+shrec._patch('ps-stat', '<b>y</b>');
+check('a differing slot write lands', slot.writes === w1 + 1 && slot._html === '<b>y</b>');
+
+globalThis.document = savedDoc;
 /* A horizontal scroller inside a vertical page always loses the axis lock, so
    there should be none left: everything wraps or grids instead. */
 check('the music room strip wraps rather than scrolling', /\.ps-mroom \{[^}]*flex-wrap: wrap/.test(shs) && !/\.ps-mroom \{[^}]*overflow-x/.test(shs));
