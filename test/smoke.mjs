@@ -886,6 +886,17 @@ check('the hypnogram no longer pins touch-action itself', !/\.ps-hypplot \{[^}]*
 check('scrubbing is entered by long press, not by any contact', src.includes('setTimeout(') && src.includes('box.classList.add("scrubbing")'));
 check('a move before the press completes cancels it', src.includes('Moved before the press completed'));
 check('a mouse scrubs without waiting', src.includes('ev.pointerType === "mouse"'));
+check('a tap alone shows the readout', src.includes('A tap is unambiguously not a scroll'));
+
+/* The scrubber was written but never wired: an unrelated edit moved the
+   render tail, a string replace silently missed, and _bindScrub sat there
+   uncalled. Assert it is actually invoked, not merely defined. */
+check('_bindScrub is called from the render, not just defined',
+  /this\._bind\(\);\s*this\._bindScrub\(\);/.test(src));
+check('every graph container is bound', (() => {
+  const defs = (src.match(/data-scrub="/g) || []).length;
+  return defs >= 2 && src.includes('querySelectorAll("[data-scrub]")');
+})());
 check('horizontal strips contain their own overscroll', shs.includes('overscroll-behavior-x: contain'));
 check('sheet has a taller schedule variant', shs.includes('.ps-sheet.tall'));
 

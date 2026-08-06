@@ -1774,6 +1774,7 @@ class PurdyShellCard extends PcBaseCard {
       </div>`;
 
     this._bind();
+    this._bindScrub();
   }
 
   /* One sheet, two contents. Both slide over the column rather than pushing
@@ -2403,7 +2404,23 @@ class PurdyShellCard extends PcBaseCard {
         }
       });
 
-      ["pointerup", "pointercancel", "pointerleave"].forEach((e) => box.addEventListener(e, stop));
+      /* A tap is unambiguously not a scroll, so it is the primary way in:
+         lift without having moved and the readout appears where you touched,
+         then clears itself. The long press above is for dragging along. */
+      box.addEventListener("pointerup", (ev) => {
+        if (ev.pointerType !== "mouse" && !scrubbing &&
+            Math.abs(ev.clientX - startX) <= 8 && Math.abs(ev.clientY - startY) <= 8) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+          pid = null;
+          readout(ev.clientX);
+          clearTimeout(this._tapTimer);
+          this._tapTimer = setTimeout(hide, 4000);
+          return;
+        }
+        stop();
+      });
+      ["pointercancel", "pointerleave"].forEach((e) => box.addEventListener(e, stop));
     });
   }
 
