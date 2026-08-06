@@ -261,6 +261,12 @@ Object.assign(PurdyShellCard.prototype, {
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
           ${rooms}
 
+          ${(sec.presets || []).length ? `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Presets</span>
+          <div class="ps-pres">${(sec.presets || []).map((p, i) =>
+            `<button class="ps-pr" type="button" data-preset="${i}">
+              <ha-icon icon="${psEsc(p.icon || "mdi:playlist-music")}"></ha-icon>
+              <span class="ps-trunc">${psEsc(p.name)}</span></button>`).join("")}</div>` : ""}
+
           ${this._pinsHtml()}
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Search</span>
           <div class="ps-sbox">

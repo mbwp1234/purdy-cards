@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.25.0";
+const PC_VERSION = "1.25.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -7816,6 +7816,12 @@ Object.assign(PurdyShellCard.prototype, {
           </div>
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
           ${rooms}
+
+          ${(sec.presets || []).length ? `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Presets</span>
+          <div class="ps-pres">${(sec.presets || []).map((p, i) =>
+            `<button class="ps-pr" type="button" data-preset="${i}">
+              <ha-icon icon="${psEsc(p.icon || "mdi:playlist-music")}"></ha-icon>
+              <span class="ps-trunc">${psEsc(p.name)}</span></button>`).join("")}</div>` : ""}
 
           ${this._pinsHtml()}
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Search</span>

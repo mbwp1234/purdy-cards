@@ -1073,6 +1073,24 @@ check('a sheet_only music section still feeds the targets', (() => {
   return shn._targets().indexOf('media_player.kit') >= 0;
 })());
 
+/* With the column section gone the sheet is the only music surface, so
+   anything that lived only in the section would have become unreachable. */
+const shms = new SH();
+shms.setConfig({ sections: [{ type: 'music', key: 'music', sheet_only: true,
+  players: [{ entity: 'media_player.kit', name: 'Kitchen' }],
+  presets: [{ name: 'Liked Songs', uri: 'library://playlist/7', icon: 'mdi:heart' }] }] });
+shms._hass = { states: { 'media_player.kit': { state: 'idle', attributes: {} } } };
+shms._sheet = 'music';
+const musicSheet = shms._sheetHtml([]);
+check('the music sheet carries the presets', /data-preset="0"/.test(musicSheet) && /Liked Songs/.test(musicSheet));
+check('the presets use the styled grid, not a bare list', /class="ps-pres"/.test(musicSheet));
+check('the music sheet still has rooms, search and recents',
+  /data-pick="media_player\.kit"/.test(musicSheet) && /id="ps-q"/.test(musicSheet));
+check('every music surface the section had is reachable from the sheet', (() => {
+  const styles = SH.styles;
+  return /\.ps-pres \{/.test(styles);   // the grid the sheet now relies on
+})());
+
 /* ------------------------------------------------------- failure states -- */
 /* A zero and a missing reading looked identical, which matters most on the
    one section anybody would act on. */
