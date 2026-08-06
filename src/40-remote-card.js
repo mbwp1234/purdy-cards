@@ -200,7 +200,7 @@ class PurdyRemoteCard extends PcBaseCard {
         .vbtn.muted { color: var(--pc-bad); }
       </style>
 
-      <div class="card tint">
+      <div class="card tint${this._config.glass ? " glass" : ""}">
         <div class="hd">
           <b>${this._config.title}</b>
           <span class="spacer"></span>

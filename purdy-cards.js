@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.12.0";
+const PC_VERSION = "1.13.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -2654,6 +2654,17 @@ const PC_BASE = `
   .card.tint, .tint {
     background-image: linear-gradient(180deg, var(--pc-tint), transparent 130px);
   }
+  /* Opt-in translucent surface, so a card dropped into the shell view's
+     gradient reads as part of it instead of a solid slab on top of it. */
+  .card.glass {
+    background: linear-gradient(180deg, rgba(255,255,255,0.062), rgba(255,255,255,0.026));
+    background-image: linear-gradient(180deg, rgba(255,255,255,0.062), rgba(255,255,255,0.026));
+    border: 1px solid rgba(255,255,255,0.085);
+    border-radius: 26px;
+    box-shadow: 0 24px 60px -18px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.075);
+    backdrop-filter: blur(26px) saturate(1.25);
+    -webkit-backdrop-filter: blur(26px) saturate(1.25);
+  }
   .avatar {
     width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
     background: var(--pc-panel-2); color: var(--pc-muted);
@@ -3327,7 +3338,7 @@ class PurdyNotificationsCard extends PcBaseCard {
         .chip.critical { background: rgba(239, 106, 106, 0.15); color: var(--pc-bad); }
         .chip.warn { background: rgba(242, 193, 78, 0.14); color: var(--pc-warn); }
       </style>
-      <div class="card tint">
+      <div class="card tint${this._config.glass ? " glass" : ""}">
         <div class="hd">
           <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
           <span class="lbl">${this._config.title}</span>
@@ -3823,7 +3834,7 @@ class PurdyRemoteCard extends PcBaseCard {
         .vbtn.muted { color: var(--pc-bad); }
       </style>
 
-      <div class="card tint">
+      <div class="card tint${this._config.glass ? " glass" : ""}">
         <div class="hd">
           <b>${this._config.title}</b>
           <span class="spacer"></span>
@@ -4971,6 +4982,19 @@ function psParseTs(v) {
   return isNaN(t) ? null : t;
 }
 
+/* Bubble Card pop-ups are driven by the URL hash, so leaving to a path or an
+   in-page section has to clear it or the pop-up stays open over the new view. */
+function psClosePopup() {
+  if (typeof window !== "undefined" && window.location && window.location.hash) {
+    window.location.hash = "";
+  }
+}
+
+function psMins(hhmm) {
+  const parts = String(hhmm || "0:0").split(":");
+  return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+}
+
 function psEsc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
@@ -5003,6 +5027,7 @@ class PurdyShellCard extends PcBaseCard {
     this._sheet = null;       // "alerts" when the alert sheet is showing
     this._history = {};
     this._events = [];
+    this._sched = null;
     this._pending = false;
   }
 
@@ -5033,6 +5058,7 @@ class PurdyShellCard extends PcBaseCard {
     if (first && this._config) {
       this._startHistory();
       this._fetchEvents();
+      this._fetchSchedule();
     }
   }
 
@@ -5157,6 +5183,87 @@ class PurdyShellCard extends PcBaseCard {
     } catch (e) {
       /* History is decoration. Never break the view over it. */
     }
+  }
+
+  /* GTTC exposes the whole schedule over its own websocket command; the
+     climate entity only ever carries the window that happens to be active. */
+  async _fetchSchedule() {
+    const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+    if (!sec || !this._hass || !this._hass.callWS) return;
+    const extra = sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
+    try {
+      this._sched = await this._hass.callWS({ type: "gttc/get_schedule", ...extra });
+      this._last = null;
+      this._render();
+    } catch (e) {
+      this._sched = null;
+    }
+  }
+
+  /* Today's entries, following GTTC's own per_day / weekday-weekend split. */
+  _schedToday() {
+    const s = this._sched;
+    if (!s) return [];
+    const dow = new Date().getDay();
+    if (s.mode === "per_day") {
+      const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+      return (s.per_day && s.per_day[names[dow]]) || [];
+    }
+    return s[dow === 0 || dow === 6 ? "weekend" : "weekday"] || [];
+  }
+
+  _scheduleHtml(sec) {
+    const h = this._hass;
+    const cfg = sec.schedule || {};
+    const th = h.states[sec.goal];
+    const cur = th && th.attributes.current_schedule_entry;
+    const entries = this._schedToday()
+      .slice()
+      .sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+
+    const nowPct = ((new Date().getHours() * 60 + new Date().getMinutes()) / 1440) * 100;
+    let bars = "";
+    entries.forEach((e, i) => {
+      const start = psMins(e.time_start);
+      const end = i + 1 < entries.length ? psMins(entries[i + 1].time_start) : 1440;
+      const left = (start / 1440) * 100;
+      const w = Math.max(1.2, ((end - start) / 1440) * 100);
+      const live = cur && cur.time_start === e.time_start;
+      bars += `<span class="ps-seg ${live ? "live" : ""}" style="left:${left.toFixed(2)}%;width:${w.toFixed(2)}%"
+        >${e.cooling_temp != null ? Math.round(e.cooling_temp) + "\u00B0" : ""}</span>`;
+    });
+
+    const rows = entries.map((e) => {
+      const live = cur && cur.time_start === e.time_start;
+      return `<div class="ps-sr ${live ? "live" : ""}">
+          <span class="ps-srt">${psEsc(psMinsToClock(psMins(e.time_start)))}</span>
+          <span class="ps-srv"><i class="h"></i>${e.target_temp == null ? "\u2014" : Math.round(e.target_temp) + "\u00B0"}
+            <i class="c"></i>${e.cooling_temp == null ? "\u2014" : Math.round(e.cooling_temp) + "\u00B0"}</span>
+          ${live ? `<span class="ps-chip cool">now</span>` : ""}
+        </div>`;
+    }).join("");
+
+    const modeId = cfg.mode_entity;
+    const onId = cfg.switch_entity;
+    const on = onId ? pcState(h, onId) === "on" : null;
+
+    return `<div class="ps-sched">
+        <div class="ps-schedh">
+          <span class="ps-lbl">Schedule</span>
+          ${modeId ? `<span class="ps-chip">${psEsc(pcState(h, modeId))}</span>` : ""}
+          ${onId ? `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(onId)}"
+            role="switch" aria-checked="${on}" aria-label="Schedule enabled"><i></i></button>` : ""}
+        </div>
+        ${cur ? `<div class="ps-schednow">Holding <b>${Math.round(cur.effective_temp)}\u00B0</b>
+          until ${psEsc(psMinsToClock(psMins(cur.time_end)))}
+          <span class="ps-flat">(${Math.round(cur.target_temp)}\u00B0 heat / ${Math.round(cur.cooling_temp)}\u00B0 cool)</span></div>` : ""}
+        ${entries.length ? `<div class="ps-timeline">${bars}
+            <span class="ps-nowline" style="left:${nowPct.toFixed(2)}%"></span></div>
+          <div class="ps-tscale"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+          <div class="ps-srs">${rows}</div>`
+        : `<div class="ps-flat" style="font-size:11px">${this._sched === null
+            ? "Schedule unavailable." : "No windows set for today."}</div>`}
+      </div>`;
   }
 
   async _fetchEvents() {
@@ -5608,6 +5715,7 @@ class PurdyShellCard extends PcBaseCard {
       </div>
       <div class="ps-zpair">${zones}${outside}</div>
       <div class="ps-xtra">
+        ${sec.schedule ? this._scheduleHtml(sec) : ""}
         <div class="ps-rmlist">${rooms}</div>
         ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
       </div>
@@ -5960,6 +6068,7 @@ class PurdyShellCard extends PcBaseCard {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const k = el.dataset.open;
+        psClosePopup();
         this._open = this._open === k ? null : k;
         this._render();
         if (this._open) {
@@ -6091,6 +6200,7 @@ class PurdyShellCard extends PcBaseCard {
         const d = (c.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
         if (d.section) {
+          psClosePopup();
           this._open = this._open === d.section ? null : d.section;
           this._render();
           const sect = root.querySelector(`[data-sect="${d.section}"]`);
@@ -6098,10 +6208,12 @@ class PurdyShellCard extends PcBaseCard {
           return;
         }
         if (d.alert_when_faults && this._faults().length) {
+          psClosePopup();
           this._sheet = "alerts";
           this._render();
           return;
         }
+        if (!d.link || d.link.charAt(0) !== "#") psClosePopup();
         pcNavigate(this, d.link);
       });
     });
@@ -6397,6 +6509,32 @@ class PurdyShellCard extends PcBaseCard {
       .ps-btns { display: flex; gap: 6px; flex-wrap: wrap; }
       .ps-btn { padding: 8px 13px; border-radius: 12px; background: var(--ps-fill); font-size: 11.5px; font-weight: 650; }
       .ps-btn:active { background: rgba(255,255,255,.1); }
+
+      /* schedule */
+      .ps-sched { display: flex; flex-direction: column; gap: 8px; }
+      .ps-schedh { display: flex; align-items: center; gap: 8px; }
+      .ps-schedh .ps-lbl { flex: 1; }
+      .ps-schednow { font-size: 11.5px; color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .ps-schednow b { color: var(--ps-text); font-weight: 660; }
+      .ps-timeline { position: relative; height: 28px; border-radius: 9px; background: var(--ps-fill); overflow: hidden; }
+      .ps-seg { position: absolute; top: 3px; bottom: 3px; border-radius: 6px;
+                background: rgba(77,208,225,.22); border: 1px solid rgba(77,208,225,.4);
+                font-size: 9.5px; font-weight: 650; color: var(--ps-text);
+                display: flex; align-items: center; justify-content: center;
+                font-variant-numeric: tabular-nums; overflow: hidden; }
+      .ps-seg.live { background: rgba(77,208,225,.4); border-color: var(--ps-cool); }
+      .ps-nowline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ps-warn); }
+      .ps-tscale { display: flex; justify-content: space-between; font-size: 9px; color: var(--ps-dim);
+                   font-variant-numeric: tabular-nums; }
+      .ps-srs { display: flex; flex-direction: column; gap: 4px; }
+      .ps-sr { display: flex; align-items: center; gap: 9px; background: var(--ps-fill); border-radius: 10px;
+               padding: 7px 10px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+      .ps-sr.live { background: rgba(77,208,225,.13); }
+      .ps-srt { font-weight: 650; flex: 0 0 74px; }
+      .ps-srv { flex: 1; color: var(--ps-muted); }
+      .ps-srv i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 4px 0 0; }
+      .ps-srv i.h { background: var(--ps-heat); }
+      .ps-srv i.c { background: var(--ps-cool); margin-left: 10px; }
 
       /* alert sheet */
       .ps-scrim { position: fixed; inset: 0; background: rgba(4,6,10,.6); z-index: 8; backdrop-filter: blur(2px); }

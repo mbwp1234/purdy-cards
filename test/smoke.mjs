@@ -833,6 +833,44 @@ shg._openGroups['sys|Media'] = true;
 ghtml = shg._secSystems(shg._config.sections[0]);
 check('opened group is marked open', /ps-grp open/.test(ghtml));
 
+check('glass surface is opt-in on the shared card base', defined['purdy-remote-card'] && true);
+check('shell schedule CSS present', shs.includes('.ps-timeline') && shs.includes('.ps-seg.live'));
+
+// GTTC hands back either a per_day map or a weekday/weekend split
+const shsc = new SH();
+shsc.setConfig({ sections: [{ type: 'climate', key: 'clim', goal: 'climate.g',
+  schedule: { api: 'gttc', mode_entity: 'select.m', switch_entity: 'switch.s' } }] });
+check('schedule is empty before the fetch lands', shsc._schedToday().length === 0);
+const dow = new Date().getDay();
+const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+shsc._sched = { mode: 'per_day', per_day: { [dayNames[dow]]: [{ time_start: '06:00', target_temp: 68, cooling_temp: 72 }] } };
+check('per_day schedule reads today', shsc._schedToday().length === 1);
+shsc._sched = { weekday: [{ time_start: '06:00' }], weekend: [{ time_start: '08:00' }, { time_start: '20:00' }] };
+const wknd = dow === 0 || dow === 6;
+check('weekday/weekend schedule picks the right list', shsc._schedToday().length === (wknd ? 2 : 1));
+
+shsc._hass = { states: {
+  'climate.g': { state: 'cool', attributes: { current_schedule_entry: { time_start: '20:00', time_end: '23:59', target_temp: 68, cooling_temp: 70, effective_temp: 70 } } },
+  'select.m': { state: 'Weekday/Weekend', attributes: {} },
+  'switch.s': { state: 'on', attributes: {} },
+} };
+shsc._sched = { weekday: [
+  { time_start: '00:00', target_temp: 68, cooling_temp: 70 },
+  { time_start: '06:00', target_temp: 70, cooling_temp: 72 },
+  { time_start: '20:00', target_temp: 68, cooling_temp: 70 }],
+  weekend: [
+  { time_start: '00:00', target_temp: 68, cooling_temp: 70 },
+  { time_start: '20:00', target_temp: 68, cooling_temp: 70 }] };
+const schedHtml = shsc._scheduleHtml(shsc._config.sections[0]);
+check('schedule renders the active window', /Holding <b>70/.test(schedHtml));
+check('schedule marks the live entry', /ps-seg live/.test(schedHtml) && /ps-sr live/.test(schedHtml));
+check('schedule draws a now marker', schedHtml.includes('ps-nowline'));
+check('schedule shows the mode and an enable switch', /Weekday\/Weekend/.test(schedHtml) && /ps-knob on/.test(schedHtml));
+check('schedule times print as a clock, not raw minutes', /8:00 PM/.test(schedHtml));
+
+shsc._sched = null;
+check('schedule says so when GTTC will not answer', /Schedule unavailable/.test(shsc._scheduleHtml(shsc._config.sections[0])));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

@@ -26,6 +26,17 @@ const PC_BASE = `
   .card.tint, .tint {
     background-image: linear-gradient(180deg, var(--pc-tint), transparent 130px);
   }
+  /* Opt-in translucent surface, so a card dropped into the shell view's
+     gradient reads as part of it instead of a solid slab on top of it. */
+  .card.glass {
+    background: linear-gradient(180deg, rgba(255,255,255,0.062), rgba(255,255,255,0.026));
+    background-image: linear-gradient(180deg, rgba(255,255,255,0.062), rgba(255,255,255,0.026));
+    border: 1px solid rgba(255,255,255,0.085);
+    border-radius: 26px;
+    box-shadow: 0 24px 60px -18px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.075);
+    backdrop-filter: blur(26px) saturate(1.25);
+    -webkit-backdrop-filter: blur(26px) saturate(1.25);
+  }
   .avatar {
     width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
     background: var(--pc-panel-2); color: var(--pc-muted);
@@ -699,7 +710,7 @@ class PurdyNotificationsCard extends PcBaseCard {
         .chip.critical { background: rgba(239, 106, 106, 0.15); color: var(--pc-bad); }
         .chip.warn { background: rgba(242, 193, 78, 0.14); color: var(--pc-warn); }
       </style>
-      <div class="card tint">
+      <div class="card tint${this._config.glass ? " glass" : ""}">
         <div class="hd">
           <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
           <span class="lbl">${this._config.title}</span>
