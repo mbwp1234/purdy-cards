@@ -12,6 +12,9 @@ One bundle, one HACS entry, one version number — a pair of custom Lovelace car
 | `purdy-rooms-card` | Scrolling strip of room temperatures and humidity. |
 | `purdy-quick-card` | Grid of state-coloured action tiles. |
 | `purdy-notifications-card` | Notification centre backed by a todo list — keeps dismissed items readable. |
+| `purdy-remote-card` | Android TV remote with a device selector, brand app grid and circular d-pad. |
+| `purdy-devices-card` | Collapsible device groups with summary lines; faults stay visible while collapsed. |
+| `purdy-music-card` | Music Assistant now-playing with transport, room switching and playlist presets. Plus a **`compact`** mode that hides itself when the house is quiet. |
 
 No build step, no dependencies — plain web components.
 
@@ -298,4 +301,52 @@ actions:
       description: >-
         [unraid] {{ sev }} · {{ trigger.to_state.attributes.description }}
         · raised {{ trigger.to_state.attributes.timestamp }}
+```
+
+### `purdy-music-card`
+
+A [Music Assistant](https://music-assistant.io) surface, in two modes. `compact: true` is the home-screen headline; the default is the popup body.
+
+```yaml
+type: custom:purdy-music-card
+compact: true
+navigate: "#music"
+players:
+  - entity: media_player.kitchen_speaker_2
+    name: Kitchen
+  - entity: media_player.living_room_2
+    name: Living Room
+  - entity: media_player.bedroom_speaker
+    name: Bedroom
+```
+
+```yaml
+type: custom:purdy-music-card
+title: Music
+players: *the-same-list
+presets:
+  - name: Liked Songs
+    uri: library://playlist/7
+    icon: mdi:heart
+  - name: Sleep lofi
+    uri: library://playlist/17
+    icon: mdi:weather-night
+```
+
+**`players` is an explicit list, deliberately.** Music Assistant mirrors every source player it can reach, so a sweep of the `media_player` domain pulls in AirPlay duplicates that sit `unavailable` forever. Name the rooms you actually use.
+
+**Compact mode renders nothing when nothing is playing** — same self-hiding contract as `purdy-attention-card`, so it needs no `conditional` wrapper. A paused queue still counts as playing, so the card does not vanish between tracks.
+
+**A Music Assistant player also proxies whatever else its source device is doing.** A Chromecast running Peacock reports `playing` for the whole episode. The card only treats a player as music when `app_id` is `music_assistant` or `media_content_type` is one of `music` / `playlist` / `track` / `album` / `radio` — otherwise a TV show would put a phantom row on the home screen.
+
+Room selection is automatic: whatever is playing wins over whatever is paused. Tapping a room in the picker pins it until the card is rebuilt, which is also how you choose where a preset lands.
+
+`presets` call `music_assistant.play_media` with `enqueue: replace` against the selected room. `uri` takes anything that service accepts — `library://playlist/7`, `spotify://playlist/…`, a radio stream. `media_type` defaults to `playlist`; set it for tracks, albums or radio. Pull real URIs with:
+
+```yaml
+action: music_assistant.get_library
+data:
+  config_entry_id: <your entry>
+  media_type: playlist
+response_variable: lib
 ```

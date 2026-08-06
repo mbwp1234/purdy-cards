@@ -531,6 +531,94 @@ sr2.setConfig({ sleep_state:'sensor.s' });
 sr2._hass = srHass;
 check('no session config degrades to the derived span', sr2._sessionRange() === null);
 
+// ---- music card ----
+check('purdy-music-card defined', names.includes('purdy-music-card'));
+const M = defined['purdy-music-card'];
+
+let mThrew = false;
+try { new M().setConfig({}); } catch (e) { mThrew = true; }
+check('music setConfig requires players', mThrew);
+
+const mp = (over) => ({ state:'idle', attributes:{ friendly_name:'Room', ...over } });
+const mHass = { states:{
+  'media_player.kitchen': mp({ friendly_name:'Kitchen Speaker' }),
+  'media_player.living':  mp({ friendly_name:'Living Room' }),
+  'media_player.bedroom': mp({ friendly_name:'Bedroom Speaker' }),
+} };
+const players = [
+  { entity:'media_player.kitchen' }, { entity:'media_player.living' },
+  { entity:'media_player.bedroom' },
+];
+
+// compact mode is a headline for something happening — silence means no card
+const mc = new M();
+mc.setConfig({ compact:true, navigate:'#music', players });
+mc.hass = mHass;
+check('music compact hides when nothing plays', mc.shadowRoot.innerHTML==='' && mc.style.display==='none');
+check('music compact getCardSize = 2', mc.getCardSize()===2);
+
+// an MA player also proxies its source device: a Cast playing Peacock is not music
+mHass.states['media_player.living'] = mp({
+  friendly_name:'Living Room', state:'playing', app_id:'peacock_tv', media_title:'Episode 14',
+});
+mHass.states['media_player.living'].state = 'playing';
+mc.hass = mHass;
+check('music ignores a TV app on an MA player', mc.style.display==='none');
+
+mHass.states['media_player.kitchen'] = {
+  state:'playing',
+  attributes:{ friendly_name:'Kitchen Speaker', app_id:'music_assistant',
+    media_title:'Dance Mode', media_artist:'Bluey', volume_level:0.2,
+    entity_picture:'http://ma/img.jpg' },
+};
+mc.hass = mHass;
+const mch = mc.shadowRoot.innerHTML;
+check('music compact renders once a room plays', mc.style.display==='block' && mch.includes('Dance Mode'));
+check('music compact names the room alongside the artist', mch.includes('Bluey · Kitchen Speaker'));
+check('music compact shows pause while playing', mch.includes('mdi:pause'));
+check('music compact uses the queue artwork', mch.includes('src="http://ma/img.jpg"'));
+check('music compact has no room picker', !mch.includes('data-room'));
+
+// full mode: same headline, plus rooms and presets
+const mf = new M();
+mf.setConfig({ players, presets:[
+  { name:'Liked Songs', uri:'library://playlist/7', icon:'mdi:heart' },
+  { name:'Sleep lofi', uri:'library://playlist/17' },
+] });
+mf.hass = mHass;
+const mfh = mf.shadowRoot.innerHTML;
+check('music full getCardSize = 10', mf.getCardSize()===10);
+check('music full lists every room', ['kitchen','living','bedroom'].every(r => mfh.includes(`data-room="media_player.${r}"`)));
+check('music full marks the playing room live', /data-room="media_player.kitchen"[^>]*>\s*<span class="live">/.test(mfh));
+check('music full renders presets', mfh.includes('Liked Songs') && mfh.includes('Sleep lofi'));
+check('music full falls back to a playlist icon', mfh.includes('mdi:playlist-music'));
+check('music full renders the volume slider at 20%', mfh.includes('value="20"') && mfh.includes('>20%<'));
+
+// playing beats paused; an explicit pick beats both
+mHass.states['media_player.bedroom'] = {
+  state:'paused', attributes:{ friendly_name:'Bedroom Speaker', app_id:'music_assistant', media_title:'Other' },
+};
+const ma = new M(); ma.setConfig({ players }); ma._hass = mHass;
+check('music prefers the playing room', ma._active().entity==='media_player.kitchen');
+ma._sel = 'media_player.bedroom';
+check('music honours an explicit room pick', ma._active().entity==='media_player.bedroom');
+ma._sel = 'media_player.gone';
+check('music ignores a pick that is not a real player', ma._active().entity==='media_player.kitchen');
+
+// a paused room still counts as live, so the compact card does not vanish mid-track
+mHass.states['media_player.kitchen'].state = 'paused';
+mc._last = null; mc.hass = mHass;
+check('music compact stays up while paused', mc.style.display==='block');
+check('music compact shows play while paused', mc.shadowRoot.innerHTML.includes('mdi:play'));
+
+// re-render must follow the track, not just the state string
+const mt = new M(); mt.setConfig({ compact:true, players });
+mt.hass = mHass;
+const sig1 = mt._last;
+mHass.states['media_player.kitchen'].attributes.media_title = 'Next Track';
+mt.hass = mHass;
+check('music re-renders on a track change', mt._last!==sig1 && mt.shadowRoot.innerHTML.includes('Next Track'));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
