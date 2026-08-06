@@ -814,7 +814,18 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const sec = this._config.sections.find((s) => s.type === "quick");
         const t = sec && sec.tiles[parseInt(el.dataset.tile, 10)];
-        if (t) pcAction(this, this._hass, t.tap_action, t.entity);
+        if (!t) return;
+        /* A tile can open one of the shell's own sheets. Lovelace has no such
+           action, so it is handled here rather than in pcAction — which knows
+           nothing about the shell it happens to be running inside. */
+        const ta = t.tap_action || {};
+        if (ta.action === "sheet" && ta.sheet) {
+          psClosePopup();
+          this._sheet = this._sheet === ta.sheet ? null : ta.sheet;
+          this._render();
+          return;
+        }
+        pcAction(this, this._hass, t.tap_action, t.entity);
       });
     });
 

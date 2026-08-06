@@ -1093,6 +1093,14 @@ check('a card that rejects bare is retried without it', (() => {
 check('a card that rejects its own config still reports rather than throwing',
   /catch \(err2\)[\s\S]{0,200}ps-nohist/.test(shellSrc));
 
+/* A quick tile can open a sheet. Lovelace has no such action, so it cannot
+   live in pcAction — which knows nothing about the shell around it. */
+check('a quick tile can open a sheet instead of navigating', (() => {
+  const b = shellSrc.slice(shellSrc.indexOf('this._each("[data-tile]"'));
+  return /ta\.action === "sheet" && ta\.sheet/.test(b) &&
+    b.indexOf('ta.action === "sheet"') < b.indexOf('pcAction(this, this._hass, t.tap_action');
+})());
+
 /* ------------------------------------------------ detach and reattach -- */
 /* Lovelace detaches a view's elements rather than destroying them, so leaving
    for the vacuum view and coming back reconnects this same element. Every
