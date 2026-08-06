@@ -841,6 +841,7 @@ const shsc = new SH();
 shsc.setConfig({ sections: [{ type: 'climate', key: 'clim', goal: 'climate.g',
   schedule: { api: 'gttc', mode_entity: 'select.m', switch_entity: 'switch.s' } }] });
 check('schedule is empty before the fetch lands', shsc._schedToday().length === 0);
+check('scope detection survives hass not having arrived yet', shsc._detectScope() === null);
 const dow = new Date().getDay();
 const dayNames = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
 shsc._sched = { mode: 'per_day', per_day: { [dayNames[dow]]: [{ time_start: '06:00', target_temp: 68, cooling_temp: 72 }] } };
@@ -854,13 +855,13 @@ shsc._hass = { states: {
   'select.m': { state: 'Weekday/Weekend', attributes: {} },
   'switch.s': { state: 'on', attributes: {} },
 } };
-shsc._sched = { weekday: [
-  { time_start: '00:00', target_temp: 68, cooling_temp: 70 },
-  { time_start: '06:00', target_temp: 70, cooling_temp: 72 },
-  { time_start: '20:00', target_temp: 68, cooling_temp: 70 }],
+shsc._sched = { mode: 'weekday_weekend', active_preset: null, presets: {}, weekday: [
+  { time_start: '00:00', time_end: '05:59', target_temp: 68, cooling_temp: 70 },
+  { time_start: '06:00', time_end: '19:59', target_temp: 70, cooling_temp: 72 },
+  { time_start: '20:00', time_end: '23:59', target_temp: 68, cooling_temp: 70 }],
   weekend: [
-  { time_start: '00:00', target_temp: 68, cooling_temp: 70 },
-  { time_start: '20:00', target_temp: 68, cooling_temp: 70 }] };
+  { time_start: '00:00', time_end: '19:59', target_temp: 68, cooling_temp: 70 },
+  { time_start: '20:00', time_end: '23:59', target_temp: 68, cooling_temp: 70 }] };
 const schedHtml = shsc._scheduleHtml(shsc._config.sections[0]);
 check('schedule renders the active window', /Holding <b>70/.test(schedHtml));
 check('schedule marks the live entry', /ps-seg live/.test(schedHtml) && /ps-sr live/.test(schedHtml));
@@ -1028,6 +1029,7 @@ shs2.setConfig({ sections: [{ type: 'climate', key: 'clim', goal: 'climate.g', s
 shs2._hass = { states: { 'climate.g': { state: 'cool', attributes: {} } } };
 shs2._sched = { weekday: [{ time_start: '06:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }],
                 weekend: [{ time_start: '08:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }] };
+shs2._schedScope = undefined; shs2._schedDay = null;
 const isWknd = new Date().getDay() === 0 || new Date().getDay() === 6;
 check('schedule edits address today’s day bucket', shs2._schedDayName() === (isWknd ? 'weekend' : 'weekday'));
 
@@ -1040,14 +1042,55 @@ shs2._sched = {
   active_preset: 'Summer',
   presets: { Summer: { schedule: { [dayNow]: [{ time_start: '05:30', time_end: '21:00', target_temp: 70, cooling_temp: 74 }] } } },
 };
-check('an active preset is detected', !!shs2._activePreset());
-check('an active preset switches to per-day naming', shs2._schedDayName() === dayNow);
-check('an active preset supplies the entries', shs2._schedToday().length === 1 && shs2._schedToday()[0].time_start === '05:30');
-check('the base weekday list is ignored while a preset is active',
-  shs2._schedToday()[0].time_start !== '06:00' && shs2._schedToday()[0].time_start !== '09:00');
-check('the header names the preset being shown', /Summer preset/.test(shs2._scheduleHtml(shs2._config.sections[0])));
+check('a pinned preset is detected', shs2._activePreset() === 'Summer');
+check('a pinned preset switches to per-day naming', shs2._schedDayName() === dayNow);
+check('a pinned preset supplies the entries', shs2._schedEntries().length === 1 && shs2._schedEntries()[0].time_start === '05:30');
+check('the base weekday list is ignored while a preset is pinned',
+  shs2._schedEntries()[0].time_start !== '06:00' && shs2._schedEntries()[0].time_start !== '09:00');
+check('a pinned preset is editable, because that is where GTTC writes',
+  shs2._schedEditable(shs2._config.sections[0]) === true);
+
+/* The real instance: no preset is pinned, but GTTC is running one anyway.
+   The live window on the climate entity is the only reliable signal. */
+shs2._sched = {
+  mode: 'weekday_weekend', active_preset: null,
+  weekday: [{ time_start: '00:00', time_end: '23:59', target_temp: 68, cooling_temp: null }],
+  weekend: [],
+  preset_labels: { home: 'Home All Day', away: 'Away' },
+  presets: {
+    home: { schedule: { [dayNow]: [
+      { time_start: '06:00', time_end: '17:59', target_temp: 71, cooling_temp: 74, zone_id: 'z2' },
+      { time_start: '20:00', time_end: '23:59', target_temp: 68, cooling_temp: 70, zone_id: 'z2' }] } },
+    away: { schedule: { [dayNow]: [{ time_start: '00:00', time_end: '23:59', target_temp: 67 }] } },
+  },
+  zones: [{ id: 'z2', name: '2nd Floor' }],
+};
+shs2._hass.states['climate.g'] = { state: 'cool', attributes: { current_schedule_entry:
+  { time_start: '20:00', time_end: '23:59', target_temp: 68, cooling_temp: 70, effective_temp: 70 } } };
+shs2._schedScope = undefined;
+check('an unpinned preset is detected from the live window', shs2._detectScope() === 'home');
+check('the detected preset supplies the real daily entries', shs2._schedEntries().length === 2);
+check('the single-window base fallback is not what gets shown',
+  shs2._schedEntries()[0].time_start === '06:00');
+check('an unpinned preset is read-only, since edits would land on the base',
+  shs2._schedEditable(shs2._config.sections[0]) === false);
+const schedH = shs2._scheduleHtml(shs2._config.sections[0]);
+check('the sheet offers a tab per preset plus the base', /data-scope="__base__"/.test(schedH) && /data-scope="home"/.test(schedH));
+check('the sheet names presets by their label', /Home All Day/.test(schedH));
+check('the detected preset tab is selected', /data-scope="home">Home All Day/.test(schedH.replace(/class="ps-tab on" type="button" /, '')));
+check('the sheet offers a tab per day', /data-sday="monday"/.test(schedH) && /data-sday="sunday"/.test(schedH));
+check('entries name their zone', /2nd Floor/.test(schedH));
+check('read-only scopes say why', /Read-only/.test(schedH));
+shs2._schedScope = null;
+check('switching to the base shows the base list', shs2._schedEntries().length === 1 && shs2._schedEntries()[0].target_temp === 68);
+check('the base is editable', shs2._schedEditable(shs2._config.sections[0]) === true);
+shs2._schedDay = 'saturday';
+check('picking a day changes what is listed', shs2._schedDayName() === 'saturday');
+shs2._schedScope = undefined; shs2._schedDay = null;
+
 shs2._sched = { mode: 'per_day', per_day: { [dayNow]: [{ time_start: '07:15', time_end: '22:00', target_temp: 69 }] } };
-check('per_day mode reads today by name', shs2._schedToday()[0].time_start === '07:15');
+shs2._hass.states['climate.g'] = { state: 'cool', attributes: {} };
+check('per_day mode reads today by name', shs2._schedEntries()[0].time_start === '07:15');
 check('per_day mode names the day', shs2._schedDayName() === dayNow);
 // the preset tests above left _sched in per_day mode; restore the split lists
 shs2._sched = { weekday: [{ time_start: '06:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }],
@@ -1064,6 +1107,7 @@ check('delete names the entry by its own times', !!del && del.time_start === (is
 check('delete names today’s day bucket', del.day === (isWknd ? 'weekend' : 'weekday'));
 check('delete refetches the schedule afterwards', wsMsgs.some((m) => m.type === 'gttc/get_schedule'));
 check('delete clears the editor', shs2._schedEdit === null);
+shs2._schedScope = undefined; shs2._schedDay = null;
 check('schedule rows are tappable when editable', /data-sedit="0"/.test(shs2._scheduleHtml(shs2._config.sections[0])));
 shs2._config.sections[0].schedule.editable = false;
 check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtml(shs2._config.sections[0])));

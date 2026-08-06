@@ -98,6 +98,8 @@ class PurdyShellCard extends PcBaseCard {
     this._query = "";
     this._schedEdit = null;   // index of the entry being edited, or "new"
     this._schedNote = null;
+    this._schedScope = undefined; // preset key being viewed; null = base lists
+    this._schedDay = null;        // day being viewed; null = today
     this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
     this._pending = false;
@@ -452,43 +454,102 @@ class PurdyShellCard extends PcBaseCard {
     this._query = "";
     this._schedEdit = null;   // index of the entry being edited, or "new"
     this._schedNote = null;
+    this._schedScope = undefined; // preset key being viewed; null = base lists
+    this._schedDay = null;        // day being viewed; null = today
     this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
     }
   }
 
-  /* When a preset is active, GTTC reads AND edits that preset's per-day
-     schedule — update_entry/delete_entry default to active_preset. Reading the
-     base weekday/weekend lists instead shows a schedule that is not in use. */
+  /* GTTC keeps FOUR schedules at once: the base weekday/weekend lists, and a
+     named preset per situation (home / work_from_home / away / sleep), each
+     with its own seven-day plan. `active_preset` is only set when a preset is
+     pinned — when GTTC picks one situationally it stays null, so reading the
+     base lists shows a schedule the house is not running. The live window on
+     the climate entity is the one reliable signal of which is in force, so
+     match against that. */
   _activePreset() {
     const s = this._sched;
-    if (s && s.active_preset && s.presets && s.presets[s.active_preset]) {
-      return s.presets[s.active_preset];
+    if (s && s.active_preset && s.presets && s.presets[s.active_preset]) return s.active_preset;
+    return null;
+  }
+
+  _dayName(offset) {
+    const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    return names[offset == null ? new Date().getDay() : offset];
+  }
+
+  /* Which schedule is actually running: the pinned preset, else whichever
+     preset owns the window the thermostat reports, else the base lists. */
+  _detectScope() {
+    const s = this._sched;
+    if (!s || !this._hass) return null;
+    const pinned = this._activePreset();
+    if (pinned) return pinned;
+
+    const sec = ((this._config || {}).sections || []).find((x) => x.type === "climate" && x.schedule);
+    const th = sec && sec.goal && this._hass.states[sec.goal];
+    const cur = th && th.attributes.current_schedule_entry;
+    if (cur) {
+      const today = this._dayName();
+      const same = (e) => e.time_start === cur.time_start && e.time_end === cur.time_end &&
+        Number(e.target_temp) === Number(cur.target_temp);
+      const keys = Object.keys(s.presets || {});
+      for (const k of keys) {
+        const list = (s.presets[k].schedule && s.presets[k].schedule[today]) || [];
+        if (list.some(same)) return k;
+      }
+      const base = s.mode === "per_day"
+        ? ((s.per_day && s.per_day[today]) || [])
+        : (s[new Date().getDay() % 6 === 0 ? "weekend" : "weekday"] || []);
+      if (base.some(same)) return null;
     }
     return null;
   }
 
+  _scope() {
+    return this._schedScope === undefined ? this._detectScope() : this._schedScope;
+  }
+
+  /* Presets and per_day mode are seven-day; the base split is two-bucket. */
   _perDay() {
-    return !!this._activePreset() || (this._sched && this._sched.mode === "per_day");
+    return !!this._scope() || (this._sched && this._sched.mode === "per_day");
   }
 
   _schedDayName() {
-    const dow = new Date().getDay();
-    if (this._perDay()) {
-      return ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][dow];
-    }
-    return dow === 0 || dow === 6 ? "weekend" : "weekday";
+    if (this._schedDay) return this._schedDay;
+    if (this._perDay()) return this._dayName();
+    return new Date().getDay() % 6 === 0 ? "weekend" : "weekday";
   }
 
-  /* Today's entries, from the preset when one is active. */
-  _schedToday() {
+  _schedEntries() {
     const s = this._sched;
     if (!s) return [];
     const day = this._schedDayName();
-    const preset = this._activePreset();
-    if (preset) return (preset.schedule && preset.schedule[day]) || [];
+    const scope = this._scope();
+    if (scope && s.presets && s.presets[scope]) {
+      return (s.presets[scope].schedule && s.presets[scope].schedule[day]) || [];
+    }
     if (s.mode === "per_day") return (s.per_day && s.per_day[day]) || [];
     return s[day] || [];
+  }
+
+  _schedToday() {
+    return this._schedEntries();
+  }
+
+  _zoneName(id) {
+    if (!id || !this._sched) return null;
+    const z = (this._sched.zones || []).find((x) => x.id === id);
+    return z ? z.name : null;
+  }
+
+  /* GTTC's update_entry / delete_entry write to the ACTIVE preset, so editing
+     anything else would silently land in the wrong schedule. Only offer it
+     where the write will go where it looks like it goes. */
+  _schedEditable(sec) {
+    if ((sec.schedule || {}).editable === false) return false;
+    return this._scope() === this._activePreset();
   }
 
   _schedWs(msg) {
@@ -503,7 +564,7 @@ class PurdyShellCard extends PcBaseCard {
       const el = root.querySelector(`[data-f="${f}"]`);
       return el ? el.value : "";
     };
-    const entries = this._schedToday().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+    const entries = this._schedEntries().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
     const orig = this._schedEdit === "new" ? null : entries[this._schedEdit];
     const msg = {
       type: "gttc/update_entry",
@@ -538,7 +599,7 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   async _schedDelete() {
-    const entries = this._schedToday().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+    const entries = this._schedEntries().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
     const orig = entries[this._schedEdit];
     if (!orig) return;
     try {
@@ -548,6 +609,8 @@ class PurdyShellCard extends PcBaseCard {
       });
       this._schedEdit = null;
       this._schedNote = null;
+    this._schedScope = undefined; // preset key being viewed; null = base lists
+    this._schedDay = null;        // day being viewed; null = today
     this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
       await this._fetchSchedule();
@@ -559,34 +622,58 @@ class PurdyShellCard extends PcBaseCard {
 
   _scheduleHtml(sec) {
     const h = this._hass;
-    const cfg = sec.schedule || {};
+    const sd = this._sched;
     const th = h.states[sec.goal];
     const cur = th && th.attributes.current_schedule_entry;
-    const entries = this._schedToday()
-      .slice()
+    const scope = this._scope();
+    const day = this._schedDayName();
+    const editable = this._schedEditable(sec);
+    const entries = this._schedEntries().slice()
       .sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
 
+    /* Which of the four schedules you are looking at. */
+    const labels = (sd && sd.preset_labels) || {};
+    const scopes = [{ k: null, label: "Base" }].concat(
+      Object.keys((sd && sd.presets) || {}).map((k) => ({ k, label: labels[k] || k })));
+    const scopeTabs = sd && scopes.length > 1
+      ? `<div class="ps-tabs">${scopes.map((x) => `
+          <button class="ps-tab ${x.k === scope ? "on" : ""}" type="button"
+            data-scope="${x.k === null ? "__base__" : psEsc(x.k)}">${psEsc(x.label)}</button>`).join("")}</div>`
+      : "";
+
+    const days = this._perDay()
+      ? [["monday", "Mon"], ["tuesday", "Tue"], ["wednesday", "Wed"], ["thursday", "Thu"],
+         ["friday", "Fri"], ["saturday", "Sat"], ["sunday", "Sun"]]
+      : [["weekday", "Weekdays"], ["weekend", "Weekend"]];
+    const dayTabs = `<div class="ps-tabs">${days.map(([k, lbl]) => `
+        <button class="ps-tab ${k === day ? "on" : ""}" type="button" data-sday="${k}">${psEsc(lbl)}</button>`).join("")}</div>`;
+
     const nowPct = ((new Date().getHours() * 60 + new Date().getMinutes()) / 1440) * 100;
+    const isToday = this._perDay() ? day === this._dayName()
+      : day === (new Date().getDay() % 6 === 0 ? "weekend" : "weekday");
+
     let bars = "";
     entries.forEach((e, i) => {
-      const start = psMins(e.time_start);
-      const end = e.time_end ? psMins(e.time_end)
+      const st = psMins(e.time_start);
+      let en = e.time_end ? psMins(e.time_end)
         : (i + 1 < entries.length ? psMins(entries[i + 1].time_start) : 1440);
-      const left = (start / 1440) * 100;
-      const w = Math.max(1.2, ((end - start) / 1440) * 100);
-      const live = cur && cur.time_start === e.time_start;
-      bars += `<span class="ps-seg ${live ? "live" : ""}" style="left:${left.toFixed(2)}%;width:${w.toFixed(2)}%"
-        >${e.cooling_temp != null ? Math.round(e.cooling_temp) + "\u00B0" : ""}</span>`;
+      if (en <= st) en = 1440;                    // a window that wraps midnight
+      const live = isToday && cur && cur.time_start === e.time_start && cur.time_end === e.time_end;
+      bars += `<span class="ps-seg ${live ? "live" : ""}"
+        style="left:${((st / 1440) * 100).toFixed(2)}%;width:${Math.max(1.2, ((en - st) / 1440) * 100).toFixed(2)}%"
+        >${e.cooling_temp != null ? Math.round(e.cooling_temp) + "\u00B0" : Math.round(e.target_temp) + "\u00B0"}</span>`;
     });
 
-    const editable = cfg.editable !== false;
     const rows = entries.map((e, i) => {
-      const live = cur && cur.time_start === e.time_start;
+      const live = isToday && cur && cur.time_start === e.time_start && cur.time_end === e.time_end;
+      const zone = this._zoneName(e.zone_id);
       return `<button class="ps-sr ${live ? "live" : ""}" type="button" ${
           editable ? `data-sedit="${i}"` : "disabled"}>
-          <span class="ps-srt">${psEsc(psMinsToClock(psMins(e.time_start)))}</span>
-          <span class="ps-srv"><i class="h"></i>${e.target_temp == null ? "\u2014" : Math.round(e.target_temp) + "\u00B0"}
-            <i class="c"></i>${e.cooling_temp == null ? "\u2014" : Math.round(e.cooling_temp) + "\u00B0"}</span>
+          <span class="ps-srt">${psEsc(psMinsToClock(psMins(e.time_start)))}\u2013${
+            psEsc(psMinsToClock(psMins(e.time_end || "23:59")))}</span>
+          <span class="ps-srv"><i class="h"></i>${e.target_temp == null ? "\u2014" : Math.round(e.target_temp) + "\u00B0"}${
+            e.cooling_temp == null ? "" : `<i class="c"></i>${Math.round(e.cooling_temp)}\u00B0`}${
+            zone ? `<span class="ps-srz">${psEsc(zone)}</span>` : ""}</span>
           ${live ? `<span class="ps-chip cool">now</span>` : ""}
         </button>`;
     }).join("");
@@ -614,31 +701,34 @@ class PurdyShellCard extends PcBaseCard {
         </div>`;
     }
 
-    const modeId = cfg.mode_entity;
-    const onId = cfg.switch_entity;
+    const modeId = (sec.schedule || {}).mode_entity;
+    const onId = (sec.schedule || {}).switch_entity;
     const on = onId ? pcState(h, onId) === "on" : null;
 
     return `<div class="ps-sched">
         <div class="ps-schedh">
-          <span class="ps-lbl">${psEsc(this._activePreset()
-            ? (this._sched.active_preset + " preset")
-            : (this._perDay() ? this._schedDayName() : this._schedDayName() + "s"))}</span>
+          <span class="ps-lbl">Schedule</span>
           ${modeId ? `<span class="ps-chip">${psEsc(pcState(h, modeId))}</span>` : ""}
           ${onId ? `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(onId)}"
             role="switch" aria-checked="${on}" aria-label="Schedule enabled"><i></i></button>` : ""}
         </div>
         ${cur ? `<div class="ps-schednow">Holding <b>${Math.round(cur.effective_temp)}\u00B0</b>
           until ${psEsc(psMinsToClock(psMins(cur.time_end)))}
-          <span class="ps-flat">(${Math.round(cur.target_temp)}\u00B0 heat / ${Math.round(cur.cooling_temp)}\u00B0 cool)</span></div>` : ""}
+          <span class="ps-flat">(${Math.round(cur.target_temp)}\u00B0 heat${
+            cur.cooling_temp == null ? "" : " / " + Math.round(cur.cooling_temp) + "\u00B0 cool"})</span></div>` : ""}
+        ${scopeTabs}
+        ${sd ? dayTabs : ""}
         ${entries.length ? `<div class="ps-timeline">${bars}
-            <span class="ps-nowline" style="left:${nowPct.toFixed(2)}%"></span></div>
+            ${isToday ? `<span class="ps-nowline" style="left:${nowPct.toFixed(2)}%"></span>` : ""}</div>
           <div class="ps-tscale"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
           <div class="ps-srs">${rows}</div>`
         : `<div class="ps-flat" style="font-size:11px">${this._sched === null
-            ? "Schedule unavailable." : "No windows set for today."}</div>`}
+            ? "Schedule unavailable." : "No windows set for this day."}</div>`}
         ${editor}
-        ${editable && this._schedEdit === null && this._sched
+        ${editable && this._schedEdit === null && sd
           ? `<div class="ps-btns"><button class="ps-btn" type="button" data-sedit="new">Add a window</button></div>` : ""}
+        ${!editable && sd ? `<div class="ps-note">Read-only \u2014 GTTC writes edits to the active preset${
+          this._activePreset() ? "" : ", and none is pinned"}. Pin one to edit here.</div>` : ""}
       </div>`;
   }
 
@@ -1884,12 +1974,33 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
+    root.querySelectorAll("[data-scope]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const v = el.dataset.scope;
+        this._schedScope = v === "__base__" ? null : v;
+        this._schedDay = null;
+        this._schedEdit = null;
+        this._render();
+      });
+    });
+    root.querySelectorAll("[data-sday]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._schedDay = el.dataset.sday;
+        this._schedEdit = null;
+        this._render();
+      });
+    });
+
     root.querySelectorAll("[data-sedit]").forEach((el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         const v = el.dataset.sedit;
         this._schedEdit = v === "new" ? "new" : parseInt(v, 10);
         this._schedNote = null;
+    this._schedScope = undefined; // preset key being viewed; null = base lists
+    this._schedDay = null;        // day being viewed; null = today
     this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
         this._armed = null;
@@ -2568,6 +2679,17 @@ class PurdyShellCard extends PcBaseCard {
                  padding: 8px 11px; font-size: 11.5px; font-weight: 650; }
       .ps-hold.armed { background: var(--ps-warn); color: #1a1a1a; }
       .ps-holdx { font-size: 12px; font-weight: 700; }
+
+      /* schedule tabs */
+      .ps-tabs { display: flex; gap: 3px; background: var(--ps-fill); border-radius: 11px; padding: 3px;
+                 overflow-x: auto; scrollbar-width: none; }
+      .ps-tabs::-webkit-scrollbar { display: none; }
+      .ps-tab { flex: 1 0 auto; min-width: 40px; border-radius: 9px; padding: 7px 10px; font-size: 11px;
+                font-weight: 650; color: var(--ps-muted); text-align: center; white-space: nowrap; }
+      .ps-tab.on { background: rgba(255,255,255,.1); color: var(--ps-text);
+                   box-shadow: inset 0 0 0 1px var(--ps-hair); }
+      .ps-srz { margin-left: 8px; color: var(--ps-dim); font-size: 10px; }
+      .ps-srt { flex: 0 0 128px; }
 
       /* schedule editor */
       .ps-sedit { display: flex; flex-direction: column; gap: 9px; background: var(--ps-fill);
