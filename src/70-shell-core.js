@@ -396,7 +396,11 @@ class PurdyShellCard extends PcBaseCard {
 
     const el = document.createElement(tag);
     try {
-      el.setConfig({ ...spec.card });
+      /* The sheet has already drawn a surface, so the card must not draw a
+         second one — the shell is what knows it is nesting, so it defaults
+         `bare` rather than making every hosted config remember to. Listed
+         first so an explicit `bare: false` in config still wins. */
+      el.setConfig({ bare: true, ...spec.card });
     } catch (err) {
       /* A card that rejects its config must say so here rather than throwing
          out of the render and taking the whole shell down. */
@@ -913,10 +917,15 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
-        /* Faults outrank the button's normal destination — that is the whole
-           point of the bell — so this is tested before `sheet` and `section`,
-           both of which the same entry may also carry. */
-        if (d.alert_when_faults && this._faults().length) {
+        /* `alert_when_faults` is a BADGE, not a destination. It was hijacking
+           the bell: with any fault raised — and the low-battery rule means
+           there usually is one — tapping Notifications opened the attention
+           list instead of the notification log, so the log was effectively
+           unreachable. Faults already have their own way in, the chip in the
+           header. So the flag only becomes an action for an entry that has no
+           destination of its own. */
+        if (d.alert_when_faults && this._faults().length
+            && !d.sheet && !d.section && !d.link) {
           psClosePopup();
           this._sheet = "alerts";
           this._render();

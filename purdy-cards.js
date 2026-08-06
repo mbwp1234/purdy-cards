@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.26.0";
+const PC_VERSION = "1.26.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -2742,6 +2742,19 @@ const PC_BASE = `
     backdrop-filter: blur(26px) saturate(1.25);
     -webkit-backdrop-filter: blur(26px) saturate(1.25);
   }
+  /* Hosted inside the shell's sheet, where the surface is already drawn. A
+     card that draws its own on top of it reads as a card inside a card, which
+     is exactly what glass-on-glass looks like. Must follow .glass to win. */
+  .card.bare {
+    background: none;
+    background-image: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: 0;
+  }
   .avatar {
     width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
     background: var(--pc-panel-2); color: var(--pc-muted);
@@ -3415,7 +3428,7 @@ class PurdyNotificationsCard extends PcBaseCard {
         .chip.critical { background: rgba(239, 106, 106, 0.15); color: var(--pc-bad); }
         .chip.warn { background: rgba(242, 193, 78, 0.14); color: var(--pc-warn); }
       </style>
-      <div class="card tint${this._config.glass ? " glass" : ""}">
+      <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
         <div class="hd">
           <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
           <span class="lbl">${this._config.title}</span>
@@ -3911,7 +3924,7 @@ class PurdyRemoteCard extends PcBaseCard {
         .vbtn.muted { color: var(--pc-bad); }
       </style>
 
-      <div class="card tint${this._config.glass ? " glass" : ""}">
+      <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
         <div class="hd">
           <b>${this._config.title}</b>
           <span class="spacer"></span>
@@ -5403,7 +5416,11 @@ class PurdyShellCard extends PcBaseCard {
 
     const el = document.createElement(tag);
     try {
-      el.setConfig({ ...spec.card });
+      /* The sheet has already drawn a surface, so the card must not draw a
+         second one — the shell is what knows it is nesting, so it defaults
+         `bare` rather than making every hosted config remember to. Listed
+         first so an explicit `bare: false` in config still wins. */
+      el.setConfig({ bare: true, ...spec.card });
     } catch (err) {
       /* A card that rejects its config must say so here rather than throwing
          out of the render and taking the whole shell down. */
@@ -5920,10 +5937,15 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
-        /* Faults outrank the button's normal destination — that is the whole
-           point of the bell — so this is tested before `sheet` and `section`,
-           both of which the same entry may also carry. */
-        if (d.alert_when_faults && this._faults().length) {
+        /* `alert_when_faults` is a BADGE, not a destination. It was hijacking
+           the bell: with any fault raised — and the low-battery rule means
+           there usually is one — tapping Notifications opened the attention
+           list instead of the notification log, so the log was effectively
+           unreachable. Faults already have their own way in, the chip in the
+           header. So the flag only becomes an action for an entry that has no
+           destination of its own. */
+        if (d.alert_when_faults && this._faults().length
+            && !d.sheet && !d.section && !d.link) {
           psClosePopup();
           this._sheet = "alerts";
           this._render();

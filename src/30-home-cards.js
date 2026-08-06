@@ -37,6 +37,19 @@ const PC_BASE = `
     backdrop-filter: blur(26px) saturate(1.25);
     -webkit-backdrop-filter: blur(26px) saturate(1.25);
   }
+  /* Hosted inside the shell's sheet, where the surface is already drawn. A
+     card that draws its own on top of it reads as a card inside a card, which
+     is exactly what glass-on-glass looks like. Must follow .glass to win. */
+  .card.bare {
+    background: none;
+    background-image: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: 0;
+  }
   .avatar {
     width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
     background: var(--pc-panel-2); color: var(--pc-muted);
@@ -710,7 +723,7 @@ class PurdyNotificationsCard extends PcBaseCard {
         .chip.critical { background: rgba(239, 106, 106, 0.15); color: var(--pc-bad); }
         .chip.warn { background: rgba(242, 193, 78, 0.14); color: var(--pc-warn); }
       </style>
-      <div class="card tint${this._config.glass ? " glass" : ""}">
+      <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
         <div class="hd">
           <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
           <span class="lbl">${this._config.title}</span>

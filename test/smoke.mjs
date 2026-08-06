@@ -1070,9 +1070,34 @@ shhost._mountSheetCard();
 check('closing a hosted sheet releases the card', shhost._hosted === null);
 globalThis.document = savedDoc2;
 
-check('faults outrank a dock entry that also carries a sheet', (() => {
+/* The bell carries alert_when_faults AND a sheet. Treating the flag as a
+   destination meant that with any fault raised — and the low-battery rule
+   means there usually is one — it opened the attention list, leaving the
+   notification log unreachable. It is a badge; the sheet is the destination. */
+check('a dock entry with its own destination still reaches it while faults exist', (() => {
   const b = shellSrc.slice(shellSrc.indexOf('this._each("[data-dock]"'));
-  return b.indexOf('d.alert_when_faults') < b.indexOf('if (d.sheet)');
+  return /d\.alert_when_faults && this\._faults\(\)\.length\s*\n?\s*&& !d\.sheet && !d\.section && !d\.link/.test(b);
+})());
+check('an entry with no destination of its own still falls back to the alerts sheet',
+  /!d\.sheet && !d\.section && !d\.link\) \{[\s\S]{0,120}this\._sheet = "alerts"/.test(shellSrc));
+
+/* Glass inside glass reads as a card in a card. */
+check('a hosted card is told not to draw its own surface',
+  /el\.setConfig\(\{ bare: true, \.\.\.spec\.card \}\)/.test(shellSrc));
+check('bare strips the surface a hosted card would otherwise draw', (() => {
+  const base = fs.readFileSync(new URL('../src/30-home-cards.js', import.meta.url),'utf8');
+  const m = /\.card\.bare \{([\s\S]*?)\}/.exec(base);
+  if (!m) return false;
+  return ['background: none', 'border: 0', 'box-shadow: none', 'padding: 0', 'backdrop-filter: none']
+    .every((d) => m[1].includes(d));
+})());
+check('bare is declared after glass so it wins', (() => {
+  const base = fs.readFileSync(new URL('../src/30-home-cards.js', import.meta.url),'utf8');
+  return base.indexOf('.card.glass {') < base.indexOf('.card.bare {');
+})());
+check('the hosted cards honour bare', (() => {
+  const bodies = src.match(/class="card tint\$\{[^`]*?\}"/g) || [];
+  return bodies.length >= 2 && bodies.every((b) => b.includes('bare'));
 })());
 check('a now-playing tv row can open a sheet instead of a hash pop-up',
   /sec\.remote_sheet/.test(shellSrc));
