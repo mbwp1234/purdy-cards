@@ -1138,7 +1138,15 @@ shs2._config.sections[0].schedule.editable = false;
 check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtml(shs2._config.sections[0])));
 
 // ---- room picking, saved playlists, scrubber ----
-check('scrubber styles present', shs.includes('.ps-cross') && shs.includes('.ps-tip'));
+check('scrubber draws a crosshair', shs.includes('.ps-cross'));
+/* A tooltip at the touch point is under the thumb by definition, so the
+   readout lives above the plot in normal flow instead. */
+check('no floating tooltip is drawn over the plot', !shs.includes('.ps-tip'));
+check('the readout line is styled for scrubbing', shs.includes('[data-readout].live'));
+check('both graphs expose a readout line', (src.match(/data-readout="/g) || []).length >= 2);
+check('the scrubber writes to the readout, not a tooltip', src.includes('out.innerHTML = html'));
+check('the readout restores its resting text', src.includes('out.innerHTML = resting'));
+check('the thumb may leave the plot while scrubbing', src.includes('thumb can drop below the plot'));
 check('hypnogram plot is positioned for a crosshair', shs.includes('.ps-hypplot { position: relative'));
 
 const shx = new SH();

@@ -1135,9 +1135,9 @@ class PurdyShellCard extends PcBaseCard {
     });
     const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="ps-hyp">
-        <div class="ps-hypt"><span class="ps-lbl">Tonight</span><span>${rows.length} transitions</span></div>
+        <div class="ps-hypt" data-readout="hyp"><span class="ps-lbl">Tonight</span><span>${rows.length} transitions</span></div>
         <div class="ps-hypplot" data-scrub="hyp">
-          <div class="ps-cross" hidden></div><div class="ps-tip" hidden></div>
+          <div class="ps-cross" hidden></div>
           <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Sleep stages tonight">${out}</svg>
         </div>
         <div class="ps-hypt"><span>${fmt(span.from)}</span><span>${fmt(span.to)}</span></div>
@@ -1345,12 +1345,13 @@ class PurdyShellCard extends PcBaseCard {
         <div class="ps-rmlist">${rooms}</div>
         ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
       </div>
-      ${wave ? `<div class="ps-wave" data-scrub="wave">
-        <div class="ps-cross" hidden></div><div class="ps-tip" hidden></div>
-        <div class="ps-wlg">
-          <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "—" : inNow.toFixed(1) + "°"}</b></span>
-          <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "—" : outNow.toFixed(1) + "°"}</b></span>
-        </div>${wave}</div>` : ""}`;
+      ${wave ? `<div class="ps-wlg" data-readout="wave">
+          <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "\u2014" : inNow.toFixed(1) + "\u00B0"}</b></span>
+          <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "\u2014" : outNow.toFixed(1) + "\u00B0"}</b></span>
+        </div>
+        <div class="ps-wave" data-scrub="wave">
+        <div class="ps-cross" hidden></div>
+        ${wave}</div>` : ""}`;
   }
 
   /* Renders nothing at all when every television is off, the same way the
@@ -2295,8 +2296,11 @@ class PurdyShellCard extends PcBaseCard {
     root.querySelectorAll("[data-scrub]").forEach((box) => {
       const kind = box.dataset.scrub;
       const cross = box.querySelector(".ps-cross");
-      const tip = box.querySelector(".ps-tip");
-      if (!cross || !tip) return;
+      /* The readout lives ABOVE the plot, in normal flow, because a tooltip
+         drawn at the touch point is under the thumb by definition. */
+      const out = root.querySelector(`[data-readout="${kind}"]`);
+      if (!cross || !out) return;
+      const resting = out.innerHTML;
 
       let scrubbing = false;
       let holdTimer = null;
@@ -2306,7 +2310,8 @@ class PurdyShellCard extends PcBaseCard {
 
       const hide = () => {
         cross.hidden = true;
-        tip.hidden = true;
+        out.innerHTML = resting;
+        out.classList.remove("live");
       };
 
       const stop = () => {
@@ -2342,8 +2347,8 @@ class PurdyShellCard extends PcBaseCard {
           };
           const i = at(d.inside), o = at(d.outside);
           html = `<b>${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
-            (i ? `<span><i style="background:var(--ps-cool)"></i>In ${i.v.toFixed(1)}\u00B0</span>` : "") +
-            (o ? `<span><i style="background:var(--ps-heat)"></i>Out ${o.v.toFixed(1)}\u00B0</span>` : "");
+            (i ? `<span><i style="background:var(--ps-cool)"></i>In<b>${i.v.toFixed(1)}\u00B0</b></span>` : "") +
+            (o ? `<span><i style="background:var(--ps-heat)"></i>Out<b>${o.v.toFixed(1)}\u00B0</b></span>` : "");
         } else {
           const d = this._hypData;
           if (!d) return;
@@ -2359,13 +2364,9 @@ class PurdyShellCard extends PcBaseCard {
         }
 
         cross.hidden = false;
-        tip.hidden = false;
         cross.style.left = x.toFixed(1) + "px";
-        tip.innerHTML = html;
-        /* Keep the tooltip inside the card so it cannot reintroduce the
-           horizontal overflow that made the page pan sideways. */
-        const tw = tip.offsetWidth || 120;
-        tip.style.left = Math.max(2, Math.min(r.width - tw - 2, x - tw / 2)).toFixed(1) + "px";
+        out.innerHTML = html;
+        out.classList.add("live");
       };
 
       box.addEventListener("pointerdown", (ev) => {
@@ -2396,6 +2397,8 @@ class PurdyShellCard extends PcBaseCard {
         }
         if (scrubbing) {
           ev.preventDefault();
+          /* Only X matters, so the thumb can drop below the plot and out of
+             the way while still moving the crosshair. */
           readout(ev.clientX);
           return;
         }
@@ -2419,7 +2422,7 @@ class PurdyShellCard extends PcBaseCard {
           pid = null;
           readout(ev.clientX);
           clearTimeout(this._tapTimer);
-          this._tapTimer = setTimeout(hide, 4000);
+          this._tapTimer = setTimeout(hide, 5000);
           return;
         }
         stop();
@@ -2562,12 +2565,13 @@ class PurdyShellCard extends PcBaseCard {
       .ps-zc b { display: block; font-size: 15px; color: var(--ps-text); font-weight: 660; letter-spacing: -.02em; }
       .ps-zc.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
       .ps-zc.on b { color: var(--ps-cool); }
-      .ps-wave { margin: 11px -15px -15px; position: relative; }
+      .ps-wave { margin: 4px -15px -15px; position: relative; }
       .ps-wave-svg { width: 100%; height: 74px; display: block; }
-      .ps-wlg { position: absolute; top: 6px; left: 15px; display: flex; gap: 12px; font-size: 10px;
-                color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .ps-wlg { display: flex; gap: 12px; align-items: baseline; margin-top: 11px; min-height: 16px;
+                font-size: 10.5px; color: var(--ps-muted); font-variant-numeric: tabular-nums; }
       .ps-wlg i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; }
       .ps-wlg b { color: var(--ps-text); font-weight: 640; margin-left: 3px; }
+      .ps-wlg span { display: inline-flex; align-items: center; }
       .ps-rmlist { display: flex; flex-direction: column; }
       .ps-rml { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px;
                 border-top: 1px solid var(--ps-hair-soft); cursor: pointer; }
@@ -2593,8 +2597,15 @@ class PurdyShellCard extends PcBaseCard {
       .ps-warnc { color: var(--ps-warn); }
       .ps-hyp { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
       .ps-hyp svg { width: 100%; height: 46px; display: block; }
-      .ps-hypt { display: flex; justify-content: space-between; font-size: 9px; color: var(--ps-dim);
-                 font-variant-numeric: tabular-nums; }
+      .ps-hypt { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+                 font-size: 9.5px; color: var(--ps-dim); font-variant-numeric: tabular-nums; min-height: 13px; }
+      .ps-hypt i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; margin-right: 5px; }
+      .ps-hypt span { display: inline-flex; align-items: center; }
+      .ps-hypt b { color: var(--ps-text); font-weight: 650; }
+      /* While scrubbing the caption becomes the value line, so make it read
+         like one rather than like a muted label. */
+      [data-readout].live { color: var(--ps-text); }
+      [data-readout].live b { color: var(--ps-text); }
       .ps-jrs { display: flex; flex-direction: column; gap: 5px; }
       .ps-jr { display: flex; align-items: center; gap: 9px; background: var(--ps-fill); border-radius: 11px;
                padding: 8px 11px; font-size: 11.5px; font-variant-numeric: tabular-nums; cursor: pointer; }
@@ -2804,15 +2815,6 @@ class PurdyShellCard extends PcBaseCard {
       [data-scrub].scrubbing { touch-action: none; }
       .ps-cross { position: absolute; top: 0; bottom: 0; width: 1px; z-index: 2; pointer-events: none;
                   background: rgba(255,255,255,.4); }
-      .ps-tip { position: absolute; top: 2px; z-index: 3; pointer-events: none; white-space: nowrap;
-                display: flex; flex-direction: column; gap: 2px;
-                background: rgba(10,13,20,.94); border: 1px solid var(--ps-hair);
-                border-radius: 9px; padding: 5px 8px; font-size: 11px;
-                font-variant-numeric: tabular-nums; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
-      .ps-tip b { font-weight: 660; }
-      .ps-tip span { display: inline-flex; align-items: center; gap: 5px; color: var(--ps-muted); }
-      .ps-tip i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
-      .ps-wave .ps-tip { top: 4px; }
 
       /* saved playlists */
       .ps-pin { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.08);
