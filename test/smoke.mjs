@@ -1084,6 +1084,45 @@ check('an entry with no destination of its own still falls back to the alerts sh
 /* Glass inside glass reads as a card in a card. */
 check('a hosted card is told not to draw its own surface',
   /el\.setConfig\(\{ bare: true, \.\.\.spec\.card \}\)/.test(shellSrc));
+/* `bare` is our convention; a third-party card may reject an unknown key, and
+   losing the card over a cosmetic hint would be a poor trade. */
+check('a card that rejects bare is retried without it', (() => {
+  const m = shellSrc.slice(shellSrc.indexOf('_mountSheetCard()'));
+  return /catch \(err\) \{[\s\S]{0,400}el\.setConfig\(\{ \.\.\.spec\.card \}\)/.test(m);
+})());
+check('a card that rejects its own config still reports rather than throwing',
+  /catch \(err2\)[\s\S]{0,200}ps-nohist/.test(shellSrc));
+
+/* ------------------------------------------------ detach and reattach -- */
+/* Lovelace detaches a view's elements rather than destroying them, so leaving
+   for the vacuum view and coming back reconnects this same element. Every
+   timer was stopped on the way out and nothing started them again. */
+check('the shell re-arms itself when it is reconnected',
+  /connectedCallback\(\) \{/.test(shellSrc));
+check('disconnect nulls the handles so reconnect can tell they are stopped', (() => {
+  const d = shellSrc.slice(shellSrc.indexOf('  disconnectedCallback() {'));
+  return /this\._clock = null;/.test(d) && /this\._historyTimer = null;/.test(d)
+    && /this\._eventTimer = null;/.test(d);
+})());
+
+const shconn = new SH();
+shconn.setConfig({ sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+check('setConfig arms the clock', !!shconn._clock);
+shconn.disconnectedCallback();
+check('detaching stops every timer',
+  !shconn._clock && !shconn._historyTimer && !shconn._eventTimer);
+
+let restarted = 0;
+shconn._start = () => { restarted++; shconn._historyTimer = 1; };
+shconn._render = () => {};
+shconn._hass = { states: {} };
+shconn.connectedCallback();
+check('reattaching restarts the clock', !!shconn._clock);
+check('reattaching restarts the fetches', restarted === 1);
+shconn.connectedCallback();
+check('a second connect does not stack a second set of timers', restarted === 1);
+shconn.disconnectedCallback();
+check('the restarted timers are stopped again on the next detach', !shconn._clock);
 check('bare strips the surface a hosted card would otherwise draw', (() => {
   const base = fs.readFileSync(new URL('../src/30-home-cards.js', import.meta.url),'utf8');
   const m = /\.card\.bare \{([\s\S]*?)\}/.exec(base);

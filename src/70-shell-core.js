@@ -118,23 +118,50 @@ class PurdyShellCard extends PcBaseCard {
   set hass(hass) {
     const first = !this._hass;
     super.hass = hass;
-    if (first && this._config) {
-      this._startHistory();
-      this._fetchEvents();
-      this._fetchSchedule();
-      this._fetchRecent();
-      this._loadPins();
-    }
+    if (first && this._config) this._start();
   }
 
   get hass() {
     return this._hass;
   }
 
+  _start() {
+    this._startHistory();
+    this._fetchEvents();
+    this._fetchSchedule();
+    this._fetchRecent();
+    this._loadPins();
+  }
+
+  /* Lovelace keeps a view's elements alive and simply detaches them, so
+   * leaving for another view and coming back reconnects THIS element rather
+   * than building a new one.
+   *
+   * disconnectedCallback stops every timer, and nothing used to start them
+   * again: the fetches only ran on the first hass, which had long since
+   * arrived. So a return from the vacuum view left a card whose clock had
+   * stopped, whose graphs never refreshed and whose calendar never reloaded —
+   * looking frozen while still accepting taps.
+   */
+  connectedCallback() {
+    if (!this._config) return;
+    if (!this._clock) this._clock = setInterval(() => this._render(), 30000);
+    if (this._hass && !this._historyTimer) this._start();
+    /* The shadow tree and its listeners both survive a detach, so this is not
+       a rebuild — it is a catch-up. The clock has been stopped for however
+       long we were away, so the greeting, the date and every elapsed time on
+       screen are stale by exactly that much. */
+    this._last = null;
+    this._render();
+  }
+
   disconnectedCallback() {
     if (this._clock) clearInterval(this._clock);
     if (this._historyTimer) clearInterval(this._historyTimer);
     if (this._eventTimer) clearInterval(this._eventTimer);
+    this._clock = null;
+    this._historyTimer = null;
+    this._eventTimer = null;
   }
 
   /* Everything the shell reads, so a state change repaints exactly once. */
@@ -402,12 +429,20 @@ class PurdyShellCard extends PcBaseCard {
          first so an explicit `bare: false` in config still wins. */
       el.setConfig({ bare: true, ...spec.card });
     } catch (err) {
-      /* A card that rejects its config must say so here rather than throwing
-         out of the render and taking the whole shell down. */
-      host.innerHTML = `<div class="ps-nohist">${psEsc(tag)}: ${psEsc((err && err.message) || "bad config")}</div>`;
-      this._hosted = null;
-      this._hostedKey = this._sheet;
-      return;
+      try {
+        /* `bare` is our own convention. A third-party card is entitled to
+           reject a key it has never heard of, and losing the whole card over
+           a cosmetic hint would be a poor trade — so try again without it and
+           accept the nested surface. */
+        el.setConfig({ ...spec.card });
+      } catch (err2) {
+        /* A card that rejects its own config must say so here rather than
+           throwing out of the render and taking the whole shell down. */
+        host.innerHTML = `<div class="ps-nohist">${psEsc(tag)}: ${psEsc((err2 && err2.message) || "bad config")}</div>`;
+        this._hosted = null;
+        this._hostedKey = this._sheet;
+        return;
+      }
     }
     el.hass = this._hass;
     host.innerHTML = "";
