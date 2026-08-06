@@ -2387,7 +2387,7 @@ class PurdyShellCard extends PcBaseCard {
             try { box.setPointerCapture(pid); } catch (e) { /* pointer already released */ }
           }
           readout(startX);
-        }, 380);
+        }, 340);
       });
 
       box.addEventListener("pointermove", (ev) => {
@@ -2397,14 +2397,19 @@ class PurdyShellCard extends PcBaseCard {
         }
         if (scrubbing) {
           ev.preventDefault();
+          if (pid != null && box.setPointerCapture && !box.hasPointerCapture?.(pid)) {
+            try { box.setPointerCapture(pid); } catch (e) { /* pointer gone */ }
+          }
           /* Only X matters, so the thumb can drop below the plot and out of
              the way while still moving the crosshair. */
           readout(ev.clientX);
           return;
         }
-        /* Moved before the press completed — that is a scroll, so let go. */
+        /* Moved a real distance before the press completed — that is a
+           scroll, so let go. Generous, because a thumb resting on glass
+           wanders a few pixels and that should not count as a swipe. */
         if (holdTimer &&
-            (Math.abs(ev.clientX - startX) > 8 || Math.abs(ev.clientY - startY) > 8)) {
+            (Math.abs(ev.clientX - startX) > 18 || Math.abs(ev.clientY - startY) > 18)) {
           clearTimeout(holdTimer);
           holdTimer = null;
           pid = null;
@@ -2416,7 +2421,7 @@ class PurdyShellCard extends PcBaseCard {
          then clears itself. The long press above is for dragging along. */
       box.addEventListener("pointerup", (ev) => {
         if (ev.pointerType !== "mouse" && !scrubbing &&
-            Math.abs(ev.clientX - startX) <= 8 && Math.abs(ev.clientY - startY) <= 8) {
+            Math.abs(ev.clientX - startX) <= 18 && Math.abs(ev.clientY - startY) <= 18) {
           clearTimeout(holdTimer);
           holdTimer = null;
           pid = null;
@@ -2427,7 +2432,14 @@ class PurdyShellCard extends PcBaseCard {
         }
         stop();
       });
-      ["pointercancel", "pointerleave"].forEach((e) => box.addEventListener(e, stop));
+      box.addEventListener("pointercancel", stop);
+      /* Crossing the graph's edge must NOT end a drag — moving the thumb below
+         the plot is exactly how you get it out of your own way. Pointer
+         capture keeps the events coming, so leave only ends a mouse hover. */
+      box.addEventListener("pointerleave", (ev) => {
+        if (scrubbing && ev.pointerType !== "mouse") return;
+        stop();
+      });
     });
   }
 

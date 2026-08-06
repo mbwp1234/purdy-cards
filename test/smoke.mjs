@@ -884,7 +884,7 @@ check('graphs claim the gesture only while scrubbing', /\[data-scrub\]\.scrubbin
 check('the wave no longer pins touch-action itself', !/\.ps-wave \{[^}]*touch-action/.test(shs));
 check('the hypnogram no longer pins touch-action itself', !/\.ps-hypplot \{[^}]*touch-action/.test(shs));
 check('scrubbing is entered by long press, not by any contact', src.includes('setTimeout(') && src.includes('box.classList.add("scrubbing")'));
-check('a move before the press completes cancels it', src.includes('Moved before the press completed'));
+check('a move before the press completes cancels it', src.includes('Moved a real distance before the press completed'));
 check('a mouse scrubs without waiting', src.includes('ev.pointerType === "mouse"'));
 check('a tap alone shows the readout', src.includes('A tap is unambiguously not a scroll'));
 
@@ -1147,6 +1147,11 @@ check('both graphs expose a readout line', (src.match(/data-readout="/g) || []).
 check('the scrubber writes to the readout, not a tooltip', src.includes('out.innerHTML = html'));
 check('the readout restores its resting text', src.includes('out.innerHTML = resting'));
 check('the thumb may leave the plot while scrubbing', src.includes('thumb can drop below the plot'));
+/* Crossing the graph edge used to fire pointerleave and kill the drag, which
+   is precisely the gesture the readout-above-plot change invites. */
+check('leaving the plot does not end a touch drag', src.includes("if (scrubbing && ev.pointerType !== \"mouse\") return;"));
+check('a wandering thumb still enters scrub mode', src.includes('> 18'));
+check('capture is retaken if the first attempt lost the race', src.includes('hasPointerCapture'));
 check('hypnogram plot is positioned for a crosshair', shs.includes('.ps-hypplot { position: relative'));
 
 const shx = new SH();
