@@ -1,3 +1,7 @@
 node_modules/
 .DS_Store
 .claude/
+
+# Personal Home Assistant config dumps stay out of this public repo.
+reference/
+*-view-*.json

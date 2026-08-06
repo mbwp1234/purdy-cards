@@ -358,7 +358,7 @@ That fails twice on a phone — an HTTPS dashboard blocks it as mixed content, a
 Set `config_entry` to your Music Assistant config entry id to get a search box. It calls `music_assistant.search` and renders tracks, playlists, albums and artists as tappable rows; a tap plays the result on the currently selected room.
 
 ```yaml
-config_entry: <ma-config-entry-id>
+config_entry: 01ABCDEF0123456789ABCDEFGH   # yours, from the MA config entry
 search_types: [track, playlist, album, artist]   # optional, this is the default
 ```
 

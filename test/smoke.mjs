@@ -670,7 +670,7 @@ check('music re-renders on a track change', mt._last!==sig1 && mt.shadowRoot.inn
 const mimg = new M(); mimg.setConfig({ compact:true, players });
 const artHass = { states:{ 'media_player.kitchen': { state:'playing', attributes:{
   friendly_name:'Kitchen Speaker', app_id:'music_assistant', media_title:'T',
-  entity_picture:'http://<music-assistant-host>:8095/imageproxy/abc',
+  entity_picture:'http://ma-host.invalid:8095/imageproxy/abc',
   entity_picture_local:'/api/media_player_proxy/media_player.kitchen?token=xyz' } } } };
 mimg._hass = artHass;
 const artHtml = mimg._art(artHass.states['media_player.kitchen']);
