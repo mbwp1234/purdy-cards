@@ -969,6 +969,110 @@ check('shell bind handlers read hass live rather than capturing it', (() => {
 
 const { offline: pcOfflineFn, reading: pcReadingFn, esc: pcEscFn, numOf: pcNumOfFn, ringArc: pcRingArcFn, ringAngle: pcRingAngleFn, ringRotate: pcRingRotateFn } = SH.helpers;
 
+/* ------------------------------------------------- hypnogram time axis -- */
+/* The axis ran to Date.now() whatever the sock was doing, so as the day went
+   on the night was squeezed into a shrinking slice with a growing empty tail. */
+const shhyp = new SH();
+shhyp.setConfig({ sections: [{ type: 'sleep', key: 'sleep', sleep_state: 'sensor.sock', name: 'Joel' }] });
+const HOUR = 3600000;
+const bed = Date.now() - 14 * HOUR;
+const woke = Date.now() - 6 * HOUR;
+/* Transitions every half hour, as the real sock reports them — far enough
+   apart to be a night, close enough never to trip the session gap. */
+const night = [];
+for (let t = bed; t < woke; t += HOUR / 2) {
+  night.push({ t, s: night.length % 2 ? 'light_sleep' : 'deep_sleep' });
+}
+night.push({ t: woke, s: 'unknown' });
+shhyp._history = { 'sensor.sock': night };
+
+shhyp._hass = { states: { 'sensor.sock': { state: 'unknown', attributes: {} } } };
+let hspan = shhyp._sleepSpan(shhyp._config.sections[0]);
+check('a finished session ends when the sock stopped reporting, not at now',
+  Math.abs(hspan.to - woke) < 1000);
+check('a finished session is not stretched to the current time',
+  Date.now() - hspan.to > 5 * HOUR);
+check('a finished session is marked finished', hspan.active === false);
+check('a finished session still spans the whole night',
+  Math.abs((hspan.to - hspan.from) - 8 * HOUR) < 1000);
+check('the finished hypnogram is labelled last night',
+  /Last night/.test(shhyp._hypnoSvg(shhyp._config.sections[0])));
+
+shhyp._hass = { states: { 'sensor.sock': { state: 'deep_sleep', attributes: {} } } };
+shhyp._history['sensor.sock'] = night.slice(0, -1);   // no wake row yet
+hspan = shhyp._sleepSpan(shhyp._config.sections[0]);
+check('a session still running does end at now', Date.now() - hspan.to < 2000);
+check('a running session is labelled tonight',
+  /Tonight/.test(shhyp._hypnoSvg(shhyp._config.sections[0])));
+
+/* --------------------------------------------------------- now playing -- */
+const shn = new SH();
+shn.setConfig({
+  now_playing: { players: [{ entity: 'media_player.kit', name: 'Kitchen' }] },
+  dock: [{ name: 'Music', icon: 'mdi:music', sheet: 'music' }],
+  sections: [
+    { type: 'nowplaying', key: 'now', title: 'Now playing',
+      apps: [{ name: 'Netflix', brand: 'netflix', activity: 'com.netflix.ninja' }],
+      tvs: [{ name: 'Living Room', media_player: 'media_player.tv',
+        app_sensor: 'sensor.app', remote: 'remote.tv' }] },
+    { type: 'music', key: 'music', sheet_only: true,
+      players: [{ entity: 'media_player.kit', name: 'Kitchen' }] },
+  ],
+});
+const nowSec = shn._config.sections[0];
+
+shn._hass = { states: {
+  'media_player.kit': { state: 'off', attributes: {} },
+  'media_player.tv': { state: 'off', attributes: {} },
+} };
+check('a quiet house renders no now-playing section at all',
+  shn._secNowplaying(nowSec) === '');
+
+shn._hass = { states: {
+  'media_player.kit': { state: 'playing', attributes: {
+    app_id: 'music_assistant', media_title: 'Blackbird', media_artist: 'The Beatles',
+    entity_picture_local: '/api/art.png' } },
+  'media_player.tv': { state: 'off', attributes: {} },
+} };
+let nowHtml = shn._secNowplaying(nowSec);
+check('music playing raises a now-playing row', /Blackbird/.test(nowHtml));
+check('music shows its album art', /src="\/api\/art\.png"/.test(nowHtml));
+check('music names the artist', /The Beatles/.test(nowHtml));
+check('the music row opens the music sheet', /data-sheet="music"/.test(nowHtml));
+
+shn._hass.states['media_player.tv'] = { state: 'playing', attributes: {} };
+shn._hass.states['sensor.app'] = { state: 'Netflix', attributes: {} };
+nowHtml = shn._secNowplaying(nowSec);
+check('music and television share the one section',
+  /Blackbird/.test(nowHtml) && /Living Room/.test(nowHtml));
+check('the television row uses the app logo, not a generic icon',
+  nowHtml.includes('#E50914'));
+check('the television row still offers power off', /data-tvoff="remote\.tv"/.test(nowHtml));
+check('the television row links to the remote', /data-nav="#tvs"/.test(nowHtml));
+check('the header counts what is on', /ps-chip good[^>]*>[\s\S]{0,60}2</.test(nowHtml));
+
+shn._hass.states['sensor.app'] = { state: 'com.netflix.ninja', attributes: {} };
+check('an app is matched by its android activity too',
+  shn._secNowplaying(nowSec).includes('#E50914'));
+shn._hass.states['sensor.app'] = { state: 'Something Else', attributes: {} };
+check('an unknown app falls back to a television glyph, not a broken logo', (() => {
+  const html = shn._secNowplaying(nowSec);
+  return /Something Else/.test(html) && !html.includes('#E50914');
+})());
+
+/* Music keeps its config for the sheet without holding a slot in the column. */
+check('a sheet_only section is not rendered in the column', (() => {
+  const core = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url),'utf8');
+  return /if \(sec\.sheet_only\) return;/.test(core) &&
+    core.indexOf('if (sec.sheet_only) return;') < core.indexOf('sleep: () => this._secSleep');
+})());
+check('the dock can open a sheet the way it opens a section',
+  /if \(d\.sheet\) \{/.test(shellSrc));
+check('a sheet_only music section still feeds the targets', (() => {
+  shn._sel = ['media_player.kit'];
+  return shn._targets().indexOf('media_player.kit') >= 0;
+})());
+
 /* ------------------------------------------------------- failure states -- */
 /* A zero and a missing reading looked identical, which matters most on the
    one section anybody would act on. */

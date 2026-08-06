@@ -129,7 +129,19 @@ Object.assign(PurdyShellCard.prototype, {
       this._hass.states[(sec.hypnogram || {}).start_entity || (sec.session || {}).start].state
     );
     const from = startTs && startTs < live[i].t ? startTs : live[i].t;
-    return { from, to: Date.now(), rows: rows.filter((r) => r.t >= from) };
+
+    /* The session ends when it ended. Running the axis to "now" regardless
+       meant that as the day went on the night was squeezed into a shrinking
+       slice with a growing empty tail — by evening the hypnogram was mostly
+       blank. Only a session still in progress ends at now; a finished one ends
+       where the sock stopped reporting a sleep state. */
+    const last = live[live.length - 1];
+    const li = rows.indexOf(last);
+    const active = asleep(pcState(this._hass, sec.sleep_state));
+    const ended = rows[li + 1] ? rows[li + 1].t : last.t;
+    const to = active ? Date.now() : Math.max(ended, from + 60000);
+
+    return { from, to, active, rows: rows.filter((r) => r.t >= from && r.t <= to) };
   },
 
   _hypnoSvg(sec) {
@@ -164,7 +176,7 @@ Object.assign(PurdyShellCard.prototype, {
     });
     const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="ps-hyp">
-        <div class="ps-hypt" data-readout="hyp"><span class="ps-lbl">Tonight</span><span>${rows.length} transitions</span></div>
+        <div class="ps-hypt" data-readout="hyp"><span class="ps-lbl">${span.active ? "Tonight" : "Last night"}</span><span>${rows.length} transitions</span></div>
         <div class="ps-hypplot" data-scrub="hyp">
           <div class="ps-cross" hidden></div>
           <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Sleep stages tonight">${out}</svg>
@@ -397,6 +409,79 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* Renders nothing at all when every television is off, the same way the
      conditional card it replaces disappeared from the old view. */
+  /* One surface for everything currently playing, music and television alike.
+   *
+   * Music used to hold a permanent slot on the landing page whether or not
+   * anything was playing, and the televisions had a separate self-hiding
+   * section. Both are the same question — "what is on right now" — so they are
+   * one section that renders nothing at all when the house is quiet, and the
+   * full music controls moved behind the dock button.
+   *
+   * Music shows its album art, television shows the logo of whatever app is
+   * open, so the row is identifiable before any text is read.
+   */
+  _secNowplaying(sec) {
+    const h = this._hass;
+    const rows = [];
+
+    const np = this._nowPlaying();
+    if (np) {
+      const a = np.st.attributes;
+      const art = a.entity_picture_local;
+      const sub = [a.media_artist, a.media_album_name].filter(Boolean).join(" — ") || np.name;
+      rows.push(`<div class="ps-npr" data-sheet="music" role="button" tabindex="0">
+          <div class="ps-npart">${art
+            ? `<img src="${psEsc(art)}" alt="" />`
+            : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+          <div class="ps-grow">
+            <div class="ps-npt ps-trunc">${psEsc(a.media_title || "Playing")}</div>
+            <div class="ps-nps ps-trunc">${psEsc(sub)}</div>
+          </div>
+          <button class="ps-npb" type="button" data-mp="playpause" data-entity="${psEsc(np.entity)}"
+            aria-label="${np.playing ? "Pause" : "Play"}">
+            <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
+              ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
+        </div>`);
+    }
+
+    (sec.tvs || []).forEach((t) => {
+      const st = pcState(h, t.media_player);
+      if (!st || st === "off" || st === "unavailable" || st === "unknown") return;
+      const app = pcState(h, t.app_sensor);
+      const shown = app && app !== "unknown" && app !== "unavailable" ? app : "On";
+      rows.push(`<div class="ps-npr" data-nav="${psEsc(sec.remote_link || "#tvs")}" role="button" tabindex="0">
+          <div class="ps-npart ps-npapp">${this._appIcon(sec, app)}</div>
+          <div class="ps-grow">
+            <div class="ps-npt ps-trunc">${psEsc(shown)}</div>
+            <div class="ps-nps ps-trunc">${psEsc(t.name)}</div>
+          </div>
+          <button class="ps-npb" type="button" data-tvoff="${psEsc(t.remote || t.media_player)}"
+            aria-label="Turn off ${psEsc(t.name)}">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 3.5v8"/><path d="M6.8 7.2a7.5 7.5 0 1 0 10.4 0"/></svg>
+          </button>
+        </div>`);
+    });
+
+    /* Nothing on: the section is dropped entirely, divider and all. */
+    if (!rows.length) return "";
+    return `${this._head(sec, `<span class="ps-chip good"><span class="ps-dot"></span>${rows.length}</span>`)}${rows.join("")}`;
+  },
+
+  /* Match the app sensor's text against the configured apps, by name or by the
+     android activity, then fall back to a plain screen. */
+  _appIcon(sec, app) {
+    const tvGlyph = `<svg viewBox="0 0 24 24" class="ps-ico"><rect x="2.5" y="5" width="19" height="12" rx="2"/><path d="M8.5 20.5h7"/></svg>`;
+    if (!app) return tvGlyph;
+    const want = String(app).toLowerCase();
+    const hit = (sec.apps || []).find((x) =>
+      String(x.name || "").toLowerCase() === want ||
+      String(x.activity || "").toLowerCase() === want);
+    if (hit && PC_BRANDS[hit.brand]) return PC_BRANDS[hit.brand];
+    /* The sensor sometimes reports the brand outright, with no app configured. */
+    if (PC_BRANDS[want]) return PC_BRANDS[want];
+    return tvGlyph;
+  },
+
   _secTv(sec) {
     const h = this._hass;
     const live = (sec.tvs || []).filter((t) => {

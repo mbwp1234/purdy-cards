@@ -15,6 +15,7 @@
 
 const PS_SECTIONS = [
   "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
+  "nowplaying",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
@@ -176,7 +177,7 @@ class PurdyShellCard extends PcBaseCard {
         push((s.schedule || {}).mode_entity);
         push((s.schedule || {}).switch_entity);
       }
-      if (s.type === "tv") {
+      if (s.type === "tv" || s.type === "nowplaying") {
         (s.tvs || []).forEach((t) => { push(t.media_player); push(t.app_sensor); push(t.remote); });
       }
       if (s.type === "people") {
@@ -393,6 +394,10 @@ class PurdyShellCard extends PcBaseCard {
     const sections = [];
     c.sections.forEach((raw, i) => {
       const sec = { key: raw.key || raw.type + i, ...raw };
+      /* A section can carry the config a sheet needs without taking a
+         permanent slot in the column — that is how music keeps its players,
+         presets and pins while only appearing behind the dock button. */
+      if (sec.sheet_only) return;
       const body = {
         sleep: () => this._secSleep(sec),
         climate: () => this._secClimate(sec),
@@ -403,6 +408,7 @@ class PurdyShellCard extends PcBaseCard {
         calendar: () => this._secCalendar(sec),
         systems: () => this._secSystems(sec),
         tv: () => this._secTv(sec),
+        nowplaying: () => this._secNowplaying(sec),
       }[sec.type]();
       if (!body) return;   // a self-hiding section takes its divider with it
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
@@ -552,6 +558,16 @@ class PurdyShellCard extends PcBaseCard {
         const rows = this._faults();
         const row = rows[parseInt(el.dataset.dismiss, 10)];
         if (row) this._dismiss(row);
+      });
+    });
+
+    this._each("[data-nav]", (el) => {
+      el.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;   // the power button is not the row
+        e.stopPropagation();
+        const to = el.dataset.nav;
+        if (!to || to.charAt(0) !== "#") psClosePopup();
+        pcNavigate(this, to);
       });
     });
 
@@ -850,6 +866,15 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
+        /* A sheet slides over the column instead of expanding inside it, so
+           music opens the way the TV pop-up does rather than pushing the page
+           around under the thumb. */
+        if (d.sheet) {
+          psClosePopup();
+          this._sheet = this._sheet === d.sheet ? null : d.sheet;
+          this._render();
+          return;
+        }
         if (d.section) {
           psClosePopup();
           this._open = this._open === d.section ? null : d.section;

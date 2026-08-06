@@ -509,6 +509,32 @@ const PS_STYLES = `
       .ps-db.on { color: var(--ps-cool); background: rgba(77,208,225,.13); }
       .ps-db.alert { color: var(--ps-bad); }
 
+      /* now playing — music and television in one list */
+      .ps-npr {
+        display: flex; align-items: center; gap: 11px; padding: 8px 2px;
+        cursor: pointer;
+      }
+      .ps-npr + .ps-npr { border-top: 1px solid var(--ps-hair); }
+      .ps-npart {
+        width: 42px; height: 42px; flex: 0 0 42px; border-radius: 9px; overflow: hidden;
+        background: var(--ps-chip); display: flex; align-items: center; justify-content: center;
+        color: var(--ps-dim);
+      }
+      .ps-npart img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .ps-npart svg { width: 20px; height: 20px; }
+      /* App logos are authored full-bleed, so they fill the tile. */
+      .ps-npapp { background: transparent; }
+      .ps-npapp svg { width: 100%; height: 100%; }
+      .ps-npt { font-size: 13.5px; font-weight: 600; }
+      .ps-nps { font-size: 11px; color: var(--ps-dim); margin-top: 1px; }
+      .ps-npb {
+        flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+        border: 1px solid var(--ps-line); background: var(--ps-chip);
+        color: var(--ps-text); display: flex; align-items: center; justify-content: center;
+        cursor: pointer;
+      }
+      .ps-npb svg { width: 15px; height: 15px; }
+
       /* missing data — deliberately quiet, but never mistakable for a value */
       .ps-nodata { color: var(--ps-dim); font-weight: 500; }
       .ps-nohist {
