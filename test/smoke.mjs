@@ -871,6 +871,47 @@ check('schedule times print as a clock, not raw minutes', /8:00 PM/.test(schedHt
 shsc._sched = null;
 check('schedule says so when GTTC will not answer', /Schedule unavailable/.test(shsc._scheduleHtml(shsc._config.sections[0])));
 
+check('shell never widens past the view', shs.includes('max-width: 100%') && shs.includes('overflow-x: clip'));
+check('graphs claim the vertical gesture', /\.ps-wave \{[^}]*touch-action: pan-y/.test(shs));
+check('hypnogram claims the vertical gesture', /\.ps-hyp \{[^}]*touch-action: pan-y/.test(shs));
+check('horizontal strips contain their own overscroll', shs.includes('overscroll-behavior-x: contain'));
+check('sheet has a taller schedule variant', shs.includes('.ps-sheet.tall'));
+
+const shsh = new SH();
+shsh.setConfig({ attention: [{ entity: 'x.y', state: 'on', severity: 'warn', title: 'T' }],
+  sections: [{ type: 'climate', key: 'clim', goal: 'climate.g', schedule: { api: 'gttc' } }] });
+shsh._hass = { states: { 'climate.g': { state: 'cool', attributes: {} } } };
+check('no sheet renders while none is open', shsh._sheetHtml([]) === '');
+shsh._sheet = 'schedule';
+check('schedule opens in its own sheet', /ps-sheet tall/.test(shsh._sheetHtml([])));
+check('schedule sheet is not in the climate body', !/ps-sheet/.test(shsh._secClimate(shsh._config.sections[0])));
+check('climate body offers a schedule button', /data-sheet="schedule"/.test(shsh._secClimate(shsh._config.sections[0])));
+shsh._sheet = 'alerts';
+check('alert sheet stays empty with no faults', shsh._sheetHtml([]) === '');
+check('alert sheet renders faults', /ps-ar/.test(shsh._sheetHtml([{ severity: 'warn', title: 'T', detail: 'd', entity: 'x.y' }])));
+
+check('volume slider styles present', shs.includes('.ps-vol::-webkit-slider-thumb'));
+check('mini bar is tappable', shs.includes('.ps-mini { cursor: pointer'));
+const shm = new SH();
+shm.setConfig({ now_playing: { players: [{ entity: 'media_player.a', name: 'Kitchen' }] },
+  sections: [{ type: 'music', key: 'music', default_player: 'media_player.a',
+    players: [{ entity: 'media_player.a', name: 'Kitchen' }, { entity: 'media_player.b', name: 'Living' }] }] });
+shm._hass = { states: {
+  'media_player.a': { state: 'playing', attributes: { app_id: 'music_assistant', media_title: 'Dance Mode', media_artist: 'Bluey', volume_level: 0.2 } },
+  'media_player.b': { state: 'idle', attributes: { app_id: 'music_assistant', volume_level: 0.55 } } } };
+check('music section links to the control sheet', /data-sheet="music"/.test(shm._secMusic(shm._config.sections[0])));
+shm._sheet = 'music';
+const mh = shm._sheetHtml([]);
+check('music sheet has transport controls', /data-mpc="media_next_track"/.test(mh) && /data-mpc="media_stop"/.test(mh));
+check('music sheet has a main volume slider', /data-vol="media_player.a"/.test(mh));
+check('music sheet shows the real volume', /value="20"/.test(mh));
+check('music sheet gives every room its own volume', /data-vol="media_player.b"/.test(mh) && /value="55"/.test(mh));
+check('music sheet marks the active room', /ps-vrow on/.test(mh));
+check('a drag suppresses the repaint that would drop the slider', (() => {
+  shm._dragging = true; shm.shadowRoot.innerHTML = 'KEEP'; shm._render();
+  const held = shm.shadowRoot.innerHTML === 'KEEP'; shm._dragging = false; return held;
+})());
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

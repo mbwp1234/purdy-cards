@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.13.0";
+const PC_VERSION = "1.14.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -5028,6 +5028,7 @@ class PurdyShellCard extends PcBaseCard {
     this._history = {};
     this._events = [];
     this._sched = null;
+    this._dragging = false;   // a volume drag must survive the state repaint
     this._pending = false;
   }
 
@@ -5197,6 +5198,7 @@ class PurdyShellCard extends PcBaseCard {
       this._render();
     } catch (e) {
       this._sched = null;
+    this._dragging = false;   // a volume drag must survive the state repaint
     }
   }
 
@@ -5715,7 +5717,11 @@ class PurdyShellCard extends PcBaseCard {
       </div>
       <div class="ps-zpair">${zones}${outside}</div>
       <div class="ps-xtra">
-        ${sec.schedule ? this._scheduleHtml(sec) : ""}
+        ${sec.schedule ? `<div class="ps-btns">
+          <button class="ps-btn" type="button" data-sheet="schedule">
+            <svg viewBox="0 0 24 24" class="ps-ico"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9h17M8 3v3M16 3v3M12 12.5v3l2 1.2"/></svg>
+            Schedule</button>
+        </div>` : ""}
         <div class="ps-rmlist">${rooms}</div>
         ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
       </div>
@@ -5783,6 +5789,11 @@ class PurdyShellCard extends PcBaseCard {
             ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>` : ""}
       </div>
       <div class="ps-mroom">${players}</div>
+      <div class="ps-btns" style="margin-top:10px">
+        <button class="ps-btn" type="button" data-sheet="music">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9a4 4 0 0 1 0 6"/></svg>
+          Controls &amp; volume</button>
+      </div>
       <div class="ps-xtra">
         <div><span class="ps-lbl">Presets</span><div class="ps-pres">${presets}</div></div>
       </div>`;
@@ -5961,6 +5972,8 @@ class PurdyShellCard extends PcBaseCard {
 
   _render() {
     if (!this._hass || !this._config) return;
+    /* Repainting mid-drag would rip the slider out from under the thumb. */
+    if (this._dragging) return;
     const c = this._config;
     const now = new Date();
     const who = this._who();
@@ -6027,21 +6040,11 @@ class PurdyShellCard extends PcBaseCard {
 
       <div class="ps-col">${sections}</div>
 
-      ${this._sheet === "alerts" && faults.length ? `
-        <div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet">
-          <div class="ps-sheeth"><span class="ps-lbl">Needs attention</span>
-            <button class="ps-x" type="button" id="ps-close" aria-label="Close">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-          ${faults.map((f) => `<div class="ps-ar" data-info="${psEsc(f.entity || "")}">
-            <span class="ps-dotc ${f.severity}"></span>
-            <span class="ps-grow"><span class="ps-at">${psEsc(f.title)}</span>
-            <span class="ps-ad">${psEsc(f.detail)}</span></span></div>`).join("")}
-        </div>` : ""}
+      ${this._sheetHtml(faults)}
 
       <div class="ps-fade"></div>
       <div class="ps-dockwrap">
-        ${np ? `<div class="ps-mini" id="ps-mini">
+        ${np ? `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
           <div class="ps-mart">${npArt
             ? `<img src="${psEsc(npArt)}" alt="" />`
             : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
@@ -6057,6 +6060,102 @@ class PurdyShellCard extends PcBaseCard {
       </div>`;
 
     this._bind();
+  }
+
+  /* One sheet, two contents. Both slide over the column rather than pushing
+     it around, so opening either never moves what is under your thumb. */
+  _sheetHtml(faults) {
+    if (!this._sheet) return "";
+    const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+
+    if (this._sheet === "alerts") {
+      if (!faults.length) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          <div class="ps-sheeth"><span class="ps-lbl">Needs attention</span>${close}</div>
+          ${faults.map((f) => `<div class="ps-ar" data-info="${psEsc(f.entity || "")}">
+            <span class="ps-dotc ${f.severity}"></span>
+            <span class="ps-grow"><span class="ps-at">${psEsc(f.title)}</span>
+            <span class="ps-ad">${psEsc(f.detail)}</span></span></div>`).join("")}
+        </div>`;
+    }
+
+    if (this._sheet === "music") {
+      const sec = (this._config.sections || []).find((x) => x.type === "music");
+      const np = this._nowPlaying();
+      if (!sec) return "";
+      const art = np && np.st.attributes.entity_picture_local;
+      const target = np ? np.entity : sec.default_player;
+      const tst = target && this._hass.states[target];
+      const vol = tst && tst.attributes.volume_level != null ? tst.attributes.volume_level : 0;
+      const muted = !!(tst && tst.attributes.is_volume_muted);
+
+      const rooms = (sec.players || []).map((p) => {
+        const st = this._hass.states[p.entity];
+        const live = st && st.state === "playing" && psIsMusic(st);
+        const active = target === p.entity;
+        const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : 0;
+        return `<div class="ps-vrow ${active ? "on" : ""}">
+            <button class="ps-vname" type="button" data-player="${psEsc(p.entity)}">
+              ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>
+            <input class="ps-vol" type="range" min="0" max="100" step="1"
+              value="${Math.round(pv * 100)}" data-vol="${psEsc(p.entity)}"
+              aria-label="${psEsc(p.name)} volume" />
+            <span class="ps-vnum">${Math.round(pv * 100)}</span>
+          </div>`;
+      }).join("");
+
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Music</span>${close}</div>
+          <div class="ps-now" style="margin-bottom:12px">
+            <div class="ps-art">${art
+              ? `<img src="${psEsc(art)}" alt="" />`
+              : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+            <div class="ps-grow">
+              <div class="ps-nt ps-trunc">${np ? psEsc(np.st.attributes.media_title) : "Nothing playing"}</div>
+              <div class="ps-ns ps-trunc">${np
+                ? psEsc([np.st.attributes.media_artist, np.name].filter(Boolean).join(" \u00B7 "))
+                : "Pick a room below"}</div>
+            </div>
+          </div>
+          <div class="ps-transport">
+            <button class="ps-tb" type="button" data-mpc="media_previous_track" data-entity="${psEsc(target || "")}" aria-label="Previous">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M18 5v14L8 12zM6 5v14"/></svg></button>
+            <button class="ps-tb big" type="button" data-mp="playpause" data-entity="${psEsc(target || "")}" aria-label="Play or pause">
+              <svg viewBox="0 0 24 24" class="ps-ico">${np && np.playing
+                ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
+            <button class="ps-tb" type="button" data-mpc="media_next_track" data-entity="${psEsc(target || "")}" aria-label="Next">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 5v14l10-7zM18 5v14"/></svg></button>
+            <button class="ps-tb" type="button" data-mpc="media_stop" data-entity="${psEsc(target || "")}" aria-label="Stop">
+              <svg viewBox="0 0 24 24" class="ps-ico"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg></button>
+          </div>
+          <div class="ps-volmain">
+            <button class="ps-vbtn ${muted ? "muted" : ""}" type="button" data-mute="${psEsc(target || "")}"
+              data-muted="${muted}" aria-label="Mute">
+              <svg viewBox="0 0 24 24" class="ps-ico">${muted
+                ? `<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9.5l5 5M21 9.5l-5 5"/>`
+                : `<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9a4 4 0 0 1 0 6"/>`}</svg></button>
+            <input class="ps-vol" type="range" min="0" max="100" step="1"
+              value="${Math.round(vol * 100)}" data-vol="${psEsc(target || "")}" aria-label="Volume" />
+            <span class="ps-vnum">${Math.round(vol * 100)}</span>
+          </div>
+          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
+          ${rooms}
+        </div>`;
+    }
+
+    if (this._sheet === "schedule") {
+      const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Thermostat schedule</span>${close}</div>
+          ${this._scheduleHtml(sec)}
+        </div>`;
+    }
+    return "";
   }
 
   _bind() {
@@ -6083,6 +6182,15 @@ class PurdyShellCard extends PcBaseCard {
       el.addEventListener("click", (e) => {
         if (e.target.closest("button")) return;
         pcMoreInfo(this, el.dataset.info);
+      });
+    });
+
+    root.querySelectorAll("[data-sheet]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const k = el.dataset.sheet;
+        this._sheet = this._sheet === k ? null : k;
+        this._render();
       });
     });
 
@@ -6160,6 +6268,44 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         hass.callService("media_player", "media_play_pause", { entity_id: el.dataset.entity });
       });
+    });
+
+    root.querySelectorAll("[data-mpc]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!el.dataset.entity) return;
+        hass.callService("media_player", el.dataset.mpc, { entity_id: el.dataset.entity });
+      });
+    });
+
+    root.querySelectorAll("[data-mute]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!el.dataset.mute) return;
+        hass.callService("media_player", "volume_mute", {
+          entity_id: el.dataset.mute, is_volume_muted: el.dataset.muted !== "true",
+        });
+      });
+    });
+
+    root.querySelectorAll("[data-vol]").forEach((el) => {
+      const hold = () => { this._dragging = true; };
+      const release = () => {
+        this._dragging = false;
+        if (!el.dataset.vol) return;
+        hass.callService("media_player", "volume_set", {
+          entity_id: el.dataset.vol, volume_level: parseInt(el.value, 10) / 100,
+        });
+      };
+      el.addEventListener("pointerdown", hold);
+      el.addEventListener("touchstart", hold, { passive: true });
+      el.addEventListener("input", (e) => {
+        e.stopPropagation();
+        const num = el.parentElement && el.parentElement.querySelector(".ps-vnum");
+        if (num) num.textContent = el.value;
+      });
+      el.addEventListener("change", (e) => { e.stopPropagation(); release(); });
+      el.addEventListener("click", (e) => e.stopPropagation());
     });
 
     root.querySelectorAll("[data-player]").forEach((el) => {
@@ -6250,8 +6396,13 @@ class PurdyShellCard extends PcBaseCard {
         --ps-track: rgba(255,255,255,.12);
         display: block;
         position: relative;
-        margin: -8px -12px 0;
-        padding: 6px 12px 132px;
+        /* A negative horizontal margin made the card wider than the view, and
+           the page then scrolled sideways whenever a drag started on a graph.
+           Stay inside the view and clip anything that still reaches past. */
+        margin: 0;
+        padding: 6px 6px 132px;
+        max-width: 100%;
+        overflow-x: clip;
         color: var(--ps-text);
         font-family: var(--paper-font-body1_-_font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
         -webkit-font-smoothing: antialiased;
@@ -6312,7 +6463,7 @@ class PurdyShellCard extends PcBaseCard {
         backdrop-filter: blur(26px) saturate(1.25);
         -webkit-backdrop-filter: blur(26px) saturate(1.25);
       }
-      .ps-sect { padding: 13px 15px 15px; }
+      .ps-sect { padding: 13px 15px 15px; overflow-x: hidden; }
       .ps-sect + .ps-sect { border-top: 1px solid var(--ps-hair); }
       .ps-sh { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0 0 11px; }
       .ps-nm { font-size: 12.5px; font-weight: 680; letter-spacing: -.004em; }
@@ -6348,7 +6499,7 @@ class PurdyShellCard extends PcBaseCard {
       .ps-zc b { display: block; font-size: 15px; color: var(--ps-text); font-weight: 660; letter-spacing: -.02em; }
       .ps-zc.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
       .ps-zc.on b { color: var(--ps-cool); }
-      .ps-wave { margin: 11px -15px -15px; position: relative; }
+      .ps-wave { margin: 11px -15px -15px; position: relative; touch-action: pan-y; }
       .ps-wave-svg { width: 100%; height: 74px; display: block; }
       .ps-wlg { position: absolute; top: 6px; left: 15px; display: flex; gap: 12px; font-size: 10px;
                 color: var(--ps-muted); font-variant-numeric: tabular-nums; }
@@ -6377,8 +6528,8 @@ class PurdyShellCard extends PcBaseCard {
       .ps-good { color: var(--ps-good); }
       .ps-flat { color: var(--ps-dim); }
       .ps-warnc { color: var(--ps-warn); }
-      .ps-hyp { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
-      .ps-hyp svg { width: 100%; height: 46px; display: block; }
+      .ps-hyp { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; touch-action: pan-y; }
+      .ps-hyp svg { width: 100%; height: 46px; display: block; touch-action: pan-y; }
       .ps-hypt { display: flex; justify-content: space-between; font-size: 9px; color: var(--ps-dim);
                  font-variant-numeric: tabular-nums; }
       .ps-jrs { display: flex; flex-direction: column; gap: 5px; }
@@ -6409,7 +6560,8 @@ class PurdyShellCard extends PcBaseCard {
                background: rgba(255,255,255,.09); flex: 0 0 auto; }
       .ps-tb .ps-ico { width: 18px; height: 18px; }
       .ps-mroom { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
-                  margin: 11px -15px 0; padding: 0 15px 2px; }
+                  margin: 11px -15px 0; padding: 0 15px 2px;
+                  touch-action: pan-x pan-y; overscroll-behavior-x: contain; }
       .ps-mroom::-webkit-scrollbar { display: none; }
       .ps-mr { flex: 0 0 auto; padding: 7px 12px; border-radius: 12px; background: var(--ps-fill);
                color: var(--ps-muted); font-size: 11px; font-weight: 650;
@@ -6422,7 +6574,8 @@ class PurdyShellCard extends PcBaseCard {
       .ps-pr ha-icon { --mdc-icon-size: 16px; color: var(--ps-cool); }
 
       /* rooms */
-      .ps-rstrip { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin: 0 -15px; padding: 0 15px 2px; }
+      .ps-rstrip { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin: 0 -15px;
+                   padding: 0 15px 2px; touch-action: pan-x pan-y; overscroll-behavior-x: contain; }
       .ps-rstrip::-webkit-scrollbar { display: none; }
       .ps-rc { flex: 0 0 auto; min-width: 82px; background: var(--ps-fill); border-radius: 15px;
                padding: 9px 11px; cursor: pointer; }
@@ -6516,7 +6669,8 @@ class PurdyShellCard extends PcBaseCard {
       .ps-schedh .ps-lbl { flex: 1; }
       .ps-schednow { font-size: 11.5px; color: var(--ps-muted); font-variant-numeric: tabular-nums; }
       .ps-schednow b { color: var(--ps-text); font-weight: 660; }
-      .ps-timeline { position: relative; height: 28px; border-radius: 9px; background: var(--ps-fill); overflow: hidden; }
+      .ps-timeline { position: relative; height: 28px; border-radius: 9px; background: var(--ps-fill);
+                     overflow: hidden; touch-action: pan-y; }
       .ps-seg { position: absolute; top: 3px; bottom: 3px; border-radius: 6px;
                 background: rgba(77,208,225,.22); border: 1px solid rgba(77,208,225,.4);
                 font-size: 9.5px; font-weight: 650; color: var(--ps-text);
@@ -6536,6 +6690,31 @@ class PurdyShellCard extends PcBaseCard {
       .ps-srv i.h { background: var(--ps-heat); }
       .ps-srv i.c { background: var(--ps-cool); margin-left: 10px; }
 
+      /* music controls */
+      .ps-transport { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 14px; }
+      .ps-tb.big { width: 48px; height: 48px; }
+      .ps-tb.big .ps-ico { width: 24px; height: 24px; }
+      .ps-volmain { display: flex; align-items: center; gap: 11px; }
+      .ps-vbtn { width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,.08);
+                 display: grid; place-items: center; color: var(--ps-muted); flex: 0 0 auto; }
+      .ps-vbtn.muted { color: var(--ps-bad); }
+      .ps-vol { flex: 1; min-width: 0; -webkit-appearance: none; appearance: none; height: 6px;
+                border-radius: 999px; background: var(--ps-track); outline: none; touch-action: pan-y; }
+      .ps-vol::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px;
+                border-radius: 50%; background: var(--ps-text); cursor: pointer; }
+      .ps-vol::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%;
+                background: var(--ps-text); cursor: pointer; }
+      .ps-vol:focus-visible { outline: 2px solid var(--ps-cool); outline-offset: 3px; }
+      .ps-vnum { flex: 0 0 26px; text-align: right; font-size: 11px; color: var(--ps-dim);
+                 font-variant-numeric: tabular-nums; }
+      .ps-vrow { display: flex; align-items: center; gap: 10px; padding: 7px 0;
+                 border-top: 1px solid var(--ps-hair-soft); }
+      .ps-vrow:first-of-type { border-top: 0; }
+      .ps-vname { flex: 0 0 96px; font-size: 11.5px; font-weight: 650; color: var(--ps-muted);
+                  display: flex; align-items: center; gap: 6px; }
+      .ps-vrow.on .ps-vname { color: var(--ps-text); }
+      .ps-mini { cursor: pointer; }
+
       /* alert sheet */
       .ps-scrim { position: fixed; inset: 0; background: rgba(4,6,10,.6); z-index: 8; backdrop-filter: blur(2px); }
       .ps-sheet {
@@ -6543,8 +6722,9 @@ class PurdyShellCard extends PcBaseCard {
         background: rgba(20,23,32,.96); border: 1px solid rgba(255,255,255,.1); border-radius: 20px;
         padding: 13px 15px; box-shadow: 0 24px 60px rgba(0,0,0,.6);
         backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-        max-height: 60vh; overflow-y: auto;
+        max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
       }
+      .ps-sheet.tall { max-height: 74vh; }
       .ps-sheeth { display: flex; align-items: center; margin-bottom: 6px; }
       .ps-sheeth .ps-lbl { flex: 1; }
       .ps-x { width: 26px; height: 26px; border-radius: 50%; background: rgba(255,255,255,.08);
