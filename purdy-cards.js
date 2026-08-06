@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.11.0";
+const PC_VERSION = "1.12.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -4999,6 +4999,7 @@ class PurdyShellCard extends PcBaseCard {
   constructor() {
     super();
     this._open = null;        // key of the expanded section, or null
+    this._openGroups = {};    // "sectionKey|groupName" -> true for open groups
     this._sheet = null;       // "alerts" when the alert sheet is showing
     this._history = {};
     this._events = [];
@@ -5777,6 +5778,9 @@ class PurdyShellCard extends PcBaseCard {
     }).join("");
 
     const groups = (sec.groups || []).map((g) => {
+      const gkey = sec.key + "|" + g.name;
+      const gopen = !!this._openGroups[gkey];
+
       const stats = (g.stats || []).map((s) => {
         const st = h.states[s.entity];
         const raw = st ? st.state : "";
@@ -5806,13 +5810,28 @@ class PurdyShellCard extends PcBaseCard {
       const buttons = (g.buttons || []).map((b, i) =>
         `<button class="ps-btn" type="button" data-gbtn="${psEsc(g.name)}|${i}">${psEsc(b.name)}</button>`).join("");
 
-      return `<div class="ps-grp">
-          <div class="ps-grph"><ha-icon icon="${psEsc(g.icon || "mdi:server")}"></ha-icon>
+      /* A collapsed group still has to say something useful, or there is no
+         reason to leave it shut: switch groups report how many are on. */
+      let summary = "";
+      if (g.chip) {
+        summary = `<span class="ps-chip">${psEsc(pcState(h, g.chip))}</span>`;
+      } else if ((g.items || []).length) {
+        const on = g.items.filter((it) => pcState(h, it.entity) === "on").length;
+        summary = `<span class="ps-chip ${on ? "good" : ""}">${on} of ${g.items.length} on</span>`;
+      }
+
+      return `<div class="ps-grp ${gopen ? "open" : ""}">
+          <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
+            <ha-icon icon="${psEsc(g.icon || "mdi:server")}"></ha-icon>
             <span class="ps-gn">${psEsc(g.name)}</span>
-            ${g.chip ? `<span class="ps-chip">${psEsc(pcState(h, g.chip))}</span>` : ""}</div>
-          ${stats ? `<div class="ps-stats">${stats}</div>` : ""}
-          ${items ? `<div class="ps-swrap">${items}</div>` : ""}
-          ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
+            ${summary}
+            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+          </button>
+          <div class="ps-grpb">
+            ${stats ? `<div class="ps-stats">${stats}</div>` : ""}
+            ${items ? `<div class="ps-swrap">${items}</div>` : ""}
+            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
+          </div>
         </div>`;
     }).join("");
 
@@ -6000,6 +6019,16 @@ class PurdyShellCard extends PcBaseCard {
         const sec = c.sections.find((s) => s.type === "quick");
         const t = sec && sec.tiles[parseInt(el.dataset.tile, 10)];
         if (t) pcAction(this, hass, t.tap_action, t.entity);
+      });
+    });
+
+    root.querySelectorAll("[data-group]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const k = el.dataset.group;
+        if (this._openGroups[k]) delete this._openGroups[k];
+        else this._openGroups[k] = true;
+        this._render();
       });
     });
 
@@ -6337,9 +6366,14 @@ class PurdyShellCard extends PcBaseCard {
       .ps-grp { display: flex; flex-direction: column; gap: 8px; padding-top: 10px;
                 border-top: 1px solid var(--ps-hair-soft); }
       .ps-grp:first-child { border-top: 0; padding-top: 0; }
-      .ps-grph { display: flex; align-items: center; gap: 9px; }
+      .ps-grph { display: flex; align-items: center; gap: 9px; width: 100%; }
       .ps-grph ha-icon { --mdc-icon-size: 17px; color: var(--ps-dim); }
       .ps-gn { font-size: 12px; font-weight: 660; flex: 1; }
+      .ps-gcv { color: var(--ps-dim); display: flex; transition: transform .25s; }
+      .ps-gcv .ps-ico { width: 14px; height: 14px; }
+      .ps-grp.open .ps-gcv { transform: rotate(90deg); color: var(--ps-cool); }
+      .ps-grpb { display: none; flex-direction: column; gap: 8px; }
+      .ps-grp.open .ps-grpb { display: flex; }
       .ps-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
       .ps-st { background: var(--ps-fill); border-radius: 11px; padding: 7px 10px; min-width: 0; cursor: pointer; }
       .ps-stk { display: block; font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase;

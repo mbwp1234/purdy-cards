@@ -820,6 +820,19 @@ check('sleep span starts at this session, not last night', Date.now() - shSpan.f
 check('sleep span drops the previous session rows', shSpan.rows.length === 2);
 check('sleep span is null with no sleep history', shell._sleepSpan({ sleep_state: 'sensor.none' }) === null);
 
+check('shell groups collapse by default', shs.includes('.ps-grpb { display: none'));
+check('shell groups open on class', shs.includes('.ps-grp.open .ps-grpb { display: flex'));
+const shg = new SH();
+shg.setConfig({ sections: [{ type: 'systems', key: 'sys', groups: [
+  { name: 'Media', items: [{ entity: 'switch.a', name: 'A' }, { entity: 'switch.b', name: 'B' }] }] }] });
+shg._hass = { states: { 'switch.a': { state: 'on', attributes: {} }, 'switch.b': { state: 'off', attributes: {} } } };
+let ghtml = shg._secSystems(shg._config.sections[0]);
+check('collapsed group summarises how many switches are on', ghtml.includes('1 of 2 on'));
+check('collapsed group is not marked open', !/ps-grp open/.test(ghtml));
+shg._openGroups['sys|Media'] = true;
+ghtml = shg._secSystems(shg._config.sections[0]);
+check('opened group is marked open', /ps-grp open/.test(ghtml));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
