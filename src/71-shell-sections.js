@@ -1,0 +1,732 @@
+/* ============================================================================
+ * purdy-shell-card — section renderers
+ *
+ * Every one of these returns an HTML string and reads nothing but hass and the
+ * section's own config, which is what lets the core diff a section's output
+ * against the last one and skip the DOM entirely when nothing changed.
+ *
+ * A renderer that returns "" is dropped by the core along with its divider —
+ * that is how the tv section disappears when every set is off.
+ * ========================================================================== */
+
+Object.assign(PurdyShellCard.prototype, {
+  _greeting() {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  },
+
+  _who() {
+    const c = this._config;
+    if (c.name !== undefined) return c.name;
+    const u = this._hass && this._hass.user;
+    if (!u || !u.name) return "";
+    return String(u.name).trim().split(/\s+/)[0];
+  },
+
+  /* A 270° arc. `segs` are [fraction, colour] laid end to end. */
+  _ringSvg(size, stroke, segs, goalFrac) {
+    const r = size / 2 - stroke / 2 - 2;
+    const c = 2 * Math.PI * r;
+    const arc = c * 0.75;
+    const cx = size / 2;
+    let off = 0;
+    let out = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+      <circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
+        stroke-width="${stroke}" stroke-linecap="round"
+        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+    segs.forEach(([f, col]) => {
+      const len = arc * Math.max(0, Math.min(1, f));
+      if (len <= 0.2) { off += len; return; }
+      out += `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="${col}"
+        stroke-width="${stroke}" stroke-linecap="round"
+        stroke-dasharray="${len.toFixed(2)} ${c.toFixed(2)}"
+        stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+      off += len;
+    });
+    if (goalFrac != null && goalFrac > 0 && goalFrac <= 1) {
+      const deg = 135 + 270 * goalFrac + 90; // ring starts at 3 o'clock; tick drawn at 12
+      out += `<line x1="${cx}" y1="${(cx - r - stroke / 2 - 1).toFixed(2)}" x2="${cx}" y2="${(cx - r + stroke / 2 + 1).toFixed(2)}"
+        stroke="var(--ps-warn)" stroke-width="2.2" stroke-linecap="round"
+        transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;
+    }
+    return out + "</svg>";
+  },
+
+  _waveSvg(sec) {
+    const g = sec.graph || {};
+    const inside = (this._history[g.inside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
+    const outside = (this._history[g.outside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
+    if (inside.length < 2 && outside.length < 2) return "";
+
+    const hours = g.hours || 24;
+    const t1 = Date.now();
+    const t0 = t1 - hours * 3600 * 1000;
+    const all = inside.concat(outside).filter((p) => p.t >= t0);
+    if (all.length < 2) return "";
+    let lo = Math.min.apply(null, all.map((p) => p.v));
+    let hi = Math.max.apply(null, all.map((p) => p.v));
+    const pad = Math.max(1.5, (hi - lo) * 0.18);
+    lo -= pad; hi += pad;
+
+    const W = 360, H = 74, TOP = 24, BOT = 3;
+    const px = (t) => ((t - t0) / (t1 - t0)) * W;
+    const py = (v) => TOP + (1 - (v - lo) / (hi - lo)) * (H - TOP - BOT);
+    const line = (arr) =>
+      arr.filter((p) => p.t >= t0)
+        .map((p) => `${px(p.t).toFixed(1)},${py(p.v).toFixed(1)}`)
+        .join(" ");
+
+    /* Keep what was plotted so the scrubber reads the same numbers the line
+       was drawn from, rather than re-deriving and drifting. */
+    this._waveData = { t0, t1, inside: inside.filter((p) => p.t >= t0), outside: outside.filter((p) => p.t >= t0) };
+    const ip = line(inside), op = line(outside);
+    const uid = "psw" + Math.random().toString(36).slice(2, 7);
+    let out = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="ps-wave-svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="${uid}o" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--ps-heat)" stop-opacity=".30"/>
+          <stop offset="100%" stop-color="var(--ps-heat)" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="${uid}i" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--ps-cool)" stop-opacity=".26"/>
+          <stop offset="100%" stop-color="var(--ps-cool)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>`;
+    if (op) {
+      out += `<polygon points="0,${H} ${op} ${W},${H}" fill="url(#${uid}o)"/>
+        <polyline points="${op}" fill="none" stroke="var(--ps-heat)" stroke-width="1.7"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+    }
+    if (ip) {
+      out += `<polygon points="0,${H} ${ip} ${W},${H}" fill="url(#${uid}i)"/>
+        <polyline points="${ip}" fill="none" stroke="var(--ps-cool)" stroke-width="1.9"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+    }
+    return out + "</svg>";
+  },
+
+  /* Walk the sleep-state history back from the newest reading and stop at the
+     first break longer than the gap, so tonight is charted rather than tonight
+     glued to the tail of last night. */
+  _sleepSpan(sec) {
+    const rows = this._history[sec.sleep_state] || [];
+    const asleep = (v) => v === "light_sleep" || v === "deep_sleep" || v === "awake";
+    const live = rows.filter((r) => asleep(r.s));
+    if (!live.length) return null;
+    const gap = (sec.session_gap_minutes || 90) * 60000;
+    let i = live.length - 1;
+    while (i > 0 && live[i].t - live[i - 1].t < gap) i--;
+    const startTs = psParseTs(
+      this._hass.states[(sec.hypnogram || {}).start_entity || (sec.session || {}).start] &&
+      this._hass.states[(sec.hypnogram || {}).start_entity || (sec.session || {}).start].state
+    );
+    const from = startTs && startTs < live[i].t ? startTs : live[i].t;
+    return { from, to: Date.now(), rows: rows.filter((r) => r.t >= from) };
+  },
+
+  _hypnoSvg(sec) {
+    const span = this._sleepSpan(sec);
+    if (!span || span.to - span.from < 60000) return "";
+    this._hypData = span;
+    const LANE = { awake: 7, light_sleep: 22, deep_sleep: 37 };
+    const COL = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" };
+    const W = 400, H = 46;
+    const px = (t) => ((t - span.from) / (span.to - span.from)) * W;
+
+    let out = "";
+    [7, 22, 37].forEach((y) => {
+      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="var(--ps-hair)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    });
+    let prevY = null;
+    const rows = span.rows.filter((r) => LANE[r.s] !== undefined);
+    rows.forEach((r, i) => {
+      const next = i + 1 < rows.length ? rows[i + 1].t : span.to;
+      const x0 = px(r.t), x1 = px(next), y = LANE[r.s];
+      if (prevY !== null) {
+        out += `<line x1="${x0.toFixed(1)}" y1="${prevY}" x2="${x0.toFixed(1)}" y2="${y}"
+          stroke="rgba(255,255,255,.2)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+      }
+      out += `<rect x="${x0.toFixed(1)}" y="${y - 3.5}" width="${Math.max(1.2, x1 - x0).toFixed(1)}"
+        height="7" rx="2" fill="${COL[r.s]}"/>`;
+      prevY = y;
+    });
+    const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `<div class="ps-hyp">
+        <div class="ps-hypt" data-readout="hyp"><span class="ps-lbl">Tonight</span><span>${rows.length} transitions</span></div>
+        <div class="ps-hypplot" data-scrub="hyp">
+          <div class="ps-cross" hidden></div>
+          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Sleep stages tonight">${out}</svg>
+        </div>
+        <div class="ps-hypt"><span>${fmt(span.from)}</span><span>${fmt(span.to)}</span></div>
+      </div>`;
+  },
+
+  _chev() {
+    return `<span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>`;
+  },
+
+  _head(sec, chipHtml) {
+    if (sec.expandable === false) {
+      return `<span class="ps-lbl ps-solo">${psEsc(sec.title || "")}</span>`;
+    }
+    return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">
+        <span class="ps-nm">${psEsc(sec.title || "")}</span>
+        ${chipHtml || ""}
+        ${this._chev()}
+      </button>`;
+  },
+
+  _secSleep(sec) {
+    const h = this._hass;
+    const state = pcState(h, sec.sleep_state);
+    const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state] || "Sock off";
+    const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || "";
+    const active = state === "deep_sleep" || state === "light_sleep" || state === "awake";
+
+    const r = sec.ring || {};
+    const deep = (active ? pcNum(h, r.deep) : pcNum(h, r.deep_last_night)) || 0;
+    const light = (active ? pcNum(h, r.light) : pcNum(h, r.light_last_night)) || 0;
+    const max = r.max_hours || 12;
+    const total = deep + light;
+    const goalDeep = pcNum(h, (r.goal || {}).deep) || 0;
+    const goalLight = pcNum(h, (r.goal || {}).light) || 0;
+    const goal = goalDeep + goalLight;
+
+    const ring = this._ringSvg(98, 8,
+      [[deep / max, "var(--ps-deep)"], [light / max, "var(--ps-light)"]],
+      goal > 0 ? Math.min(1, goal / max) : null);
+
+    const startTs = psParseTs(pcState(h, (sec.session || {}).start));
+    const since = startTs
+      ? new Date(startTs).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : "—";
+    const elapsed = startTs && active ? psDur((Date.now() - startTs) / 60000) : null;
+
+    const vitals = (sec.vitals || []).map((v) => {
+      const liveVal = pcNum(h, v.entity);
+      const val = active && liveVal != null ? liveVal : pcNum(h, v.last_night);
+      const base = pcNum(h, v.baseline);
+      const dig = v.digits == null ? 1 : v.digits;
+      let d = `<span class="ps-vd ps-flat">—</span>`;
+      if (val != null && base != null) {
+        const diff = val - base;
+        const good = v.lower_is_better ? diff < 0 : diff > 0;
+        const cl = Math.abs(diff) < (v.flat_within || 0.6) ? "ps-flat" : good ? "ps-good" : "ps-warnc";
+        const sign = diff > 0 ? "+" : "";
+        d = `<span class="ps-vd ${cl}">${Math.abs(diff) < (v.flat_within || 0.6)
+          ? "level" : sign + diff.toFixed(dig ? 1 : 0) + " vs 7d"}</span>`;
+      }
+      return `<div class="ps-vit" data-info="${psEsc(v.entity)}">
+          <span class="ps-vk">${psEsc(v.label)}</span>
+          <span class="ps-vv">${val == null ? "—" : val.toFixed(dig)}<small>${psEsc(v.unit || "")}</small></span>
+          ${d}
+        </div>`;
+    }).join("");
+
+    /* Expanded: the recap rows and chips that used to live behind #joel. */
+    const w = sec.wakeups || {};
+    const wLive = pcNum(h, w.live);
+    const wBase = pcNum(h, w.baseline);
+    const bed = pcNum(h, (sec.bedtime || {}).entity);
+    const bedBase = pcNum(h, (sec.bedtime || {}).baseline);
+    const room = sec.room || {};
+    const rt = pcNum(h, room.temp), rh = pcNum(h, room.humidity);
+    const rAvg = pcNum(h, room.overnight_avg);
+
+    const bedCmp = bed != null && bedBase != null
+      ? (() => {
+          const d = Math.round(bed - bedBase);
+          if (Math.abs(d) < 10) return `<span class="ps-flat">on time</span>`;
+          return `<span class="${d > 0 ? "ps-warnc" : "ps-good"}">${Math.abs(d)} min ${d > 0 ? "late" : "early"}</span>`;
+        })()
+      : `<span class="ps-flat">—</span>`;
+
+    const rows = `
+      <div class="ps-jrs">
+        <div class="ps-jr" data-info="${psEsc(w.live)}"><span class="ps-l">Wakeups</span>
+          <span class="ps-v">${wLive == null ? "—" : wLive}</span>
+          <span class="${wBase != null && wLive != null && wLive <= wBase ? "ps-good" : "ps-flat"}">${wBase == null ? "" : wBase.toFixed(1) + " avg"}</span></div>
+        <div class="ps-jr" data-info="${psEsc((sec.bedtime || {}).entity)}"><span class="ps-l">Bedtime</span>
+          <span class="ps-v">${psMinsToClock(bed)}</span>${bedCmp}</div>
+        <div class="ps-jr"><span class="ps-l">Deep / light</span>
+          <span class="ps-v">${deep.toFixed(1)}h / ${light.toFixed(1)}h</span>
+          <span class="ps-flat">${goal > 0 ? `7d ${goalDeep.toFixed(1)} / ${goalLight.toFixed(1)}` : ""}</span></div>
+        <div class="ps-jr" data-info="${psEsc(room.temp)}"><span class="ps-l">Room</span>
+          <span class="ps-v">${rt == null ? "—" : rt.toFixed(1) + "°"}${rh == null ? "" : " · " + rh.toFixed(0) + "%"}</span>
+          <span class="ps-flat">${rAvg == null ? "" : rAvg.toFixed(1) + "° last"}</span></div>
+      </div>`;
+
+    return `
+      ${this._head(sec, `<span class="ps-chip ${cls}"><span class="ps-dot"></span>${label}</span>`)}
+      <div class="ps-jtop">
+        <div class="ps-ring" style="width:98px;height:98px" data-info="${psEsc(sec.sleep_state)}">
+          ${ring}
+          <div class="ps-rv"><b>${total.toFixed(1)}h</b><small>of ${max}h</small></div>
+        </div>
+        <div class="ps-grow">
+          <div class="ps-jn">${psEsc(pcState(h, sec.age) || pcName(h, sec.person, sec.name))}</div>
+          <div class="ps-js">${active
+            ? `asleep ${elapsed || "—"}<br>since ${since}`
+            : `last night<br>${since === "—" ? "no session" : "from " + since}`}</div>
+          <div class="ps-chips" style="margin-top:9px">
+            <span class="ps-chip deep">Deep ${deep.toFixed(1)}h</span>
+            <span class="ps-chip lt">Light ${light.toFixed(1)}h</span>
+          </div>
+        </div>
+      </div>
+      <div class="ps-vits">${vitals}</div>
+      ${this._hypnoSvg(sec)}
+      <div class="ps-xtra">${rows}</div>`;
+  },
+
+  _secClimate(sec) {
+    const h = this._hass;
+    const th = h.states[sec.goal] || h.states[sec.thermostat];
+    const cur = th && th.attributes.current_temperature;
+    const goal = th && th.attributes.temperature;
+    const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
+    const reason = th && th.attributes.hvac_action_reason;
+    const rng = sec.ring || { min: 60, max: 80 };
+    const frac = cur == null ? 0 : Math.max(0, Math.min(1, (cur - rng.min) / (rng.max - rng.min)));
+    const heating = action === "heating";
+    const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
+
+    const zc = sec.zones || {};
+    const activeZone = pcState(h, zc.select);
+    const zones = (zc.options || []).map((o) => {
+      const t = pcNum(h, o.temp);
+      const on = activeZone === o.option;
+      return `<div class="ps-zc ${on ? "on" : ""}" data-zone="${psEsc(o.option)}">${psEsc(o.label || o.option)}
+        <b>${t == null ? "—" : t.toFixed(1) + "°"}</b></div>`;
+    }).join("");
+    const ot = pcNum(h, (sec.outside || {}).temp);
+    const outside = ot == null ? "" :
+      `<div class="ps-zc" data-info="${psEsc((sec.outside || {}).temp)}">Outside<b>${ot.toFixed(1)}°</b></div>`;
+
+    const rooms = (sec.rooms || []).map((r) => {
+      const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
+      return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
+          <span class="ps-rn">${psEsc(r.name || pcName(h, r.temp))}</span>
+          <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
+          <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
+        </div>`;
+    }).join("");
+
+    const chips = (sec.chips || []).map((ch) => {
+      const vis = ch.visible;
+      if (vis) {
+        const list = Array.isArray(vis) ? vis : [vis];
+        const ok = list.every((v) => {
+          const st = pcState(h, v.entity);
+          return v.state !== undefined ? st === v.state : st !== v.state_not;
+        });
+        if (!ok) return "";
+      }
+      const val = ch.show_state ? " " + pcState(h, ch.entity) : "";
+      return `<span class="ps-chip ${ch.style === "warn" ? "warn" : ""}">${psEsc(ch.name)}${psEsc(val)}</span>`;
+    }).join("");
+
+    const wave = this._waveSvg(sec);
+    const inNow = pcNum(h, (sec.graph || {}).inside);
+    const outNow = pcNum(h, (sec.graph || {}).outside);
+
+    return `
+      ${this._head(sec, `<span class="ps-chip ${heating ? "warn" : "cool"}"><span class="ps-dot"></span>${psEsc(
+        action.charAt(0).toUpperCase() + action.slice(1))}</span>`)}
+      <div class="ps-chero">
+        <div class="ps-ring" style="width:92px;height:92px" data-info="${psEsc(sec.goal || sec.thermostat)}">
+          ${this._ringSvg(92, 7.5, [[frac, col]], null)}
+          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>now</small></div>
+        </div>
+        <div class="ps-grow">
+          <div class="ps-row">
+            <button class="ps-step" type="button" data-step="-1" aria-label="Lower goal">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
+            <div class="ps-goal"><b>${goal == null ? "—" : Math.round(goal) + "°"}</b><span>goal</span></div>
+            <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div>
+          ${reason ? `<div class="ps-reason">${psEsc(reason)}</div>` : ""}
+        </div>
+      </div>
+      <div class="ps-zpair">${zones}${outside}</div>
+      ${this._holdHtml(sec)}
+      <div class="ps-xtra">
+        ${sec.schedule ? `<div class="ps-btns">
+          <button class="ps-btn" type="button" data-sheet="schedule">
+            <svg viewBox="0 0 24 24" class="ps-ico"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9h17M8 3v3M16 3v3M12 12.5v3l2 1.2"/></svg>
+            Schedule</button>
+        </div>` : ""}
+        <div class="ps-rmlist">${rooms}</div>
+        ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
+      </div>
+      ${wave ? `<div class="ps-wlg" data-readout="wave">
+          <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "\u2014" : inNow.toFixed(1) + "\u00B0"}</b></span>
+          <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "\u2014" : outNow.toFixed(1) + "\u00B0"}</b></span>
+        </div>
+        <div class="ps-wave" data-scrub="wave">
+        <div class="ps-cross" hidden></div>
+        ${wave}</div>` : ""}`;
+  },
+
+  /* Renders nothing at all when every television is off, the same way the
+     conditional card it replaces disappeared from the old view. */
+  _secTv(sec) {
+    const h = this._hass;
+    const live = (sec.tvs || []).filter((t) => {
+      const st = pcState(h, t.media_player);
+      return st && st !== "off" && st !== "unavailable" && st !== "unknown";
+    });
+    if (!live.length) return "";
+    const rows = live.map((t) => {
+      const app = pcState(h, t.app_sensor);
+      return `<div class="ps-tvrow">
+          <svg viewBox="0 0 24 24" class="ps-ico"><rect x="2.5" y="5" width="19" height="12" rx="2"/><path d="M8.5 20.5h7"/></svg>
+          <span class="ps-grow"><span class="ps-tvn">${psEsc(t.name)}</span>
+            <span class="ps-tva ps-trunc">${psEsc(app && app !== "unknown" ? app : "On")}</span></span>
+          <button class="ps-tvoff" type="button" data-tvoff="${psEsc(t.remote || t.media_player)}"
+            aria-label="Turn off ${psEsc(t.name)}">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 3.5v8"/><path d="M6.8 7.2a7.5 7.5 0 1 0 10.4 0"/></svg>
+          </button>
+        </div>`;
+    }).join("");
+    return `${this._head(sec, `<span class="ps-chip good"><span class="ps-dot"></span>${live.length} on</span>`)}${rows}`;
+  },
+
+  /* A manual hold outranks the schedule, so it gets its own row with a
+     two-tap cancel rather than hiding among the chips. */
+  _holdHtml(sec) {
+    const hold = sec.hold;
+    if (!hold || !hold.remaining) return "";
+    const raw = pcState(this._hass, hold.remaining);
+    const mins = parseFloat(raw);
+    if (!Number.isFinite(mins) || mins <= 0) return "";
+    const armed = this._armed === "hold";
+    return `<button class="ps-hold ${armed ? "armed" : ""}" type="button" data-arm="hold">
+        <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
+        <span class="ps-grow">${armed ? "Tap again to cancel the hold"
+          : `Hold active \u00B7 ${psDur(mins)} left`}</span>
+        <span class="ps-holdx">${armed ? "Cancel" : "\u00D7"}</span>
+      </button>`;
+  },
+
+  _secPeople(sec) {
+    const h = this._hass;
+    const cells = (sec.people || []).map((p) => {
+      const st = pcState(h, p.entity);
+      const home = st === "home";
+      const batt = pcNum(h, p.battery);
+      const steps = pcNum(h, p.steps);
+      const nm = pcName(h, p.entity, p.name);
+      const pic = h.states[p.entity] && h.states[p.entity].attributes.entity_picture;
+      return `<div class="ps-pw" data-info="${psEsc(p.entity)}">
+          <div class="ps-av">${pic ? `<img src="${psEsc(pic)}" alt="" />` : psEsc((nm || "?").charAt(0).toUpperCase())}</div>
+          <div class="ps-grow">
+            <div class="ps-pn ps-trunc">${psEsc(nm)}</div>
+            <div class="ps-pb ${batt != null && batt < 25 ? "low" : ""}">${
+              home ? "Home" : psEsc(st.replace(/_/g, " "))
+            }${batt == null ? "" : " · " + Math.round(batt) + "%"}${
+              steps == null ? "" : " · " + Math.round(steps).toLocaleString()
+            }</div>
+          </div>
+        </div>`;
+    }).join("");
+    return `${this._head(sec)}<div class="ps-ppl">${cells}</div>`;
+  },
+
+  _secRooms(sec) {
+    const h = this._hass;
+    const cells = (sec.rooms || []).map((r) => {
+      const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
+      return `<div class="ps-rc ${r.accent ? "acc" : ""}" data-info="${psEsc(r.temp)}">
+          <span class="ps-rn2">${psEsc(r.name || pcName(h, r.temp))}</span>
+          <b>${t == null ? "—" : t.toFixed(1) + "°"}</b>
+          <span class="ps-rh">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
+        </div>`;
+    }).join("");
+    return `${this._head(sec)}<div class="ps-rstrip">${cells}</div>`;
+  },
+
+  _secQuick(sec) {
+    const h = this._hass;
+    const tone = (t) => {
+      const s = pcState(h, t.entity);
+      if (t.alert_when && t.alert_when.indexOf(s) >= 0) return "alert";
+      if (t.on_when) return t.on_when.indexOf(s) >= 0 ? "on" : "";
+      return s === "on" || s === "playing" || s === "cleaning" ? "on" : "";
+    };
+    const tiles = (sec.tiles || []).map((t, i) => {
+      const vs = h.states[t.value_entity || t.entity];
+      const raw = vs ? vs.state : "";
+      const unit = vs && vs.attributes.unit_of_measurement ? " " + vs.attributes.unit_of_measurement : "";
+      const value = t.value_text || (raw ? raw.replace(/_/g, " ") + unit : "—");
+      let bar = "";
+      if (t.bar_entity) {
+        const pct = pcNum(h, t.bar_entity);
+        if (pct != null) {
+          const p = Math.max(0, Math.min(100, (pct / (t.bar_max || 100)) * 100));
+          const warn = t.bar_warn_above == null ? 80 : t.bar_warn_above;
+          const crit = t.bar_critical_above == null ? 95 : t.bar_critical_above;
+          const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-cool)";
+          bar = `<div class="ps-bar"><i style="width:${p.toFixed(0)}%;background:${c}"></i></div>`;
+        }
+      }
+      return `<button class="ps-qt ${tone(t)}" type="button" data-tile="${i}">
+          <ha-icon icon="${psEsc(t.icon || "mdi:circle-outline")}"></ha-icon>
+          <span><span class="ps-qn ps-trunc">${psEsc(pcName(h, t.entity, t.name))}</span>
+          <span class="ps-qv ps-trunc">${psEsc(value)}</span></span>${bar}
+        </button>`;
+    }).join("");
+    return `${this._head(sec)}<div class="ps-qgrid">${tiles}</div>`;
+  },
+
+  _secCalendar(sec) {
+    const days = sec.days || 5;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    let out = "";
+    for (let d = 0; d < days; d++) {
+      const day = new Date(today.getTime() + d * 86400000);
+      const next = day.getTime() + 86400000;
+      const evs = this._events.filter((e) => e.t >= day.getTime() && e.t < next);
+      out += `<div class="ps-cday">
+        <div class="ps-cdt ${d === 0 ? "today" : ""}">
+          <div class="ps-dw">${day.toLocaleDateString([], { weekday: "short" })}</div>
+          <div class="ps-dn">${day.getDate()}</div>
+        </div>
+        <div class="ps-cev">${evs.length
+          ? evs.map((e) => `<div class="ps-ev"><i style="background:${psEsc(e.color)}"></i>
+              <span class="ps-trunc">${psEsc(e.name)}</span>
+              <span class="ps-et">${e.allDay ? "all day"
+                : new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>`).join("")
+          : `<div class="ps-ev none">Nothing scheduled</div>`}</div>
+      </div>`;
+    }
+    return `${this._head(sec)}${out}`;
+  },
+
+  _fired(list) {
+    const h = this._hass;
+    return (list || []).filter((f) => {
+      const st = pcState(h, f.entity);
+      if (f.state !== undefined) return st === f.state;
+      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable" && st !== "unknown";
+      return false;
+    });
+  },
+
+  _meterHtml(m) {
+    const v = pcNum(this._hass, m.entity);
+    const p = v == null ? 0 : Math.max(0, Math.min(100, v));
+    const warn = m.warn_above == null ? 80 : m.warn_above;
+    const crit = m.critical_above == null ? 95 : m.critical_above;
+    const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-good)";
+    return `<div class="ps-sysrow" data-info="${psEsc(m.entity)}">
+        <span class="ps-sn">${psEsc(m.label)}</span>
+        <span class="ps-sv">${m.text ? psEsc(pcState(this._hass, m.entity))
+          : (v == null ? "\u2014" : v.toFixed(1) + "%")}</span>
+        <span class="ps-meter"><i style="width:${p.toFixed(0)}%;background:${c}"></i></span>
+      </div>`;
+  },
+
+  _statsHtml(list) {
+    const h = this._hass;
+    return (list || []).map((x) => {
+      const st = h.states[x.entity];
+      const raw = st ? st.state : "";
+      const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+      const txt = x.map && x.map[raw] ? x.map[raw] : raw + (unit ? " " + unit : "");
+      const good = x.good_when && x.good_when.indexOf(raw) >= 0;
+      const bad = x.bad_when && x.bad_when.indexOf(raw) >= 0;
+      return `<div class="ps-st" data-info="${psEsc(x.entity)}">
+          <span class="ps-stk">${psEsc(x.label)}</span>
+          <span class="ps-stv ${bad ? "ps-warnc" : good ? "ps-good" : ""}">${psEsc(txt || "\u2014")}</span>
+        </div>`;
+    }).join("");
+  },
+
+  _switchesHtml(items) {
+    return (items || []).map((it) => {
+      const on = pcState(this._hass, it.entity) === "on";
+      const missing = !this._hass.states[it.entity];
+      return `<div class="ps-sw ${missing ? "gone" : ""}">
+          <ha-icon icon="${psEsc(it.icon || "mdi:application")}"></ha-icon>
+          <span class="ps-trunc">${psEsc(it.name)}</span>
+          ${it.url ? `<button class="ps-link" type="button" data-url="${psEsc(it.url)}"
+            aria-label="Open ${psEsc(it.name)}">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+          </button>` : ""}
+          ${missing ? `<span class="ps-chip">missing</span>`
+            : `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(it.entity)}"
+               role="switch" aria-checked="${on}" aria-label="${psEsc(it.name)}"><i></i></button>`}
+        </div>`;
+    }).join("");
+  },
+
+  /* A NAS, a floor robot and a litter box are three devices, not six peer
+     groups — the robots were sitting at the same level as a Docker category,
+     which made them read like a subsystem of the server. Each device owns its
+     own header, health and meters, and only the NAS has groups inside it. */
+  _devicesHtml(sec) {
+    return (sec.devices || []).map((d, di) => {
+      const key = sec.key + "|dev|" + (d.key || d.name);
+      const open = !!this._openGroups[key];
+      const faults = this._fired(d.faults);
+      const sub = d.subtitle_entity ? pcState(this._hass, d.subtitle_entity) : (d.subtitle || "");
+      const chip = d.chip ? pcState(this._hass, d.chip) : "";
+
+      const groups = (d.groups || []).map((g) => {
+        const gkey = key + "|" + g.name;
+        const gopen = !!this._openGroups[gkey];
+        const items = g.items || [];
+        const on = items.filter((it) => pcState(this._hass, it.entity) === "on").length;
+        return `<div class="ps-grp ${gopen ? "open" : ""}">
+            <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
+              <ha-icon icon="${psEsc(g.icon || "mdi:folder-outline")}"></ha-icon>
+              <span class="ps-gn">${psEsc(g.name)}</span>
+              <span class="ps-chip ${on ? "good" : ""}">${on} of ${items.length}</span>
+              <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+            </button>
+            <div class="ps-grpb"><div class="ps-swrap">${this._switchesHtml(items)}</div></div>
+          </div>`;
+      }).join("");
+
+      const buttons = (d.buttons || []).map((b, i) =>
+        `<button class="ps-btn" type="button" data-dbtn="${di}|${i}">${psEsc(b.name)}</button>`).join("");
+
+      return `<div class="ps-dev ${open ? "open" : ""}">
+          <button class="ps-devh" type="button" data-group="${psEsc(key)}" aria-expanded="${open}">
+            <span class="ps-devi ${faults.length ? "bad" : ""}"><ha-icon icon="${psEsc(d.icon || "mdi:devices")}"></ha-icon></span>
+            <span class="ps-grow">
+              <span class="ps-devn">${psEsc(d.name)}</span>
+              <span class="ps-devs">${psEsc(sub)}</span>
+            </span>
+            ${faults.length
+              ? `<span class="ps-chip bad"><span class="ps-dot"></span>${faults.length}</span>`
+              : chip ? `<span class="ps-chip">${psEsc(chip)}</span>`
+              : `<span class="ps-chip good"><span class="ps-dot"></span>OK</span>`}
+            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+          </button>
+
+          ${faults.length ? `<div class="ps-faults">${faults.map((f) =>
+            `<div class="ps-fault" data-info="${psEsc(f.entity)}"><span class="ps-dotc bad"></span>
+              <span class="ps-grow"><b>${psEsc(f.label)}</b> ${psEsc(f.detail || "")}</span></div>`).join("")}</div>` : ""}
+          ${(d.meters || []).map((m) => this._meterHtml(m)).join("")}
+
+          <div class="ps-devb">
+            ${d.stats ? `<div class="ps-stats">${this._statsHtml(d.stats)}</div>` : ""}
+            ${groups}
+            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
+          </div>
+        </div>`;
+    }).join("");
+  },
+
+  /* The section that got the most attention: collapsed shows meters, expanded
+     shows every group's stats, every container switch and the robot controls
+     that used to need the #devices popup. */
+  _secSystems(sec) {
+    const h = this._hass;
+    if (sec.devices) {
+      const all = (sec.devices || []).reduce((n, d) => n + this._fired(d.faults).length, 0);
+      return `${this._head(sec, all
+        ? `<span class="ps-chip bad"><span class="ps-dot"></span>${all} fault${all > 1 ? "s" : ""}</span>`
+        : `<span class="ps-chip good"><span class="ps-dot"></span>Healthy</span>`)}
+        ${this._devicesHtml(sec)}`;
+    }
+
+    const faults = (sec.faults || []).filter((f) => {
+      const st = pcState(h, f.entity);
+      if (f.state !== undefined) return st === f.state;
+      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable";
+      return false;
+    });
+
+    const meters = (sec.meters || []).map((m) => {
+      const v = pcNum(h, m.entity);
+      const p = v == null ? 0 : Math.max(0, Math.min(100, v));
+      const warn = m.warn_above == null ? 80 : m.warn_above;
+      const crit = m.critical_above == null ? 95 : m.critical_above;
+      const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-good)";
+      return `<div class="ps-sysrow" data-info="${psEsc(m.entity)}">
+          <ha-icon icon="${psEsc(m.icon || "mdi:chart-box-outline")}"></ha-icon>
+          <span class="ps-sn">${psEsc(m.label)}</span>
+          <span class="ps-sv">${m.text ? psEsc(pcState(h, m.entity)) : (v == null ? "—" : v.toFixed(1) + "%")}</span>
+          <span class="ps-meter"><i style="width:${p.toFixed(0)}%;background:${c}"></i></span>
+        </div>`;
+    }).join("");
+
+    const groups = (sec.groups || []).map((g) => {
+      const gkey = sec.key + "|" + g.name;
+      const gopen = !!this._openGroups[gkey];
+
+      const stats = (g.stats || []).map((s) => {
+        const st = h.states[s.entity];
+        const raw = st ? st.state : "";
+        const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+        const txt = s.map && s.map[raw] ? s.map[raw] : raw + (unit ? " " + unit : "");
+        const good = s.good_when && s.good_when.indexOf(raw) >= 0;
+        const bad = s.bad_when && s.bad_when.indexOf(raw) >= 0;
+        return `<div class="ps-st" data-info="${psEsc(s.entity)}">
+            <span class="ps-stk">${psEsc(s.label)}</span>
+            <span class="ps-stv ${bad ? "ps-warnc" : good ? "ps-good" : ""}">${psEsc(txt || "—")}</span>
+          </div>`;
+      }).join("");
+
+      const items = (g.items || []).map((it) => {
+        const on = pcState(h, it.entity) === "on";
+        return `<div class="ps-sw">
+            <ha-icon icon="${psEsc(it.icon || "mdi:application")}"></ha-icon>
+            <span class="ps-trunc">${psEsc(it.name)}</span>
+            ${it.url ? `<button class="ps-link" type="button" data-url="${psEsc(it.url)}" aria-label="Open ${psEsc(it.name)}">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+            </button>` : ""}
+            <button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(it.entity)}"
+              role="switch" aria-checked="${on}" aria-label="${psEsc(it.name)}"><i></i></button>
+          </div>`;
+      }).join("");
+
+      const buttons = (g.buttons || []).map((b, i) =>
+        `<button class="ps-btn" type="button" data-gbtn="${psEsc(g.name)}|${i}">${psEsc(b.name)}</button>`).join("");
+
+      /* A collapsed group still has to say something useful, or there is no
+         reason to leave it shut: switch groups report how many are on. */
+      let summary = "";
+      if (g.chip) {
+        summary = `<span class="ps-chip">${psEsc(pcState(h, g.chip))}</span>`;
+      } else if ((g.items || []).length) {
+        const on = g.items.filter((it) => pcState(h, it.entity) === "on").length;
+        summary = `<span class="ps-chip ${on ? "good" : ""}">${on} of ${g.items.length} on</span>`;
+      }
+
+      return `<div class="ps-grp ${gopen ? "open" : ""}">
+          <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
+            <ha-icon icon="${psEsc(g.icon || "mdi:server")}"></ha-icon>
+            <span class="ps-gn">${psEsc(g.name)}</span>
+            ${summary}
+            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+          </button>
+          <div class="ps-grpb">
+            ${stats ? `<div class="ps-stats">${stats}</div>` : ""}
+            ${items ? `<div class="ps-swrap">${items}</div>` : ""}
+            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
+          </div>
+        </div>`;
+    }).join("");
+
+    const sub = sec.subtitle_entity ? pcState(h, sec.subtitle_entity) : "";
+
+    return `
+      ${this._head(sec, faults.length
+        ? `<span class="ps-chip bad"><span class="ps-dot"></span>${faults.length} fault${faults.length > 1 ? "s" : ""}</span>`
+        : `<span class="ps-chip good"><span class="ps-dot"></span>Healthy</span>`)}
+      ${sub ? `<div class="ps-sub2">${psEsc(sub)}</div>` : ""}
+      ${faults.length ? `<div class="ps-faults">${faults.map((f) =>
+        `<div class="ps-fault" data-info="${psEsc(f.entity)}"><span class="ps-dotc bad"></span>
+          <span class="ps-grow"><b>${psEsc(f.label)}</b> ${psEsc(f.detail || "")}</span></div>`).join("")}</div>` : ""}
+      ${meters}
+      <div class="ps-xtra">${groups}</div>`;
+  },
+});
+

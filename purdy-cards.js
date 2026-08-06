@@ -5162,8 +5162,6 @@ class PurdyShellCard extends PcBaseCard {
     return ids.filter(Boolean);
   }
 
-  /* ------------------------------------------------------------- history --*/
-
   _historyEntities() {
     const ids = [];
     this._config.sections.forEach((s) => {
@@ -5213,470 +5211,6 @@ class PurdyShellCard extends PcBaseCard {
     }
   }
 
-  /* GTTC exposes the whole schedule over its own websocket command; the
-     climate entity only ever carries the window that happens to be active. */
-  /* Recently listened comes from HA's recorder, not Music Assistant: MA's
-     last_played / play_count are empty in this install, so its own
-     "recently played" ordering is silently meaningless. Every MA player logs
-     media_title, media_artist and a playable media_content_id per state
-     change, so read it back from there. Bounded by recorder retention. */
-  async _fetchRecent() {
-    const sec = (this._config.sections || []).find((x) => x.type === "music");
-    if (!sec || !this._hass || !this._hass.callApi) return;
-    const ids = (sec.players || []).map((p) => p.entity);
-    if (!ids.length) return;
-    const start = new Date(Date.now() - (sec.recent_hours || 48) * 3600 * 1000).toISOString();
-    try {
-      const res = await this._hass.callApi("GET", `history/period/${start}?filter_entity_id=${ids.join(",")}`);
-      const rows = [];
-      (res || []).forEach((series) => (series || []).forEach((e) => {
-        const a = e.attributes || {};
-        if (!a.media_title || !a.media_content_id) return;
-        if (a.app_id !== "music_assistant" && PS_MUSIC_TYPES.indexOf(a.media_content_type) < 0) return;
-        rows.push({
-          t: new Date(e.last_changed || e.last_updated).getTime(),
-          uri: a.media_content_id,
-          name: a.media_title,
-          sub: a.media_artist || a.media_album_name || "",
-          kind: "track",
-        });
-      }));
-      rows.sort((x, y) => y.t - x.t);
-      const seen = {};
-      const out = [];
-      rows.forEach((r) => {
-        if (seen[r.uri] || !Number.isFinite(r.t)) return;
-        seen[r.uri] = 1;
-        out.push(r);
-      });
-      this._recent = out.slice(0, sec.recent_max || 8);
-      this._last = null;
-      this._render();
-    } catch (err) {
-      /* Recorder may be purged; the list just stays empty. */
-    }
-  }
-
-  async _runSearch() {
-    const sec = (this._config.sections || []).find((x) => x.type === "music");
-    const q = (this._query || "").trim();
-    const entry = sec && sec.config_entry;
-    if (!q || !entry) {
-      this._results = q && !entry ? [] : null;
-      this._render();
-      return;
-    }
-    this._searching = true;
-    this._render();
-    try {
-      const r = await this._hass.callService(
-        "music_assistant", "search",
-        { config_entry_id: entry, name: q }, undefined, false, true
-      );
-      const d = (r && r.response) || {};
-      const rows = [];
-      const take = (arr, kind, n) => (arr || []).slice(0, n).forEach((x) => rows.push({
-        uri: x.uri, name: x.name, kind, image: x.image,
-        sub: kind === "track" && x.artists && x.artists.length
-          ? x.artists.map((a) => a.name).join(", ") : kind,
-      }));
-      take(d.tracks, "track", 4);
-      take(d.playlists, "playlist", 3);
-      take(d.albums, "album", 2);
-      take(d.artists, "artist", 2);
-      this._results = rows;
-    } catch (err) {
-      this._results = [];
-    }
-    this._searching = false;
-    this._render();
-  }
-
-  _playUri(uri, kind) {
-    const targets = this._targets();
-    if (!uri || !targets.length) return;
-    this._hass.callService("music_assistant", "play_media", {
-      entity_id: targets, media_id: uri, media_type: kind || "track", enqueue: "replace",
-    });
-  }
-
-  /* --- saved playlists ----------------------------------------------------
-     A store is either a todo list (unbounded) or an input_text (`uri~name`
-     pairs, and that helper caps at 255 characters, so the oldest pins fall
-     off rather than the write failing). */
-  _pinStore() {
-    const sec = (this._config.sections || []).find((x) => x.type === "music");
-    return sec && sec.pins && sec.pins.store;
-  }
-
-  async _loadPins() {
-    const store = this._pinStore();
-    if (!store || !this._hass) return;
-    if (store.indexOf("todo.") === 0) {
-      if (!this._hass.callWS) return;
-      try {
-        const res = await this._hass.callWS({ type: "todo/item/list", entity_id: store });
-        this._pins = ((res && res.items) || [])
-          .filter((it) => it.status !== "completed" && it.description)
-          .map((it) => ({ name: it.summary, uri: it.description, uid: it.uid }));
-      } catch (e) { this._pins = []; }
-    } else {
-      const raw = pcState(this._hass, store);
-      this._pins = (!raw || raw === "unknown" || raw === "unavailable") ? [] :
-        raw.split("|").map((pair) => {
-          const i = pair.indexOf("~");
-          return i < 0 ? null : { uri: pair.slice(0, i), name: pair.slice(i + 1) };
-        }).filter(Boolean);
-    }
-    this._last = null;
-    this._render();
-  }
-
-  _writePins(list) {
-    const store = this._pinStore();
-    if (!store) return;
-    let pairs = list.map((p) => p.uri + "~" + p.name);
-    while (pairs.length && pairs.join("|").length > 255) pairs.shift();
-    this._hass.callService("input_text", "set_value", { entity_id: store, value: pairs.join("|") });
-  }
-
-  _isPinned(uri) {
-    return this._pins.some((p) => p.uri === uri);
-  }
-
-  async _togglePin(uri, name, kind) {
-    const store = this._pinStore();
-    if (!store || !uri) return;
-    const existing = this._pins.find((p) => p.uri === uri);
-    if (store.indexOf("todo.") === 0) {
-      if (existing) {
-        await this._hass.callService("todo", "remove_item", { entity_id: store, item: existing.uid });
-      } else {
-        await this._hass.callService("todo", "add_item", {
-          entity_id: store, item: name || "Saved playlist", description: uri,
-        });
-      }
-      this._loadPins();
-      return;
-    }
-    const next = existing
-      ? this._pins.filter((p) => p.uri !== uri)
-      : this._pins.concat([{ uri, name: (name || "Saved").slice(0, 40) }]);
-    this._pins = next;
-    this._writePins(next);
-    this._last = null;
-    this._render();
-  }
-
-  /* What is playing right now, as something that can be pinned. MA reports the
-     queue item, so prefer the playlist it came from when there is one. */
-  _pinnable() {
-    const np = this._nowPlaying();
-    if (!np) return null;
-    const a = np.st.attributes;
-    const uri = a.media_playlist_content_id || a.media_content_id;
-    if (!uri) return null;
-    const name = a.media_playlist || a.media_album_name || a.media_title;
-    const kind = a.media_playlist ? "playlist" : (a.media_content_type || "track");
-    return { uri, name, kind };
-  }
-
-  async _fetchSchedule() {
-    const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
-    if (!sec || !this._hass || !this._hass.callWS) return;
-    const extra = sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
-    try {
-      this._sched = await this._hass.callWS({ type: "gttc/get_schedule", ...extra });
-      this._last = null;
-      this._render();
-    } catch (e) {
-      this._sched = null;
-    this._dragging = false;   // a volume drag must survive the state repaint
-    this._armed = null;       // key of a destructive control awaiting a second tap
-    this._logged = {};        // rule key -> firedAt already written to the log
-    this._results = null;     // music search results, null until a query runs
-    this._recent = [];
-    this._query = "";
-    this._schedEdit = null;   // index of the entry being edited, or "new"
-    this._schedNote = null;
-    this._schedScope = undefined; // preset key being viewed; null = base lists
-    this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
-    this._pins = [];          // saved playlists
-    }
-  }
-
-  /* GTTC keeps FOUR schedules at once: the base weekday/weekend lists, and a
-     named preset per situation (home / work_from_home / away / sleep), each
-     with its own seven-day plan. `active_preset` is only set when a preset is
-     pinned — when GTTC picks one situationally it stays null, so reading the
-     base lists shows a schedule the house is not running. The live window on
-     the climate entity is the one reliable signal of which is in force, so
-     match against that. */
-  _activePreset() {
-    const s = this._sched;
-    if (s && s.active_preset && s.presets && s.presets[s.active_preset]) return s.active_preset;
-    return null;
-  }
-
-  _dayName(offset) {
-    const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-    return names[offset == null ? new Date().getDay() : offset];
-  }
-
-  /* Which schedule is actually running: the pinned preset, else whichever
-     preset owns the window the thermostat reports, else the base lists. */
-  _detectScope() {
-    const s = this._sched;
-    if (!s || !this._hass) return null;
-    const pinned = this._activePreset();
-    if (pinned) return pinned;
-
-    const sec = ((this._config || {}).sections || []).find((x) => x.type === "climate" && x.schedule);
-    const th = sec && sec.goal && this._hass.states[sec.goal];
-    const cur = th && th.attributes.current_schedule_entry;
-    if (cur) {
-      const today = this._dayName();
-      const same = (e) => e.time_start === cur.time_start && e.time_end === cur.time_end &&
-        Number(e.target_temp) === Number(cur.target_temp);
-      const keys = Object.keys(s.presets || {});
-      for (const k of keys) {
-        const list = (s.presets[k].schedule && s.presets[k].schedule[today]) || [];
-        if (list.some(same)) return k;
-      }
-      const base = s.mode === "per_day"
-        ? ((s.per_day && s.per_day[today]) || [])
-        : (s[new Date().getDay() % 6 === 0 ? "weekend" : "weekday"] || []);
-      if (base.some(same)) return null;
-    }
-    return null;
-  }
-
-  _scope() {
-    return this._schedScope === undefined ? this._detectScope() : this._schedScope;
-  }
-
-  /* Presets and per_day mode are seven-day; the base split is two-bucket. */
-  _perDay() {
-    return !!this._scope() || (this._sched && this._sched.mode === "per_day");
-  }
-
-  _schedDayName() {
-    if (this._schedDay) return this._schedDay;
-    if (this._perDay()) return this._dayName();
-    return new Date().getDay() % 6 === 0 ? "weekend" : "weekday";
-  }
-
-  _schedEntries() {
-    const s = this._sched;
-    if (!s) return [];
-    const day = this._schedDayName();
-    const scope = this._scope();
-    if (scope && s.presets && s.presets[scope]) {
-      return (s.presets[scope].schedule && s.presets[scope].schedule[day]) || [];
-    }
-    if (s.mode === "per_day") return (s.per_day && s.per_day[day]) || [];
-    return s[day] || [];
-  }
-
-  _schedToday() {
-    return this._schedEntries();
-  }
-
-  _zoneName(id) {
-    if (!id || !this._sched) return null;
-    const z = (this._sched.zones || []).find((x) => x.id === id);
-    return z ? z.name : null;
-  }
-
-  /* GTTC's update_entry / delete_entry write to the ACTIVE preset, so editing
-     anything else would silently land in the wrong schedule. Only offer it
-     where the write will go where it looks like it goes. */
-  _schedEditable(sec) {
-    if ((sec.schedule || {}).editable === false) return false;
-    return this._scope() === this._activePreset();
-  }
-
-  _schedWs(msg) {
-    const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
-    const extra = sec && sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
-    return this._hass.callWS({ ...msg, ...extra });
-  }
-
-  async _schedSave() {
-    const root = this.shadowRoot;
-    const val = (f) => {
-      const el = root.querySelector(`[data-f="${f}"]`);
-      return el ? el.value : "";
-    };
-    const entries = this._schedEntries().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
-    const orig = this._schedEdit === "new" ? null : entries[this._schedEdit];
-    const msg = {
-      type: "gttc/update_entry",
-      day: this._schedDayName(),
-      time_start: val("time_start"),
-      time_end: val("time_end"),
-      target_temp: parseFloat(val("target_temp")),
-    };
-    if (!msg.time_start || !msg.time_end || !Number.isFinite(msg.target_temp)) {
-      this._schedNote = "Start, end and heat temperature are required.";
-      this._render();
-      return;
-    }
-    const cool = parseFloat(val("cooling_temp"));
-    if (Number.isFinite(cool)) msg.cooling_temp = cool;
-    if (orig) {
-      msg.old_time_start = orig.time_start;
-      msg.old_time_end = orig.time_end;
-      if (orig.zone_id) msg.zone_id = orig.zone_id;
-      if (orig.away_temp != null) msg.away_temp = orig.away_temp;
-    }
-    try {
-      const res = await this._schedWs(msg);
-      this._schedNote = res && res.conflicts && res.conflicts.length
-        ? "Saved \u2014 overlaps another window, check the times." : null;
-      this._schedEdit = null;
-      await this._fetchSchedule();
-    } catch (err) {
-      this._schedNote = "Save failed: " + ((err && err.message) || "unknown error");
-      this._render();
-    }
-  }
-
-  async _schedDelete() {
-    const entries = this._schedEntries().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
-    const orig = entries[this._schedEdit];
-    if (!orig) return;
-    try {
-      await this._schedWs({
-        type: "gttc/delete_entry", day: this._schedDayName(),
-        time_start: orig.time_start, time_end: orig.time_end,
-      });
-      this._schedEdit = null;
-      this._schedNote = null;
-    this._schedScope = undefined; // preset key being viewed; null = base lists
-    this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
-    this._pins = [];          // saved playlists
-      await this._fetchSchedule();
-    } catch (err) {
-      this._schedNote = "Delete failed: " + ((err && err.message) || "unknown error");
-      this._render();
-    }
-  }
-
-  _scheduleHtml(sec) {
-    const h = this._hass;
-    const sd = this._sched;
-    const th = h.states[sec.goal];
-    const cur = th && th.attributes.current_schedule_entry;
-    const scope = this._scope();
-    const day = this._schedDayName();
-    const editable = this._schedEditable(sec);
-    const entries = this._schedEntries().slice()
-      .sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
-
-    /* Which of the four schedules you are looking at. */
-    const labels = (sd && sd.preset_labels) || {};
-    const scopes = [{ k: null, label: "Base" }].concat(
-      Object.keys((sd && sd.presets) || {}).map((k) => ({ k, label: labels[k] || k })));
-    const scopeTabs = sd && scopes.length > 1
-      ? `<div class="ps-tabs">${scopes.map((x) => `
-          <button class="ps-tab ${x.k === scope ? "on" : ""}" type="button"
-            data-scope="${x.k === null ? "__base__" : psEsc(x.k)}">${psEsc(x.label)}</button>`).join("")}</div>`
-      : "";
-
-    const days = this._perDay()
-      ? [["monday", "Mon"], ["tuesday", "Tue"], ["wednesday", "Wed"], ["thursday", "Thu"],
-         ["friday", "Fri"], ["saturday", "Sat"], ["sunday", "Sun"]]
-      : [["weekday", "Weekdays"], ["weekend", "Weekend"]];
-    const dayTabs = `<div class="ps-tabs">${days.map(([k, lbl]) => `
-        <button class="ps-tab ${k === day ? "on" : ""}" type="button" data-sday="${k}">${psEsc(lbl)}</button>`).join("")}</div>`;
-
-    const nowPct = ((new Date().getHours() * 60 + new Date().getMinutes()) / 1440) * 100;
-    const isToday = this._perDay() ? day === this._dayName()
-      : day === (new Date().getDay() % 6 === 0 ? "weekend" : "weekday");
-
-    let bars = "";
-    entries.forEach((e, i) => {
-      const st = psMins(e.time_start);
-      let en = e.time_end ? psMins(e.time_end)
-        : (i + 1 < entries.length ? psMins(entries[i + 1].time_start) : 1440);
-      if (en <= st) en = 1440;                    // a window that wraps midnight
-      const live = isToday && cur && cur.time_start === e.time_start && cur.time_end === e.time_end;
-      bars += `<span class="ps-seg ${live ? "live" : ""}"
-        style="left:${((st / 1440) * 100).toFixed(2)}%;width:${Math.max(1.2, ((en - st) / 1440) * 100).toFixed(2)}%"
-        >${e.cooling_temp != null ? Math.round(e.cooling_temp) + "\u00B0" : Math.round(e.target_temp) + "\u00B0"}</span>`;
-    });
-
-    const rows = entries.map((e, i) => {
-      const live = isToday && cur && cur.time_start === e.time_start && cur.time_end === e.time_end;
-      const zone = this._zoneName(e.zone_id);
-      return `<button class="ps-sr ${live ? "live" : ""}" type="button" ${
-          editable ? `data-sedit="${i}"` : "disabled"}>
-          <span class="ps-srt">${psEsc(psMinsToClock(psMins(e.time_start)))}\u2013${
-            psEsc(psMinsToClock(psMins(e.time_end || "23:59")))}</span>
-          <span class="ps-srv"><i class="h"></i>${e.target_temp == null ? "\u2014" : Math.round(e.target_temp) + "\u00B0"}${
-            e.cooling_temp == null ? "" : `<i class="c"></i>${Math.round(e.cooling_temp)}\u00B0`}${
-            zone ? `<span class="ps-srz">${psEsc(zone)}</span>` : ""}</span>
-          ${live ? `<span class="ps-chip cool">now</span>` : ""}
-        </button>`;
-    }).join("");
-
-    let editor = "";
-    if (editable && this._schedEdit !== null) {
-      const isNew = this._schedEdit === "new";
-      const e = isNew ? {} : (entries[this._schedEdit] || {});
-      editor = `<div class="ps-sedit">
-          <div class="ps-sform">
-            <label>Start<input type="time" data-f="time_start" value="${psEsc(e.time_start || "")}" /></label>
-            <label>End<input type="time" data-f="time_end" value="${psEsc(e.time_end || "")}" /></label>
-            <label>Heat<input type="number" inputmode="decimal" data-f="target_temp" value="${
-              e.target_temp == null ? "" : e.target_temp}" /></label>
-            <label>Cool<input type="number" inputmode="decimal" data-f="cooling_temp" value="${
-              e.cooling_temp == null ? "" : e.cooling_temp}" /></label>
-          </div>
-          ${this._schedNote ? `<div class="ps-snote">${psEsc(this._schedNote)}</div>` : ""}
-          <div class="ps-btns">
-            <button class="ps-btn primary" type="button" id="ps-ssave">Save</button>
-            <button class="ps-btn" type="button" id="ps-scancel">Cancel</button>
-            ${isNew ? "" : `<button class="ps-btn danger ${this._armed === "sdel" ? "armed" : ""}"
-              type="button" data-arm="sdel">${this._armed === "sdel" ? "Tap again" : "Delete"}</button>`}
-          </div>
-        </div>`;
-    }
-
-    const modeId = (sec.schedule || {}).mode_entity;
-    const onId = (sec.schedule || {}).switch_entity;
-    const on = onId ? pcState(h, onId) === "on" : null;
-
-    return `<div class="ps-sched">
-        <div class="ps-schedh">
-          <span class="ps-lbl">Schedule</span>
-          ${modeId ? `<span class="ps-chip">${psEsc(pcState(h, modeId))}</span>` : ""}
-          ${onId ? `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(onId)}"
-            role="switch" aria-checked="${on}" aria-label="Schedule enabled"><i></i></button>` : ""}
-        </div>
-        ${cur ? `<div class="ps-schednow">Holding <b>${Math.round(cur.effective_temp)}\u00B0</b>
-          until ${psEsc(psMinsToClock(psMins(cur.time_end)))}
-          <span class="ps-flat">(${Math.round(cur.target_temp)}\u00B0 heat${
-            cur.cooling_temp == null ? "" : " / " + Math.round(cur.cooling_temp) + "\u00B0 cool"})</span></div>` : ""}
-        ${scopeTabs}
-        ${sd ? dayTabs : ""}
-        ${entries.length ? `<div class="ps-timeline">${bars}
-            ${isToday ? `<span class="ps-nowline" style="left:${nowPct.toFixed(2)}%"></span>` : ""}</div>
-          <div class="ps-tscale"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
-          <div class="ps-srs">${rows}</div>`
-        : `<div class="ps-flat" style="font-size:11px">${this._sched === null
-            ? "Schedule unavailable." : "No windows set for this day."}</div>`}
-        ${editor}
-        ${editable && this._schedEdit === null && sd
-          ? `<div class="ps-btns"><button class="ps-btn" type="button" data-sedit="new">Add a window</button></div>` : ""}
-        ${!editable && sd ? `<div class="ps-note">Read-only \u2014 GTTC writes edits to the active preset${
-          this._activePreset() ? "" : ", and none is pinned"}. Pin one to edit here.</div>` : ""}
-      </div>`;
-  }
-
   async _fetchEvents() {
     const sec = (this._config.sections || []).find((s) => s.type === "calendar");
     if (!sec || !Array.isArray(sec.entities) || !this._hass || !this._hass.callApi) return;
@@ -5714,1041 +5248,6 @@ class PurdyShellCard extends PcBaseCard {
     if (this._eventTimer) clearInterval(this._eventTimer);
     this._eventTimer = setInterval(() => this._fetchEvents(), 30 * 60 * 1000);
   }
-
-  /* ------------------------------------------------------------- helpers --*/
-
-  _greeting() {
-    const h = new Date().getHours();
-    if (h < 12) return "Good morning";
-    if (h < 17) return "Good afternoon";
-    return "Good evening";
-  }
-
-  _who() {
-    const c = this._config;
-    if (c.name !== undefined) return c.name;
-    const u = this._hass && this._hass.user;
-    if (!u || !u.name) return "";
-    return String(u.name).trim().split(/\s+/)[0];
-  }
-
-  /* --- dismissals ---------------------------------------------------------
-     A dismissal is an acknowledgement, not a mute: a row stays hidden only
-     while the triggering entity has not changed since, and `dismiss_hours`
-     caps how long a stale one can hide. Store format is `key:epoch|key:epoch`
-     in an input_text, which caps at 255 characters — so keep rule keys short
-     and drop the oldest entries rather than overflowing the write. */
-  _dismissals() {
-    const raw = pcState(this._hass, this._config.dismiss_store);
-    const out = {};
-    if (!raw || raw === "unknown" || raw === "unavailable") return out;
-    raw.split("|").forEach((pair) => {
-      const bits = pair.split(":");
-      const at = parseInt(bits[1], 10);
-      if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
-    });
-    return out;
-  }
-
-  _writeDismissals(map) {
-    const store = this._config.dismiss_store;
-    if (!store) return;
-    let pairs = Object.keys(map)
-      .map((k) => [k, map[k]])
-      .sort((a, b) => b[1] - a[1])
-      .map((e) => e[0] + ":" + e[1]);
-    while (pairs.length && pairs.join("|").length > 255) pairs.pop();
-    this._hass.callService("input_text", "set_value", {
-      entity_id: store, value: pairs.join("|"),
-    });
-  }
-
-  _dismiss(row) {
-    const map = this._dismissals();
-    map[row.key] = Math.floor(Date.now() / 1000);
-    this._writeDismissals(map);
-    if (this._config.log_to) this._closeLog(row);
-    this._last = null;
-    this._render();
-  }
-
-  async _logItems() {
-    if (!this._config.log_to || !this._hass.callWS) return [];
-    const res = await this._hass.callWS({ type: "todo/item/list", entity_id: this._config.log_to });
-    return (res && res.items) || [];
-  }
-
-  /* One open log entry per raised rule. The key lives in the description so
-     the entry can be found again without depending on the wording. */
-  async _syncLog(rows) {
-    if (!this._config.log_to || !rows.length || !this._hass.callWS) return;
-    let items;
-    try { items = await this._logItems(); } catch (e) { return; }
-    for (const row of rows) {
-      const tag = "[" + row.key + "]";
-      const open = items.find((it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed");
-      if (open) continue;
-      if (this._logged[row.key] === row.firedAt) continue;
-      this._logged[row.key] = row.firedAt;
-      this._hass.callService("todo", "add_item", {
-        entity_id: this._config.log_to,
-        item: row.title,
-        description: tag + " " + row.severity + " \u00B7 " + (row.detail || "") +
-          " \u00B7 raised " + new Date(row.firedAt * 1000).toISOString(),
-      });
-    }
-  }
-
-  async _closeLog(row) {
-    if (!this._hass.callWS) return;
-    let items;
-    try { items = await this._logItems(); } catch (e) { return; }
-    const tag = "[" + row.key + "]";
-    const open = items.find((it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed");
-    if (open) {
-      this._hass.callService("todo", "update_item", {
-        entity_id: this._config.log_to, item: open.uid, status: "completed",
-      });
-    }
-  }
-
-  /* When did this rule's condition last change? A dismissal older than that
-     means the fault re-fired, so the row comes back. */
-  _firedAt(r) {
-    const h = this._hass;
-    if (r.entity && h.states[r.entity]) {
-      return Math.floor(new Date(h.states[r.entity].last_changed).getTime() / 1000);
-    }
-    if (r.match) {
-      const re = new RegExp(r.match);
-      let newest = 0;
-      Object.keys(h.states).forEach((id) => {
-        if (!re.test(id) || h.states[id].state !== (r.state || "on")) return;
-        const t = Math.floor(new Date(h.states[id].last_changed).getTime() / 1000);
-        if (t > newest) newest = t;
-      });
-      return newest;
-    }
-    return 0;
-  }
-
-  /* Everything currently matching, before dismissals are applied. */
-  _raised() {
-    const rules = this._config.attention || [];
-    const hass = this._hass;
-    if (!hass) return [];
-    const out = [];
-    rules.forEach((r, i) => {
-      const hit = (st) => {
-        if (!st) return false;
-        const v = st.state;
-        if (r.state !== undefined) return v === r.state;
-        if (r.state_not !== undefined) return v !== r.state_not && v !== "unavailable" && v !== "unknown";
-        const n = parseFloat(v);
-        if (!Number.isFinite(n)) return false;
-        if (r.above !== undefined) return n > r.above;
-        if (r.below !== undefined) return n < r.below;
-        return false;
-      };
-      if (r.match) {
-        const re = new RegExp(r.match);
-        const names = Object.keys(hass.states)
-          .filter((id) => re.test(id) && hit(hass.states[id]))
-          .map((id) => (hass.states[id].attributes.friendly_name || id).replace(r.strip || "", "").trim());
-        if (names.length) {
-          out.push({
-            key: r.key || "r" + i,
-            severity: r.severity || "info",
-            title: `${names.length} ${r.title || "issues"}`,
-            detail: names.slice(0, 4).join(" · "),
-            entity: null,
-            firedAt: this._firedAt(r),
-          });
-        }
-        return;
-      }
-      if (hit(hass.states[r.entity])) {
-        out.push({
-          key: r.key || "r" + i,
-          severity: r.severity || "warn",
-          title: r.title || pcName(hass, r.entity),
-          detail: r.detail || "",
-          entity: r.entity,
-          firedAt: this._firedAt(r),
-        });
-      }
-    });
-    /* `rank[x] || 3` would treat critical (0) as unranked and sink it below
-       info — the one severity that must always sort first. */
-    const rank = { critical: 0, warn: 1, info: 2 };
-    const at = (x) => (rank[x] === undefined ? 3 : rank[x]);
-    return out.sort((a, b) => at(a.severity) - at(b.severity));
-  }
-
-  /* What the chip and the sheet actually show: raised, minus live dismissals. */
-  _faults() {
-    const dis = this._dismissals();
-    const now = Math.floor(Date.now() / 1000);
-    const hrs = this._config.dismiss_hours;
-    return this._raised().filter((row) => {
-      const at = dis[row.key];
-      if (!at) return true;
-      if (row.firedAt > at) return true;           // it re-fired
-      if (hrs && now - at > hrs * 3600) return true; // the snooze lapsed
-      return false;
-    });
-  }
-
-  /* Which room a preset, a search result or the transport acts on: whatever
-     the user last picked, else whatever is actually playing, else the default. */
-  _targets() {
-    const sec = (this._config.sections || []).find((x) => x.type === "music");
-    if (!sec) return [];
-    const known = (sec.players || []).map((p) => p.entity);
-    const picked = (this._sel || []).filter((e) => known.indexOf(e) >= 0);
-    if (picked.length) return picked;
-    const np = this._nowPlaying();
-    if (np) return [np.entity];
-    const fallback = sec.default_player || known[0];
-    return fallback ? [fallback] : [];
-  }
-
-  /* The room the transport and the main volume act on: the first selected. */
-  _activePlayer() {
-    return this._targets()[0] || null;
-  }
-
-  _isPicked(entity) {
-    return (this._sel || []).indexOf(entity) >= 0;
-  }
-
-  /* Tapping toggles, so two taps play to two rooms and tapping again drops
-     one. Emptying the selection falls back to whatever is playing. */
-  _togglePick(entity) {
-    const cur = this._sel || [];
-    this._sel = cur.indexOf(entity) >= 0 ? cur.filter((e) => e !== entity) : cur.concat([entity]);
-    this._render();
-  }
-
-  /* The one player worth showing in the mini bar: prefer something actually
-     playing, fall back to whatever is paused with a title. */
-  _nowPlaying() {
-    const np = this._config.now_playing || {};
-    const players = np.players || [];
-    const hass = this._hass;
-    if (!hass) return null;
-    let paused = null;
-    for (const p of players) {
-      const st = hass.states[p.entity];
-      if (!st || !psIsMusic(st)) continue;
-      const title = st.attributes.media_title;
-      if (!title) continue;
-      if (st.state === "playing") return { ...p, st, playing: true };
-      if (!paused && st.state === "paused") paused = { ...p, st, playing: false };
-    }
-    return paused;
-  }
-
-  /* ---------------------------------------------------------- SVG pieces --*/
-
-  /* A 270° arc. `segs` are [fraction, colour] laid end to end. */
-  _ringSvg(size, stroke, segs, goalFrac) {
-    const r = size / 2 - stroke / 2 - 2;
-    const c = 2 * Math.PI * r;
-    const arc = c * 0.75;
-    const cx = size / 2;
-    let off = 0;
-    let out = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
-      <circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
-        stroke-width="${stroke}" stroke-linecap="round"
-        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
-    segs.forEach(([f, col]) => {
-      const len = arc * Math.max(0, Math.min(1, f));
-      if (len <= 0.2) { off += len; return; }
-      out += `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="${col}"
-        stroke-width="${stroke}" stroke-linecap="round"
-        stroke-dasharray="${len.toFixed(2)} ${c.toFixed(2)}"
-        stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
-      off += len;
-    });
-    if (goalFrac != null && goalFrac > 0 && goalFrac <= 1) {
-      const deg = 135 + 270 * goalFrac + 90; // ring starts at 3 o'clock; tick drawn at 12
-      out += `<line x1="${cx}" y1="${(cx - r - stroke / 2 - 1).toFixed(2)}" x2="${cx}" y2="${(cx - r + stroke / 2 + 1).toFixed(2)}"
-        stroke="var(--ps-warn)" stroke-width="2.2" stroke-linecap="round"
-        transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;
-    }
-    return out + "</svg>";
-  }
-
-  _waveSvg(sec) {
-    const g = sec.graph || {};
-    const inside = (this._history[g.inside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
-    const outside = (this._history[g.outside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
-    if (inside.length < 2 && outside.length < 2) return "";
-
-    const hours = g.hours || 24;
-    const t1 = Date.now();
-    const t0 = t1 - hours * 3600 * 1000;
-    const all = inside.concat(outside).filter((p) => p.t >= t0);
-    if (all.length < 2) return "";
-    let lo = Math.min.apply(null, all.map((p) => p.v));
-    let hi = Math.max.apply(null, all.map((p) => p.v));
-    const pad = Math.max(1.5, (hi - lo) * 0.18);
-    lo -= pad; hi += pad;
-
-    const W = 360, H = 74, TOP = 24, BOT = 3;
-    const px = (t) => ((t - t0) / (t1 - t0)) * W;
-    const py = (v) => TOP + (1 - (v - lo) / (hi - lo)) * (H - TOP - BOT);
-    const line = (arr) =>
-      arr.filter((p) => p.t >= t0)
-        .map((p) => `${px(p.t).toFixed(1)},${py(p.v).toFixed(1)}`)
-        .join(" ");
-
-    /* Keep what was plotted so the scrubber reads the same numbers the line
-       was drawn from, rather than re-deriving and drifting. */
-    this._waveData = { t0, t1, inside: inside.filter((p) => p.t >= t0), outside: outside.filter((p) => p.t >= t0) };
-    const ip = line(inside), op = line(outside);
-    const uid = "psw" + Math.random().toString(36).slice(2, 7);
-    let out = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="ps-wave-svg" aria-hidden="true">
-      <defs>
-        <linearGradient id="${uid}o" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="var(--ps-heat)" stop-opacity=".30"/>
-          <stop offset="100%" stop-color="var(--ps-heat)" stop-opacity="0"/>
-        </linearGradient>
-        <linearGradient id="${uid}i" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="var(--ps-cool)" stop-opacity=".26"/>
-          <stop offset="100%" stop-color="var(--ps-cool)" stop-opacity="0"/>
-        </linearGradient>
-      </defs>`;
-    if (op) {
-      out += `<polygon points="0,${H} ${op} ${W},${H}" fill="url(#${uid}o)"/>
-        <polyline points="${op}" fill="none" stroke="var(--ps-heat)" stroke-width="1.7"
-          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
-    }
-    if (ip) {
-      out += `<polygon points="0,${H} ${ip} ${W},${H}" fill="url(#${uid}i)"/>
-        <polyline points="${ip}" fill="none" stroke="var(--ps-cool)" stroke-width="1.9"
-          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
-    }
-    return out + "</svg>";
-  }
-
-  /* Walk the sleep-state history back from the newest reading and stop at the
-     first break longer than the gap, so tonight is charted rather than tonight
-     glued to the tail of last night. */
-  _sleepSpan(sec) {
-    const rows = this._history[sec.sleep_state] || [];
-    const asleep = (v) => v === "light_sleep" || v === "deep_sleep" || v === "awake";
-    const live = rows.filter((r) => asleep(r.s));
-    if (!live.length) return null;
-    const gap = (sec.session_gap_minutes || 90) * 60000;
-    let i = live.length - 1;
-    while (i > 0 && live[i].t - live[i - 1].t < gap) i--;
-    const startTs = psParseTs(
-      this._hass.states[(sec.hypnogram || {}).start_entity || (sec.session || {}).start] &&
-      this._hass.states[(sec.hypnogram || {}).start_entity || (sec.session || {}).start].state
-    );
-    const from = startTs && startTs < live[i].t ? startTs : live[i].t;
-    return { from, to: Date.now(), rows: rows.filter((r) => r.t >= from) };
-  }
-
-  _hypnoSvg(sec) {
-    const span = this._sleepSpan(sec);
-    if (!span || span.to - span.from < 60000) return "";
-    this._hypData = span;
-    const LANE = { awake: 7, light_sleep: 22, deep_sleep: 37 };
-    const COL = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" };
-    const W = 400, H = 46;
-    const px = (t) => ((t - span.from) / (span.to - span.from)) * W;
-
-    let out = "";
-    [7, 22, 37].forEach((y) => {
-      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="var(--ps-hair)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
-    });
-    let prevY = null;
-    const rows = span.rows.filter((r) => LANE[r.s] !== undefined);
-    rows.forEach((r, i) => {
-      const next = i + 1 < rows.length ? rows[i + 1].t : span.to;
-      const x0 = px(r.t), x1 = px(next), y = LANE[r.s];
-      if (prevY !== null) {
-        out += `<line x1="${x0.toFixed(1)}" y1="${prevY}" x2="${x0.toFixed(1)}" y2="${y}"
-          stroke="rgba(255,255,255,.2)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
-      }
-      out += `<rect x="${x0.toFixed(1)}" y="${y - 3.5}" width="${Math.max(1.2, x1 - x0).toFixed(1)}"
-        height="7" rx="2" fill="${COL[r.s]}"/>`;
-      prevY = y;
-    });
-    const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    return `<div class="ps-hyp">
-        <div class="ps-hypt" data-readout="hyp"><span class="ps-lbl">Tonight</span><span>${rows.length} transitions</span></div>
-        <div class="ps-hypplot" data-scrub="hyp">
-          <div class="ps-cross" hidden></div>
-          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Sleep stages tonight">${out}</svg>
-        </div>
-        <div class="ps-hypt"><span>${fmt(span.from)}</span><span>${fmt(span.to)}</span></div>
-      </div>`;
-  }
-
-  /* ------------------------------------------------------------ sections --*/
-
-  _chev() {
-    return `<span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>`;
-  }
-
-  _head(sec, chipHtml) {
-    if (sec.expandable === false) {
-      return `<span class="ps-lbl ps-solo">${psEsc(sec.title || "")}</span>`;
-    }
-    return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">
-        <span class="ps-nm">${psEsc(sec.title || "")}</span>
-        ${chipHtml || ""}
-        ${this._chev()}
-      </button>`;
-  }
-
-  _secSleep(sec) {
-    const h = this._hass;
-    const state = pcState(h, sec.sleep_state);
-    const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state] || "Sock off";
-    const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || "";
-    const active = state === "deep_sleep" || state === "light_sleep" || state === "awake";
-
-    const r = sec.ring || {};
-    const deep = (active ? pcNum(h, r.deep) : pcNum(h, r.deep_last_night)) || 0;
-    const light = (active ? pcNum(h, r.light) : pcNum(h, r.light_last_night)) || 0;
-    const max = r.max_hours || 12;
-    const total = deep + light;
-    const goalDeep = pcNum(h, (r.goal || {}).deep) || 0;
-    const goalLight = pcNum(h, (r.goal || {}).light) || 0;
-    const goal = goalDeep + goalLight;
-
-    const ring = this._ringSvg(98, 8,
-      [[deep / max, "var(--ps-deep)"], [light / max, "var(--ps-light)"]],
-      goal > 0 ? Math.min(1, goal / max) : null);
-
-    const startTs = psParseTs(pcState(h, (sec.session || {}).start));
-    const since = startTs
-      ? new Date(startTs).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : "—";
-    const elapsed = startTs && active ? psDur((Date.now() - startTs) / 60000) : null;
-
-    const vitals = (sec.vitals || []).map((v) => {
-      const liveVal = pcNum(h, v.entity);
-      const val = active && liveVal != null ? liveVal : pcNum(h, v.last_night);
-      const base = pcNum(h, v.baseline);
-      const dig = v.digits == null ? 1 : v.digits;
-      let d = `<span class="ps-vd ps-flat">—</span>`;
-      if (val != null && base != null) {
-        const diff = val - base;
-        const good = v.lower_is_better ? diff < 0 : diff > 0;
-        const cl = Math.abs(diff) < (v.flat_within || 0.6) ? "ps-flat" : good ? "ps-good" : "ps-warnc";
-        const sign = diff > 0 ? "+" : "";
-        d = `<span class="ps-vd ${cl}">${Math.abs(diff) < (v.flat_within || 0.6)
-          ? "level" : sign + diff.toFixed(dig ? 1 : 0) + " vs 7d"}</span>`;
-      }
-      return `<div class="ps-vit" data-info="${psEsc(v.entity)}">
-          <span class="ps-vk">${psEsc(v.label)}</span>
-          <span class="ps-vv">${val == null ? "—" : val.toFixed(dig)}<small>${psEsc(v.unit || "")}</small></span>
-          ${d}
-        </div>`;
-    }).join("");
-
-    /* Expanded: the recap rows and chips that used to live behind #joel. */
-    const w = sec.wakeups || {};
-    const wLive = pcNum(h, w.live);
-    const wBase = pcNum(h, w.baseline);
-    const bed = pcNum(h, (sec.bedtime || {}).entity);
-    const bedBase = pcNum(h, (sec.bedtime || {}).baseline);
-    const room = sec.room || {};
-    const rt = pcNum(h, room.temp), rh = pcNum(h, room.humidity);
-    const rAvg = pcNum(h, room.overnight_avg);
-
-    const bedCmp = bed != null && bedBase != null
-      ? (() => {
-          const d = Math.round(bed - bedBase);
-          if (Math.abs(d) < 10) return `<span class="ps-flat">on time</span>`;
-          return `<span class="${d > 0 ? "ps-warnc" : "ps-good"}">${Math.abs(d)} min ${d > 0 ? "late" : "early"}</span>`;
-        })()
-      : `<span class="ps-flat">—</span>`;
-
-    const rows = `
-      <div class="ps-jrs">
-        <div class="ps-jr" data-info="${psEsc(w.live)}"><span class="ps-l">Wakeups</span>
-          <span class="ps-v">${wLive == null ? "—" : wLive}</span>
-          <span class="${wBase != null && wLive != null && wLive <= wBase ? "ps-good" : "ps-flat"}">${wBase == null ? "" : wBase.toFixed(1) + " avg"}</span></div>
-        <div class="ps-jr" data-info="${psEsc((sec.bedtime || {}).entity)}"><span class="ps-l">Bedtime</span>
-          <span class="ps-v">${psMinsToClock(bed)}</span>${bedCmp}</div>
-        <div class="ps-jr"><span class="ps-l">Deep / light</span>
-          <span class="ps-v">${deep.toFixed(1)}h / ${light.toFixed(1)}h</span>
-          <span class="ps-flat">${goal > 0 ? `7d ${goalDeep.toFixed(1)} / ${goalLight.toFixed(1)}` : ""}</span></div>
-        <div class="ps-jr" data-info="${psEsc(room.temp)}"><span class="ps-l">Room</span>
-          <span class="ps-v">${rt == null ? "—" : rt.toFixed(1) + "°"}${rh == null ? "" : " · " + rh.toFixed(0) + "%"}</span>
-          <span class="ps-flat">${rAvg == null ? "" : rAvg.toFixed(1) + "° last"}</span></div>
-      </div>`;
-
-    return `
-      ${this._head(sec, `<span class="ps-chip ${cls}"><span class="ps-dot"></span>${label}</span>`)}
-      <div class="ps-jtop">
-        <div class="ps-ring" style="width:98px;height:98px" data-info="${psEsc(sec.sleep_state)}">
-          ${ring}
-          <div class="ps-rv"><b>${total.toFixed(1)}h</b><small>of ${max}h</small></div>
-        </div>
-        <div class="ps-grow">
-          <div class="ps-jn">${psEsc(pcState(h, sec.age) || pcName(h, sec.person, sec.name))}</div>
-          <div class="ps-js">${active
-            ? `asleep ${elapsed || "—"}<br>since ${since}`
-            : `last night<br>${since === "—" ? "no session" : "from " + since}`}</div>
-          <div class="ps-chips" style="margin-top:9px">
-            <span class="ps-chip deep">Deep ${deep.toFixed(1)}h</span>
-            <span class="ps-chip lt">Light ${light.toFixed(1)}h</span>
-          </div>
-        </div>
-      </div>
-      <div class="ps-vits">${vitals}</div>
-      ${this._hypnoSvg(sec)}
-      <div class="ps-xtra">${rows}</div>`;
-  }
-
-  _secClimate(sec) {
-    const h = this._hass;
-    const th = h.states[sec.goal] || h.states[sec.thermostat];
-    const cur = th && th.attributes.current_temperature;
-    const goal = th && th.attributes.temperature;
-    const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
-    const reason = th && th.attributes.hvac_action_reason;
-    const rng = sec.ring || { min: 60, max: 80 };
-    const frac = cur == null ? 0 : Math.max(0, Math.min(1, (cur - rng.min) / (rng.max - rng.min)));
-    const heating = action === "heating";
-    const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
-
-    const zc = sec.zones || {};
-    const activeZone = pcState(h, zc.select);
-    const zones = (zc.options || []).map((o) => {
-      const t = pcNum(h, o.temp);
-      const on = activeZone === o.option;
-      return `<div class="ps-zc ${on ? "on" : ""}" data-zone="${psEsc(o.option)}">${psEsc(o.label || o.option)}
-        <b>${t == null ? "—" : t.toFixed(1) + "°"}</b></div>`;
-    }).join("");
-    const ot = pcNum(h, (sec.outside || {}).temp);
-    const outside = ot == null ? "" :
-      `<div class="ps-zc" data-info="${psEsc((sec.outside || {}).temp)}">Outside<b>${ot.toFixed(1)}°</b></div>`;
-
-    const rooms = (sec.rooms || []).map((r) => {
-      const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
-      return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
-          <span class="ps-rn">${psEsc(r.name || pcName(h, r.temp))}</span>
-          <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
-          <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
-        </div>`;
-    }).join("");
-
-    const chips = (sec.chips || []).map((ch) => {
-      const vis = ch.visible;
-      if (vis) {
-        const list = Array.isArray(vis) ? vis : [vis];
-        const ok = list.every((v) => {
-          const st = pcState(h, v.entity);
-          return v.state !== undefined ? st === v.state : st !== v.state_not;
-        });
-        if (!ok) return "";
-      }
-      const val = ch.show_state ? " " + pcState(h, ch.entity) : "";
-      return `<span class="ps-chip ${ch.style === "warn" ? "warn" : ""}">${psEsc(ch.name)}${psEsc(val)}</span>`;
-    }).join("");
-
-    const wave = this._waveSvg(sec);
-    const inNow = pcNum(h, (sec.graph || {}).inside);
-    const outNow = pcNum(h, (sec.graph || {}).outside);
-
-    return `
-      ${this._head(sec, `<span class="ps-chip ${heating ? "warn" : "cool"}"><span class="ps-dot"></span>${psEsc(
-        action.charAt(0).toUpperCase() + action.slice(1))}</span>`)}
-      <div class="ps-chero">
-        <div class="ps-ring" style="width:92px;height:92px" data-info="${psEsc(sec.goal || sec.thermostat)}">
-          ${this._ringSvg(92, 7.5, [[frac, col]], null)}
-          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>now</small></div>
-        </div>
-        <div class="ps-grow">
-          <div class="ps-row">
-            <button class="ps-step" type="button" data-step="-1" aria-label="Lower goal">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
-            <div class="ps-goal"><b>${goal == null ? "—" : Math.round(goal) + "°"}</b><span>goal</span></div>
-            <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
-          </div>
-          ${reason ? `<div class="ps-reason">${psEsc(reason)}</div>` : ""}
-        </div>
-      </div>
-      <div class="ps-zpair">${zones}${outside}</div>
-      ${this._holdHtml(sec)}
-      <div class="ps-xtra">
-        ${sec.schedule ? `<div class="ps-btns">
-          <button class="ps-btn" type="button" data-sheet="schedule">
-            <svg viewBox="0 0 24 24" class="ps-ico"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9h17M8 3v3M16 3v3M12 12.5v3l2 1.2"/></svg>
-            Schedule</button>
-        </div>` : ""}
-        <div class="ps-rmlist">${rooms}</div>
-        ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
-      </div>
-      ${wave ? `<div class="ps-wlg" data-readout="wave">
-          <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "\u2014" : inNow.toFixed(1) + "\u00B0"}</b></span>
-          <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "\u2014" : outNow.toFixed(1) + "\u00B0"}</b></span>
-        </div>
-        <div class="ps-wave" data-scrub="wave">
-        <div class="ps-cross" hidden></div>
-        ${wave}</div>` : ""}`;
-  }
-
-  /* Renders nothing at all when every television is off, the same way the
-     conditional card it replaces disappeared from the old view. */
-  _secTv(sec) {
-    const h = this._hass;
-    const live = (sec.tvs || []).filter((t) => {
-      const st = pcState(h, t.media_player);
-      return st && st !== "off" && st !== "unavailable" && st !== "unknown";
-    });
-    if (!live.length) return "";
-    const rows = live.map((t) => {
-      const app = pcState(h, t.app_sensor);
-      return `<div class="ps-tvrow">
-          <svg viewBox="0 0 24 24" class="ps-ico"><rect x="2.5" y="5" width="19" height="12" rx="2"/><path d="M8.5 20.5h7"/></svg>
-          <span class="ps-grow"><span class="ps-tvn">${psEsc(t.name)}</span>
-            <span class="ps-tva ps-trunc">${psEsc(app && app !== "unknown" ? app : "On")}</span></span>
-          <button class="ps-tvoff" type="button" data-tvoff="${psEsc(t.remote || t.media_player)}"
-            aria-label="Turn off ${psEsc(t.name)}">
-            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 3.5v8"/><path d="M6.8 7.2a7.5 7.5 0 1 0 10.4 0"/></svg>
-          </button>
-        </div>`;
-    }).join("");
-    return `${this._head(sec, `<span class="ps-chip good"><span class="ps-dot"></span>${live.length} on</span>`)}${rows}`;
-  }
-
-  /* A manual hold outranks the schedule, so it gets its own row with a
-     two-tap cancel rather than hiding among the chips. */
-  _holdHtml(sec) {
-    const hold = sec.hold;
-    if (!hold || !hold.remaining) return "";
-    const raw = pcState(this._hass, hold.remaining);
-    const mins = parseFloat(raw);
-    if (!Number.isFinite(mins) || mins <= 0) return "";
-    const armed = this._armed === "hold";
-    return `<button class="ps-hold ${armed ? "armed" : ""}" type="button" data-arm="hold">
-        <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
-        <span class="ps-grow">${armed ? "Tap again to cancel the hold"
-          : `Hold active \u00B7 ${psDur(mins)} left`}</span>
-        <span class="ps-holdx">${armed ? "Cancel" : "\u00D7"}</span>
-      </button>`;
-  }
-
-  _secPeople(sec) {
-    const h = this._hass;
-    const cells = (sec.people || []).map((p) => {
-      const st = pcState(h, p.entity);
-      const home = st === "home";
-      const batt = pcNum(h, p.battery);
-      const steps = pcNum(h, p.steps);
-      const nm = pcName(h, p.entity, p.name);
-      const pic = h.states[p.entity] && h.states[p.entity].attributes.entity_picture;
-      return `<div class="ps-pw" data-info="${psEsc(p.entity)}">
-          <div class="ps-av">${pic ? `<img src="${psEsc(pic)}" alt="" />` : psEsc((nm || "?").charAt(0).toUpperCase())}</div>
-          <div class="ps-grow">
-            <div class="ps-pn ps-trunc">${psEsc(nm)}</div>
-            <div class="ps-pb ${batt != null && batt < 25 ? "low" : ""}">${
-              home ? "Home" : psEsc(st.replace(/_/g, " "))
-            }${batt == null ? "" : " · " + Math.round(batt) + "%"}${
-              steps == null ? "" : " · " + Math.round(steps).toLocaleString()
-            }</div>
-          </div>
-        </div>`;
-    }).join("");
-    return `${this._head(sec)}<div class="ps-ppl">${cells}</div>`;
-  }
-
-  _secMusic(sec) {
-    const h = this._hass;
-    const np = this._nowPlaying();
-    const art = np && np.st.attributes.entity_picture_local;
-    const active = this._activePlayer();
-    const players = (sec.players || []).map((p) => {
-      const st = h.states[p.entity];
-      const live = st && st.state === "playing" && psIsMusic(st);
-      const on = this._isPicked(p.entity) || (!(this._sel || []).length && p.entity === active);
-      return `<button class="ps-mr ${on ? "sel" : ""}" type="button"
-        data-pick="${psEsc(p.entity)}" aria-pressed="${on}">
-        ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>`;
-    }).join("");
-
-    const presets = (sec.presets || []).map((p, i) =>
-      `<button class="ps-pr" type="button" data-preset="${i}">
-        <ha-icon icon="${psEsc(p.icon || "mdi:playlist-music")}"></ha-icon>
-        <span class="ps-trunc">${psEsc(p.name)}</span></button>`).join("");
-
-    return `
-      ${this._head(sec, (this._sel || []).length > 1
-        ? `<span class="ps-chip cool">${this._sel.length} rooms</span>`
-        : `<span class="ps-chip">${np ? (np.playing ? "Playing" : "Paused") : "Idle"}</span>`)}
-      <div class="ps-now">
-        <div class="ps-art">${art
-          ? `<img src="${psEsc(art)}" alt="" />`
-          : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
-        <div class="ps-grow">
-          <div class="ps-nt ps-trunc">${np ? psEsc(np.st.attributes.media_title) : "Nothing playing"}</div>
-          <div class="ps-ns ps-trunc">${np
-            ? psEsc([np.st.attributes.media_artist, np.name].filter(Boolean).join(" · "))
-            : "Pick a room to start"}</div>
-        </div>
-        ${this._pinBtn()}
-        ${np ? `<button class="ps-tb" type="button" data-mp="playpause" data-entity="${psEsc(np.entity)}">
-          <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
-            ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>` : ""}
-      </div>
-      <div class="ps-mroom">${players}</div>
-      <div class="ps-btns" style="margin-top:10px">
-        <button class="ps-btn" type="button" data-sheet="music">
-          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9a4 4 0 0 1 0 6"/></svg>
-          Controls &amp; volume</button>
-      </div>
-      <div class="ps-xtra">
-        ${this._recentHtml()}
-        ${this._pinsHtml()}
-        <div><span class="ps-lbl">Presets</span><div class="ps-pres">${presets}</div></div>
-      </div>`;
-  }
-
-  /* A star on whatever is playing, so the playlist you just found by
-     searching can be found again without searching for it. */
-  _pinBtn() {
-    if (!this._pinStore()) return "";
-    const item = this._pinnable();
-    if (!item) return "";
-    const on = this._isPinned(item.uri);
-    return `<button class="ps-pin ${on ? "on" : ""}" type="button"
-        data-pin="${psEsc(item.uri)}" data-pinname="${psEsc(item.name)}" data-pinkind="${psEsc(item.kind)}"
-        aria-pressed="${on}" aria-label="${on ? "Remove from saved" : "Save"}">
-        <svg viewBox="0 0 24 24" class="ps-ico" ${on ? 'style="fill:currentColor"' : ""}>
-          <path d="m12 4 2.35 4.76 5.25.77-3.8 3.7.9 5.23L12 15.99l-4.7 2.47.9-5.23-3.8-3.7 5.25-.77Z"/></svg>
-      </button>`;
-  }
-
-  /* What you actually reach for is what you just played, so it leads. */
-  _recentHtml() {
-    if (!this._recent.length) return "";
-    return `<div><span class="ps-lbl">Recently played</span>
-      <div class="ps-mlist" style="margin-top:6px">${this._recent.map((r, i) => `
-        <button class="ps-mi" type="button" data-play="${i}" data-from="recent">
-          <span class="ps-th"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg></span>
-          <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
-          <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span></button>`).join("")}</div></div>`;
-  }
-
-  _pinsHtml() {
-    if (!this._pinStore() || !this._pins.length) return "";
-    return `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Saved</span>
-      <div class="ps-pres">${this._pins.map((p, i) => `
-        <span class="ps-pr">
-          <button class="ps-prplay" type="button" data-pinplay="${i}">
-            <ha-icon icon="mdi:playlist-star"></ha-icon>
-            <span class="ps-trunc">${psEsc(p.name)}</span></button>
-          <button class="ps-prx" type="button" data-pin="${psEsc(p.uri)}"
-            aria-label="Remove ${psEsc(p.name)} from saved">
-            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        </span>`).join("")}</div>`;
-  }
-
-  _secRooms(sec) {
-    const h = this._hass;
-    const cells = (sec.rooms || []).map((r) => {
-      const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
-      return `<div class="ps-rc ${r.accent ? "acc" : ""}" data-info="${psEsc(r.temp)}">
-          <span class="ps-rn2">${psEsc(r.name || pcName(h, r.temp))}</span>
-          <b>${t == null ? "—" : t.toFixed(1) + "°"}</b>
-          <span class="ps-rh">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
-        </div>`;
-    }).join("");
-    return `${this._head(sec)}<div class="ps-rstrip">${cells}</div>`;
-  }
-
-  _secQuick(sec) {
-    const h = this._hass;
-    const tone = (t) => {
-      const s = pcState(h, t.entity);
-      if (t.alert_when && t.alert_when.indexOf(s) >= 0) return "alert";
-      if (t.on_when) return t.on_when.indexOf(s) >= 0 ? "on" : "";
-      return s === "on" || s === "playing" || s === "cleaning" ? "on" : "";
-    };
-    const tiles = (sec.tiles || []).map((t, i) => {
-      const vs = h.states[t.value_entity || t.entity];
-      const raw = vs ? vs.state : "";
-      const unit = vs && vs.attributes.unit_of_measurement ? " " + vs.attributes.unit_of_measurement : "";
-      const value = t.value_text || (raw ? raw.replace(/_/g, " ") + unit : "—");
-      let bar = "";
-      if (t.bar_entity) {
-        const pct = pcNum(h, t.bar_entity);
-        if (pct != null) {
-          const p = Math.max(0, Math.min(100, (pct / (t.bar_max || 100)) * 100));
-          const warn = t.bar_warn_above == null ? 80 : t.bar_warn_above;
-          const crit = t.bar_critical_above == null ? 95 : t.bar_critical_above;
-          const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-cool)";
-          bar = `<div class="ps-bar"><i style="width:${p.toFixed(0)}%;background:${c}"></i></div>`;
-        }
-      }
-      return `<button class="ps-qt ${tone(t)}" type="button" data-tile="${i}">
-          <ha-icon icon="${psEsc(t.icon || "mdi:circle-outline")}"></ha-icon>
-          <span><span class="ps-qn ps-trunc">${psEsc(pcName(h, t.entity, t.name))}</span>
-          <span class="ps-qv ps-trunc">${psEsc(value)}</span></span>${bar}
-        </button>`;
-    }).join("");
-    return `${this._head(sec)}<div class="ps-qgrid">${tiles}</div>`;
-  }
-
-  _secCalendar(sec) {
-    const days = sec.days || 5;
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    let out = "";
-    for (let d = 0; d < days; d++) {
-      const day = new Date(today.getTime() + d * 86400000);
-      const next = day.getTime() + 86400000;
-      const evs = this._events.filter((e) => e.t >= day.getTime() && e.t < next);
-      out += `<div class="ps-cday">
-        <div class="ps-cdt ${d === 0 ? "today" : ""}">
-          <div class="ps-dw">${day.toLocaleDateString([], { weekday: "short" })}</div>
-          <div class="ps-dn">${day.getDate()}</div>
-        </div>
-        <div class="ps-cev">${evs.length
-          ? evs.map((e) => `<div class="ps-ev"><i style="background:${psEsc(e.color)}"></i>
-              <span class="ps-trunc">${psEsc(e.name)}</span>
-              <span class="ps-et">${e.allDay ? "all day"
-                : new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>`).join("")
-          : `<div class="ps-ev none">Nothing scheduled</div>`}</div>
-      </div>`;
-    }
-    return `${this._head(sec)}${out}`;
-  }
-
-  _fired(list) {
-    const h = this._hass;
-    return (list || []).filter((f) => {
-      const st = pcState(h, f.entity);
-      if (f.state !== undefined) return st === f.state;
-      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable" && st !== "unknown";
-      return false;
-    });
-  }
-
-  _meterHtml(m) {
-    const v = pcNum(this._hass, m.entity);
-    const p = v == null ? 0 : Math.max(0, Math.min(100, v));
-    const warn = m.warn_above == null ? 80 : m.warn_above;
-    const crit = m.critical_above == null ? 95 : m.critical_above;
-    const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-good)";
-    return `<div class="ps-sysrow" data-info="${psEsc(m.entity)}">
-        <span class="ps-sn">${psEsc(m.label)}</span>
-        <span class="ps-sv">${m.text ? psEsc(pcState(this._hass, m.entity))
-          : (v == null ? "\u2014" : v.toFixed(1) + "%")}</span>
-        <span class="ps-meter"><i style="width:${p.toFixed(0)}%;background:${c}"></i></span>
-      </div>`;
-  }
-
-  _statsHtml(list) {
-    const h = this._hass;
-    return (list || []).map((x) => {
-      const st = h.states[x.entity];
-      const raw = st ? st.state : "";
-      const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
-      const txt = x.map && x.map[raw] ? x.map[raw] : raw + (unit ? " " + unit : "");
-      const good = x.good_when && x.good_when.indexOf(raw) >= 0;
-      const bad = x.bad_when && x.bad_when.indexOf(raw) >= 0;
-      return `<div class="ps-st" data-info="${psEsc(x.entity)}">
-          <span class="ps-stk">${psEsc(x.label)}</span>
-          <span class="ps-stv ${bad ? "ps-warnc" : good ? "ps-good" : ""}">${psEsc(txt || "\u2014")}</span>
-        </div>`;
-    }).join("");
-  }
-
-  _switchesHtml(items) {
-    return (items || []).map((it) => {
-      const on = pcState(this._hass, it.entity) === "on";
-      const missing = !this._hass.states[it.entity];
-      return `<div class="ps-sw ${missing ? "gone" : ""}">
-          <ha-icon icon="${psEsc(it.icon || "mdi:application")}"></ha-icon>
-          <span class="ps-trunc">${psEsc(it.name)}</span>
-          ${it.url ? `<button class="ps-link" type="button" data-url="${psEsc(it.url)}"
-            aria-label="Open ${psEsc(it.name)}">
-            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
-          </button>` : ""}
-          ${missing ? `<span class="ps-chip">missing</span>`
-            : `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(it.entity)}"
-               role="switch" aria-checked="${on}" aria-label="${psEsc(it.name)}"><i></i></button>`}
-        </div>`;
-    }).join("");
-  }
-
-  /* A NAS, a floor robot and a litter box are three devices, not six peer
-     groups — the robots were sitting at the same level as a Docker category,
-     which made them read like a subsystem of the server. Each device owns its
-     own header, health and meters, and only the NAS has groups inside it. */
-  _devicesHtml(sec) {
-    return (sec.devices || []).map((d, di) => {
-      const key = sec.key + "|dev|" + (d.key || d.name);
-      const open = !!this._openGroups[key];
-      const faults = this._fired(d.faults);
-      const sub = d.subtitle_entity ? pcState(this._hass, d.subtitle_entity) : (d.subtitle || "");
-      const chip = d.chip ? pcState(this._hass, d.chip) : "";
-
-      const groups = (d.groups || []).map((g) => {
-        const gkey = key + "|" + g.name;
-        const gopen = !!this._openGroups[gkey];
-        const items = g.items || [];
-        const on = items.filter((it) => pcState(this._hass, it.entity) === "on").length;
-        return `<div class="ps-grp ${gopen ? "open" : ""}">
-            <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
-              <ha-icon icon="${psEsc(g.icon || "mdi:folder-outline")}"></ha-icon>
-              <span class="ps-gn">${psEsc(g.name)}</span>
-              <span class="ps-chip ${on ? "good" : ""}">${on} of ${items.length}</span>
-              <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
-            </button>
-            <div class="ps-grpb"><div class="ps-swrap">${this._switchesHtml(items)}</div></div>
-          </div>`;
-      }).join("");
-
-      const buttons = (d.buttons || []).map((b, i) =>
-        `<button class="ps-btn" type="button" data-dbtn="${di}|${i}">${psEsc(b.name)}</button>`).join("");
-
-      return `<div class="ps-dev ${open ? "open" : ""}">
-          <button class="ps-devh" type="button" data-group="${psEsc(key)}" aria-expanded="${open}">
-            <span class="ps-devi ${faults.length ? "bad" : ""}"><ha-icon icon="${psEsc(d.icon || "mdi:devices")}"></ha-icon></span>
-            <span class="ps-grow">
-              <span class="ps-devn">${psEsc(d.name)}</span>
-              <span class="ps-devs">${psEsc(sub)}</span>
-            </span>
-            ${faults.length
-              ? `<span class="ps-chip bad"><span class="ps-dot"></span>${faults.length}</span>`
-              : chip ? `<span class="ps-chip">${psEsc(chip)}</span>`
-              : `<span class="ps-chip good"><span class="ps-dot"></span>OK</span>`}
-            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
-          </button>
-
-          ${faults.length ? `<div class="ps-faults">${faults.map((f) =>
-            `<div class="ps-fault" data-info="${psEsc(f.entity)}"><span class="ps-dotc bad"></span>
-              <span class="ps-grow"><b>${psEsc(f.label)}</b> ${psEsc(f.detail || "")}</span></div>`).join("")}</div>` : ""}
-          ${(d.meters || []).map((m) => this._meterHtml(m)).join("")}
-
-          <div class="ps-devb">
-            ${d.stats ? `<div class="ps-stats">${this._statsHtml(d.stats)}</div>` : ""}
-            ${groups}
-            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
-          </div>
-        </div>`;
-    }).join("");
-  }
-
-  /* The section that got the most attention: collapsed shows meters, expanded
-     shows every group's stats, every container switch and the robot controls
-     that used to need the #devices popup. */
-  _secSystems(sec) {
-    const h = this._hass;
-    if (sec.devices) {
-      const all = (sec.devices || []).reduce((n, d) => n + this._fired(d.faults).length, 0);
-      return `${this._head(sec, all
-        ? `<span class="ps-chip bad"><span class="ps-dot"></span>${all} fault${all > 1 ? "s" : ""}</span>`
-        : `<span class="ps-chip good"><span class="ps-dot"></span>Healthy</span>`)}
-        ${this._devicesHtml(sec)}`;
-    }
-
-    const faults = (sec.faults || []).filter((f) => {
-      const st = pcState(h, f.entity);
-      if (f.state !== undefined) return st === f.state;
-      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable";
-      return false;
-    });
-
-    const meters = (sec.meters || []).map((m) => {
-      const v = pcNum(h, m.entity);
-      const p = v == null ? 0 : Math.max(0, Math.min(100, v));
-      const warn = m.warn_above == null ? 80 : m.warn_above;
-      const crit = m.critical_above == null ? 95 : m.critical_above;
-      const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-good)";
-      return `<div class="ps-sysrow" data-info="${psEsc(m.entity)}">
-          <ha-icon icon="${psEsc(m.icon || "mdi:chart-box-outline")}"></ha-icon>
-          <span class="ps-sn">${psEsc(m.label)}</span>
-          <span class="ps-sv">${m.text ? psEsc(pcState(h, m.entity)) : (v == null ? "—" : v.toFixed(1) + "%")}</span>
-          <span class="ps-meter"><i style="width:${p.toFixed(0)}%;background:${c}"></i></span>
-        </div>`;
-    }).join("");
-
-    const groups = (sec.groups || []).map((g) => {
-      const gkey = sec.key + "|" + g.name;
-      const gopen = !!this._openGroups[gkey];
-
-      const stats = (g.stats || []).map((s) => {
-        const st = h.states[s.entity];
-        const raw = st ? st.state : "";
-        const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
-        const txt = s.map && s.map[raw] ? s.map[raw] : raw + (unit ? " " + unit : "");
-        const good = s.good_when && s.good_when.indexOf(raw) >= 0;
-        const bad = s.bad_when && s.bad_when.indexOf(raw) >= 0;
-        return `<div class="ps-st" data-info="${psEsc(s.entity)}">
-            <span class="ps-stk">${psEsc(s.label)}</span>
-            <span class="ps-stv ${bad ? "ps-warnc" : good ? "ps-good" : ""}">${psEsc(txt || "—")}</span>
-          </div>`;
-      }).join("");
-
-      const items = (g.items || []).map((it) => {
-        const on = pcState(h, it.entity) === "on";
-        return `<div class="ps-sw">
-            <ha-icon icon="${psEsc(it.icon || "mdi:application")}"></ha-icon>
-            <span class="ps-trunc">${psEsc(it.name)}</span>
-            ${it.url ? `<button class="ps-link" type="button" data-url="${psEsc(it.url)}" aria-label="Open ${psEsc(it.name)}">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
-            </button>` : ""}
-            <button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(it.entity)}"
-              role="switch" aria-checked="${on}" aria-label="${psEsc(it.name)}"><i></i></button>
-          </div>`;
-      }).join("");
-
-      const buttons = (g.buttons || []).map((b, i) =>
-        `<button class="ps-btn" type="button" data-gbtn="${psEsc(g.name)}|${i}">${psEsc(b.name)}</button>`).join("");
-
-      /* A collapsed group still has to say something useful, or there is no
-         reason to leave it shut: switch groups report how many are on. */
-      let summary = "";
-      if (g.chip) {
-        summary = `<span class="ps-chip">${psEsc(pcState(h, g.chip))}</span>`;
-      } else if ((g.items || []).length) {
-        const on = g.items.filter((it) => pcState(h, it.entity) === "on").length;
-        summary = `<span class="ps-chip ${on ? "good" : ""}">${on} of ${g.items.length} on</span>`;
-      }
-
-      return `<div class="ps-grp ${gopen ? "open" : ""}">
-          <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
-            <ha-icon icon="${psEsc(g.icon || "mdi:server")}"></ha-icon>
-            <span class="ps-gn">${psEsc(g.name)}</span>
-            ${summary}
-            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
-          </button>
-          <div class="ps-grpb">
-            ${stats ? `<div class="ps-stats">${stats}</div>` : ""}
-            ${items ? `<div class="ps-swrap">${items}</div>` : ""}
-            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
-          </div>
-        </div>`;
-    }).join("");
-
-    const sub = sec.subtitle_entity ? pcState(h, sec.subtitle_entity) : "";
-
-    return `
-      ${this._head(sec, faults.length
-        ? `<span class="ps-chip bad"><span class="ps-dot"></span>${faults.length} fault${faults.length > 1 ? "s" : ""}</span>`
-        : `<span class="ps-chip good"><span class="ps-dot"></span>Healthy</span>`)}
-      ${sub ? `<div class="ps-sub2">${psEsc(sub)}</div>` : ""}
-      ${faults.length ? `<div class="ps-faults">${faults.map((f) =>
-        `<div class="ps-fault" data-info="${psEsc(f.entity)}"><span class="ps-dotc bad"></span>
-          <span class="ps-grow"><b>${psEsc(f.label)}</b> ${psEsc(f.detail || "")}</span></div>`).join("")}</div>` : ""}
-      ${meters}
-      <div class="ps-xtra">${groups}</div>`;
-  }
-
-  /* -------------------------------------------------------------- render --*/
 
   _render() {
     if (!this._hass || !this._config) return;
@@ -6845,131 +5344,6 @@ class PurdyShellCard extends PcBaseCard {
 
     this._bind();
     this._bindScrub();
-  }
-
-  /* One sheet, two contents. Both slide over the column rather than pushing
-     it around, so opening either never moves what is under your thumb. */
-  _sheetHtml(faults) {
-    if (!this._sheet) return "";
-    const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
-        <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
-
-    if (this._sheet === "alerts") {
-      if (!faults.length) return "";
-      return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet">
-          <div class="ps-sheeth"><span class="ps-lbl">Needs attention</span>${close}</div>
-          ${faults.map((f, i) => `<div class="ps-ar" data-info="${psEsc(f.entity || "")}">
-            <span class="ps-dotc ${f.severity}"></span>
-            <span class="ps-grow"><span class="ps-at">${psEsc(f.title)}</span>
-            <span class="ps-ad">${psEsc(f.detail)}</span></span>
-            ${this._config.dismiss_store ? `<button class="ps-x" type="button" data-dismiss="${i}"
-              aria-label="Dismiss ${psEsc(f.title)}">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
-          </div>`).join("")}
-        </div>`;
-    }
-
-    if (this._sheet === "music") {
-      const sec = (this._config.sections || []).find((x) => x.type === "music");
-      const np = this._nowPlaying();
-      if (!sec) return "";
-      const art = np && np.st.attributes.entity_picture_local;
-      const target = np ? np.entity : sec.default_player;
-      const tst = target && this._hass.states[target];
-      const vol = tst && tst.attributes.volume_level != null ? tst.attributes.volume_level : 0;
-      const muted = !!(tst && tst.attributes.is_volume_muted);
-
-      const rooms = (sec.players || []).map((p) => {
-        const st = this._hass.states[p.entity];
-        const live = st && st.state === "playing" && psIsMusic(st);
-        const active = this._isPicked(p.entity) ||
-          (!(this._sel || []).length && this._activePlayer() === p.entity);
-        const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : 0;
-        return `<div class="ps-vrow ${active ? "on" : ""}">
-            <button class="ps-vname" type="button" data-pick="${psEsc(p.entity)}">
-              ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>
-            <input class="ps-vol" type="range" min="0" max="100" step="1"
-              value="${Math.round(pv * 100)}" data-vol="${psEsc(p.entity)}"
-              aria-label="${psEsc(p.name)} volume" />
-            <span class="ps-vnum">${Math.round(pv * 100)}</span>
-          </div>`;
-      }).join("");
-
-      return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet tall">
-          <div class="ps-sheeth"><span class="ps-lbl">Music</span>${close}</div>
-          <div class="ps-now" style="margin-bottom:12px">
-            <div class="ps-art">${art
-              ? `<img src="${psEsc(art)}" alt="" />`
-              : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
-            <div class="ps-grow">
-              <div class="ps-nt ps-trunc">${np ? psEsc(np.st.attributes.media_title) : "Nothing playing"}</div>
-              <div class="ps-ns ps-trunc">${np
-                ? psEsc([np.st.attributes.media_artist, np.name].filter(Boolean).join(" \u00B7 "))
-                : "Pick a room below"}</div>
-            </div>
-          </div>
-          <div class="ps-transport">
-            <button class="ps-tb" type="button" data-mpc="media_previous_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Previous">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M18 5v14L8 12zM6 5v14"/></svg></button>
-            <button class="ps-tb big" type="button" data-mp="playpause" data-entity="${psEsc(target || "")}" aria-label="Play or pause">
-              <svg viewBox="0 0 24 24" class="ps-ico">${np && np.playing
-                ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
-            <button class="ps-tb" type="button" data-mpc="media_next_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Next">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 5v14l10-7zM18 5v14"/></svg></button>
-            <button class="ps-tb" type="button" data-mpc="media_stop" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Stop">
-              <svg viewBox="0 0 24 24" class="ps-ico"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg></button>
-          </div>
-          <div class="ps-volmain">
-            <button class="ps-vbtn ${muted ? "muted" : ""}" type="button" data-mute="${psEsc(target || "")}"
-              data-muted="${muted}" aria-label="Mute">
-              <svg viewBox="0 0 24 24" class="ps-ico">${muted
-                ? `<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9.5l5 5M21 9.5l-5 5"/>`
-                : `<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9a4 4 0 0 1 0 6"/>`}</svg></button>
-            <input class="ps-vol" type="range" min="0" max="100" step="1"
-              value="${Math.round(vol * 100)}" data-vol="${psEsc(target || "")}" aria-label="Volume" />
-            <span class="ps-vnum">${Math.round(vol * 100)}</span>
-          </div>
-          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
-          ${rooms}
-
-          ${this._pinsHtml()}
-          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Search</span>
-          <div class="ps-sbox">
-            <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
-            <input id="ps-q" type="search" placeholder="Tracks, albums, playlists\u2026"
-              value="${psEsc(this._query)}" aria-label="Search music" />
-            ${this._query ? `<button class="ps-sclear" type="button" id="ps-qclear" aria-label="Clear">
-              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
-          </div>
-          ${this._searching ? `<div class="ps-note">Searching\u2026</div>` : ""}
-          ${this._results && this._results.length ? `<div class="ps-mlist">${
-            this._results.map((r, i) => `<button class="ps-mi" type="button" data-play="${i}" data-from="results">
-              <span class="ps-th">${r.image ? `<img src="${psEsc(r.image)}" alt="" />`
-                : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</span>
-              <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
-              <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span>
-              <span class="ps-kind">${psEsc(r.kind)}</span></button>`).join("")}</div>` : ""}
-          ${this._results && this._results.length && this._pinStore() ? `<div class="ps-note">
-            Hold a result to save it, or star what is playing.</div>` : ""}
-          ${this._results && !this._results.length && !this._searching
-            ? `<div class="ps-note">${sec.config_entry ? "No results." : "Search needs a Music Assistant config_entry."}</div>` : ""}
-
-          <div style="margin-top:14px">${this._recentHtml()}</div>
-        </div>`;
-    }
-
-    if (this._sheet === "schedule") {
-      const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
-      if (!sec) return "";
-      return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet tall">
-          <div class="ps-sheeth"><span class="ps-lbl">Thermostat schedule</span>${close}</div>
-          ${this._scheduleHtml(sec)}
-        </div>`;
-    }
-    return "";
   }
 
   _bind() {
@@ -7070,10 +5444,6 @@ class PurdyShellCard extends PcBaseCard {
         const v = el.dataset.sedit;
         this._schedEdit = v === "new" ? "new" : parseInt(v, 10);
         this._schedNote = null;
-    this._schedScope = undefined; // preset key being viewed; null = base lists
-    this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
-    this._pins = [];          // saved playlists
         this._armed = null;
         this._render();
       });
@@ -7519,7 +5889,1686 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   static get styles() {
+    return PS_STYLES;
+  }
+}
+
+/* ============================================================================
+ * purdy-shell-card — section renderers
+ *
+ * Every one of these returns an HTML string and reads nothing but hass and the
+ * section's own config, which is what lets the core diff a section's output
+ * against the last one and skip the DOM entirely when nothing changed.
+ *
+ * A renderer that returns "" is dropped by the core along with its divider —
+ * that is how the tv section disappears when every set is off.
+ * ========================================================================== */
+
+Object.assign(PurdyShellCard.prototype, {
+  _greeting() {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  },
+
+  _who() {
+    const c = this._config;
+    if (c.name !== undefined) return c.name;
+    const u = this._hass && this._hass.user;
+    if (!u || !u.name) return "";
+    return String(u.name).trim().split(/\s+/)[0];
+  },
+
+  /* A 270° arc. `segs` are [fraction, colour] laid end to end. */
+  _ringSvg(size, stroke, segs, goalFrac) {
+    const r = size / 2 - stroke / 2 - 2;
+    const c = 2 * Math.PI * r;
+    const arc = c * 0.75;
+    const cx = size / 2;
+    let off = 0;
+    let out = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+      <circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
+        stroke-width="${stroke}" stroke-linecap="round"
+        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+    segs.forEach(([f, col]) => {
+      const len = arc * Math.max(0, Math.min(1, f));
+      if (len <= 0.2) { off += len; return; }
+      out += `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="${col}"
+        stroke-width="${stroke}" stroke-linecap="round"
+        stroke-dasharray="${len.toFixed(2)} ${c.toFixed(2)}"
+        stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+      off += len;
+    });
+    if (goalFrac != null && goalFrac > 0 && goalFrac <= 1) {
+      const deg = 135 + 270 * goalFrac + 90; // ring starts at 3 o'clock; tick drawn at 12
+      out += `<line x1="${cx}" y1="${(cx - r - stroke / 2 - 1).toFixed(2)}" x2="${cx}" y2="${(cx - r + stroke / 2 + 1).toFixed(2)}"
+        stroke="var(--ps-warn)" stroke-width="2.2" stroke-linecap="round"
+        transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;
+    }
+    return out + "</svg>";
+  },
+
+  _waveSvg(sec) {
+    const g = sec.graph || {};
+    const inside = (this._history[g.inside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
+    const outside = (this._history[g.outside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
+    if (inside.length < 2 && outside.length < 2) return "";
+
+    const hours = g.hours || 24;
+    const t1 = Date.now();
+    const t0 = t1 - hours * 3600 * 1000;
+    const all = inside.concat(outside).filter((p) => p.t >= t0);
+    if (all.length < 2) return "";
+    let lo = Math.min.apply(null, all.map((p) => p.v));
+    let hi = Math.max.apply(null, all.map((p) => p.v));
+    const pad = Math.max(1.5, (hi - lo) * 0.18);
+    lo -= pad; hi += pad;
+
+    const W = 360, H = 74, TOP = 24, BOT = 3;
+    const px = (t) => ((t - t0) / (t1 - t0)) * W;
+    const py = (v) => TOP + (1 - (v - lo) / (hi - lo)) * (H - TOP - BOT);
+    const line = (arr) =>
+      arr.filter((p) => p.t >= t0)
+        .map((p) => `${px(p.t).toFixed(1)},${py(p.v).toFixed(1)}`)
+        .join(" ");
+
+    /* Keep what was plotted so the scrubber reads the same numbers the line
+       was drawn from, rather than re-deriving and drifting. */
+    this._waveData = { t0, t1, inside: inside.filter((p) => p.t >= t0), outside: outside.filter((p) => p.t >= t0) };
+    const ip = line(inside), op = line(outside);
+    const uid = "psw" + Math.random().toString(36).slice(2, 7);
+    let out = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="ps-wave-svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="${uid}o" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--ps-heat)" stop-opacity=".30"/>
+          <stop offset="100%" stop-color="var(--ps-heat)" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="${uid}i" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--ps-cool)" stop-opacity=".26"/>
+          <stop offset="100%" stop-color="var(--ps-cool)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>`;
+    if (op) {
+      out += `<polygon points="0,${H} ${op} ${W},${H}" fill="url(#${uid}o)"/>
+        <polyline points="${op}" fill="none" stroke="var(--ps-heat)" stroke-width="1.7"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+    }
+    if (ip) {
+      out += `<polygon points="0,${H} ${ip} ${W},${H}" fill="url(#${uid}i)"/>
+        <polyline points="${ip}" fill="none" stroke="var(--ps-cool)" stroke-width="1.9"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+    }
+    return out + "</svg>";
+  },
+
+  /* Walk the sleep-state history back from the newest reading and stop at the
+     first break longer than the gap, so tonight is charted rather than tonight
+     glued to the tail of last night. */
+  _sleepSpan(sec) {
+    const rows = this._history[sec.sleep_state] || [];
+    const asleep = (v) => v === "light_sleep" || v === "deep_sleep" || v === "awake";
+    const live = rows.filter((r) => asleep(r.s));
+    if (!live.length) return null;
+    const gap = (sec.session_gap_minutes || 90) * 60000;
+    let i = live.length - 1;
+    while (i > 0 && live[i].t - live[i - 1].t < gap) i--;
+    const startTs = psParseTs(
+      this._hass.states[(sec.hypnogram || {}).start_entity || (sec.session || {}).start] &&
+      this._hass.states[(sec.hypnogram || {}).start_entity || (sec.session || {}).start].state
+    );
+    const from = startTs && startTs < live[i].t ? startTs : live[i].t;
+    return { from, to: Date.now(), rows: rows.filter((r) => r.t >= from) };
+  },
+
+  _hypnoSvg(sec) {
+    const span = this._sleepSpan(sec);
+    if (!span || span.to - span.from < 60000) return "";
+    this._hypData = span;
+    const LANE = { awake: 7, light_sleep: 22, deep_sleep: 37 };
+    const COL = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" };
+    const W = 400, H = 46;
+    const px = (t) => ((t - span.from) / (span.to - span.from)) * W;
+
+    let out = "";
+    [7, 22, 37].forEach((y) => {
+      out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="var(--ps-hair)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    });
+    let prevY = null;
+    const rows = span.rows.filter((r) => LANE[r.s] !== undefined);
+    rows.forEach((r, i) => {
+      const next = i + 1 < rows.length ? rows[i + 1].t : span.to;
+      const x0 = px(r.t), x1 = px(next), y = LANE[r.s];
+      if (prevY !== null) {
+        out += `<line x1="${x0.toFixed(1)}" y1="${prevY}" x2="${x0.toFixed(1)}" y2="${y}"
+          stroke="rgba(255,255,255,.2)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+      }
+      out += `<rect x="${x0.toFixed(1)}" y="${y - 3.5}" width="${Math.max(1.2, x1 - x0).toFixed(1)}"
+        height="7" rx="2" fill="${COL[r.s]}"/>`;
+      prevY = y;
+    });
+    const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `<div class="ps-hyp">
+        <div class="ps-hypt" data-readout="hyp"><span class="ps-lbl">Tonight</span><span>${rows.length} transitions</span></div>
+        <div class="ps-hypplot" data-scrub="hyp">
+          <div class="ps-cross" hidden></div>
+          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Sleep stages tonight">${out}</svg>
+        </div>
+        <div class="ps-hypt"><span>${fmt(span.from)}</span><span>${fmt(span.to)}</span></div>
+      </div>`;
+  },
+
+  _chev() {
+    return `<span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>`;
+  },
+
+  _head(sec, chipHtml) {
+    if (sec.expandable === false) {
+      return `<span class="ps-lbl ps-solo">${psEsc(sec.title || "")}</span>`;
+    }
+    return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">
+        <span class="ps-nm">${psEsc(sec.title || "")}</span>
+        ${chipHtml || ""}
+        ${this._chev()}
+      </button>`;
+  },
+
+  _secSleep(sec) {
+    const h = this._hass;
+    const state = pcState(h, sec.sleep_state);
+    const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state] || "Sock off";
+    const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || "";
+    const active = state === "deep_sleep" || state === "light_sleep" || state === "awake";
+
+    const r = sec.ring || {};
+    const deep = (active ? pcNum(h, r.deep) : pcNum(h, r.deep_last_night)) || 0;
+    const light = (active ? pcNum(h, r.light) : pcNum(h, r.light_last_night)) || 0;
+    const max = r.max_hours || 12;
+    const total = deep + light;
+    const goalDeep = pcNum(h, (r.goal || {}).deep) || 0;
+    const goalLight = pcNum(h, (r.goal || {}).light) || 0;
+    const goal = goalDeep + goalLight;
+
+    const ring = this._ringSvg(98, 8,
+      [[deep / max, "var(--ps-deep)"], [light / max, "var(--ps-light)"]],
+      goal > 0 ? Math.min(1, goal / max) : null);
+
+    const startTs = psParseTs(pcState(h, (sec.session || {}).start));
+    const since = startTs
+      ? new Date(startTs).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : "—";
+    const elapsed = startTs && active ? psDur((Date.now() - startTs) / 60000) : null;
+
+    const vitals = (sec.vitals || []).map((v) => {
+      const liveVal = pcNum(h, v.entity);
+      const val = active && liveVal != null ? liveVal : pcNum(h, v.last_night);
+      const base = pcNum(h, v.baseline);
+      const dig = v.digits == null ? 1 : v.digits;
+      let d = `<span class="ps-vd ps-flat">—</span>`;
+      if (val != null && base != null) {
+        const diff = val - base;
+        const good = v.lower_is_better ? diff < 0 : diff > 0;
+        const cl = Math.abs(diff) < (v.flat_within || 0.6) ? "ps-flat" : good ? "ps-good" : "ps-warnc";
+        const sign = diff > 0 ? "+" : "";
+        d = `<span class="ps-vd ${cl}">${Math.abs(diff) < (v.flat_within || 0.6)
+          ? "level" : sign + diff.toFixed(dig ? 1 : 0) + " vs 7d"}</span>`;
+      }
+      return `<div class="ps-vit" data-info="${psEsc(v.entity)}">
+          <span class="ps-vk">${psEsc(v.label)}</span>
+          <span class="ps-vv">${val == null ? "—" : val.toFixed(dig)}<small>${psEsc(v.unit || "")}</small></span>
+          ${d}
+        </div>`;
+    }).join("");
+
+    /* Expanded: the recap rows and chips that used to live behind #joel. */
+    const w = sec.wakeups || {};
+    const wLive = pcNum(h, w.live);
+    const wBase = pcNum(h, w.baseline);
+    const bed = pcNum(h, (sec.bedtime || {}).entity);
+    const bedBase = pcNum(h, (sec.bedtime || {}).baseline);
+    const room = sec.room || {};
+    const rt = pcNum(h, room.temp), rh = pcNum(h, room.humidity);
+    const rAvg = pcNum(h, room.overnight_avg);
+
+    const bedCmp = bed != null && bedBase != null
+      ? (() => {
+          const d = Math.round(bed - bedBase);
+          if (Math.abs(d) < 10) return `<span class="ps-flat">on time</span>`;
+          return `<span class="${d > 0 ? "ps-warnc" : "ps-good"}">${Math.abs(d)} min ${d > 0 ? "late" : "early"}</span>`;
+        })()
+      : `<span class="ps-flat">—</span>`;
+
+    const rows = `
+      <div class="ps-jrs">
+        <div class="ps-jr" data-info="${psEsc(w.live)}"><span class="ps-l">Wakeups</span>
+          <span class="ps-v">${wLive == null ? "—" : wLive}</span>
+          <span class="${wBase != null && wLive != null && wLive <= wBase ? "ps-good" : "ps-flat"}">${wBase == null ? "" : wBase.toFixed(1) + " avg"}</span></div>
+        <div class="ps-jr" data-info="${psEsc((sec.bedtime || {}).entity)}"><span class="ps-l">Bedtime</span>
+          <span class="ps-v">${psMinsToClock(bed)}</span>${bedCmp}</div>
+        <div class="ps-jr"><span class="ps-l">Deep / light</span>
+          <span class="ps-v">${deep.toFixed(1)}h / ${light.toFixed(1)}h</span>
+          <span class="ps-flat">${goal > 0 ? `7d ${goalDeep.toFixed(1)} / ${goalLight.toFixed(1)}` : ""}</span></div>
+        <div class="ps-jr" data-info="${psEsc(room.temp)}"><span class="ps-l">Room</span>
+          <span class="ps-v">${rt == null ? "—" : rt.toFixed(1) + "°"}${rh == null ? "" : " · " + rh.toFixed(0) + "%"}</span>
+          <span class="ps-flat">${rAvg == null ? "" : rAvg.toFixed(1) + "° last"}</span></div>
+      </div>`;
+
     return `
+      ${this._head(sec, `<span class="ps-chip ${cls}"><span class="ps-dot"></span>${label}</span>`)}
+      <div class="ps-jtop">
+        <div class="ps-ring" style="width:98px;height:98px" data-info="${psEsc(sec.sleep_state)}">
+          ${ring}
+          <div class="ps-rv"><b>${total.toFixed(1)}h</b><small>of ${max}h</small></div>
+        </div>
+        <div class="ps-grow">
+          <div class="ps-jn">${psEsc(pcState(h, sec.age) || pcName(h, sec.person, sec.name))}</div>
+          <div class="ps-js">${active
+            ? `asleep ${elapsed || "—"}<br>since ${since}`
+            : `last night<br>${since === "—" ? "no session" : "from " + since}`}</div>
+          <div class="ps-chips" style="margin-top:9px">
+            <span class="ps-chip deep">Deep ${deep.toFixed(1)}h</span>
+            <span class="ps-chip lt">Light ${light.toFixed(1)}h</span>
+          </div>
+        </div>
+      </div>
+      <div class="ps-vits">${vitals}</div>
+      ${this._hypnoSvg(sec)}
+      <div class="ps-xtra">${rows}</div>`;
+  },
+
+  _secClimate(sec) {
+    const h = this._hass;
+    const th = h.states[sec.goal] || h.states[sec.thermostat];
+    const cur = th && th.attributes.current_temperature;
+    const goal = th && th.attributes.temperature;
+    const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
+    const reason = th && th.attributes.hvac_action_reason;
+    const rng = sec.ring || { min: 60, max: 80 };
+    const frac = cur == null ? 0 : Math.max(0, Math.min(1, (cur - rng.min) / (rng.max - rng.min)));
+    const heating = action === "heating";
+    const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
+
+    const zc = sec.zones || {};
+    const activeZone = pcState(h, zc.select);
+    const zones = (zc.options || []).map((o) => {
+      const t = pcNum(h, o.temp);
+      const on = activeZone === o.option;
+      return `<div class="ps-zc ${on ? "on" : ""}" data-zone="${psEsc(o.option)}">${psEsc(o.label || o.option)}
+        <b>${t == null ? "—" : t.toFixed(1) + "°"}</b></div>`;
+    }).join("");
+    const ot = pcNum(h, (sec.outside || {}).temp);
+    const outside = ot == null ? "" :
+      `<div class="ps-zc" data-info="${psEsc((sec.outside || {}).temp)}">Outside<b>${ot.toFixed(1)}°</b></div>`;
+
+    const rooms = (sec.rooms || []).map((r) => {
+      const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
+      return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
+          <span class="ps-rn">${psEsc(r.name || pcName(h, r.temp))}</span>
+          <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
+          <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
+        </div>`;
+    }).join("");
+
+    const chips = (sec.chips || []).map((ch) => {
+      const vis = ch.visible;
+      if (vis) {
+        const list = Array.isArray(vis) ? vis : [vis];
+        const ok = list.every((v) => {
+          const st = pcState(h, v.entity);
+          return v.state !== undefined ? st === v.state : st !== v.state_not;
+        });
+        if (!ok) return "";
+      }
+      const val = ch.show_state ? " " + pcState(h, ch.entity) : "";
+      return `<span class="ps-chip ${ch.style === "warn" ? "warn" : ""}">${psEsc(ch.name)}${psEsc(val)}</span>`;
+    }).join("");
+
+    const wave = this._waveSvg(sec);
+    const inNow = pcNum(h, (sec.graph || {}).inside);
+    const outNow = pcNum(h, (sec.graph || {}).outside);
+
+    return `
+      ${this._head(sec, `<span class="ps-chip ${heating ? "warn" : "cool"}"><span class="ps-dot"></span>${psEsc(
+        action.charAt(0).toUpperCase() + action.slice(1))}</span>`)}
+      <div class="ps-chero">
+        <div class="ps-ring" style="width:92px;height:92px" data-info="${psEsc(sec.goal || sec.thermostat)}">
+          ${this._ringSvg(92, 7.5, [[frac, col]], null)}
+          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>now</small></div>
+        </div>
+        <div class="ps-grow">
+          <div class="ps-row">
+            <button class="ps-step" type="button" data-step="-1" aria-label="Lower goal">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
+            <div class="ps-goal"><b>${goal == null ? "—" : Math.round(goal) + "°"}</b><span>goal</span></div>
+            <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div>
+          ${reason ? `<div class="ps-reason">${psEsc(reason)}</div>` : ""}
+        </div>
+      </div>
+      <div class="ps-zpair">${zones}${outside}</div>
+      ${this._holdHtml(sec)}
+      <div class="ps-xtra">
+        ${sec.schedule ? `<div class="ps-btns">
+          <button class="ps-btn" type="button" data-sheet="schedule">
+            <svg viewBox="0 0 24 24" class="ps-ico"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9h17M8 3v3M16 3v3M12 12.5v3l2 1.2"/></svg>
+            Schedule</button>
+        </div>` : ""}
+        <div class="ps-rmlist">${rooms}</div>
+        ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
+      </div>
+      ${wave ? `<div class="ps-wlg" data-readout="wave">
+          <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "\u2014" : inNow.toFixed(1) + "\u00B0"}</b></span>
+          <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "\u2014" : outNow.toFixed(1) + "\u00B0"}</b></span>
+        </div>
+        <div class="ps-wave" data-scrub="wave">
+        <div class="ps-cross" hidden></div>
+        ${wave}</div>` : ""}`;
+  },
+
+  /* Renders nothing at all when every television is off, the same way the
+     conditional card it replaces disappeared from the old view. */
+  _secTv(sec) {
+    const h = this._hass;
+    const live = (sec.tvs || []).filter((t) => {
+      const st = pcState(h, t.media_player);
+      return st && st !== "off" && st !== "unavailable" && st !== "unknown";
+    });
+    if (!live.length) return "";
+    const rows = live.map((t) => {
+      const app = pcState(h, t.app_sensor);
+      return `<div class="ps-tvrow">
+          <svg viewBox="0 0 24 24" class="ps-ico"><rect x="2.5" y="5" width="19" height="12" rx="2"/><path d="M8.5 20.5h7"/></svg>
+          <span class="ps-grow"><span class="ps-tvn">${psEsc(t.name)}</span>
+            <span class="ps-tva ps-trunc">${psEsc(app && app !== "unknown" ? app : "On")}</span></span>
+          <button class="ps-tvoff" type="button" data-tvoff="${psEsc(t.remote || t.media_player)}"
+            aria-label="Turn off ${psEsc(t.name)}">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 3.5v8"/><path d="M6.8 7.2a7.5 7.5 0 1 0 10.4 0"/></svg>
+          </button>
+        </div>`;
+    }).join("");
+    return `${this._head(sec, `<span class="ps-chip good"><span class="ps-dot"></span>${live.length} on</span>`)}${rows}`;
+  },
+
+  /* A manual hold outranks the schedule, so it gets its own row with a
+     two-tap cancel rather than hiding among the chips. */
+  _holdHtml(sec) {
+    const hold = sec.hold;
+    if (!hold || !hold.remaining) return "";
+    const raw = pcState(this._hass, hold.remaining);
+    const mins = parseFloat(raw);
+    if (!Number.isFinite(mins) || mins <= 0) return "";
+    const armed = this._armed === "hold";
+    return `<button class="ps-hold ${armed ? "armed" : ""}" type="button" data-arm="hold">
+        <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
+        <span class="ps-grow">${armed ? "Tap again to cancel the hold"
+          : `Hold active \u00B7 ${psDur(mins)} left`}</span>
+        <span class="ps-holdx">${armed ? "Cancel" : "\u00D7"}</span>
+      </button>`;
+  },
+
+  _secPeople(sec) {
+    const h = this._hass;
+    const cells = (sec.people || []).map((p) => {
+      const st = pcState(h, p.entity);
+      const home = st === "home";
+      const batt = pcNum(h, p.battery);
+      const steps = pcNum(h, p.steps);
+      const nm = pcName(h, p.entity, p.name);
+      const pic = h.states[p.entity] && h.states[p.entity].attributes.entity_picture;
+      return `<div class="ps-pw" data-info="${psEsc(p.entity)}">
+          <div class="ps-av">${pic ? `<img src="${psEsc(pic)}" alt="" />` : psEsc((nm || "?").charAt(0).toUpperCase())}</div>
+          <div class="ps-grow">
+            <div class="ps-pn ps-trunc">${psEsc(nm)}</div>
+            <div class="ps-pb ${batt != null && batt < 25 ? "low" : ""}">${
+              home ? "Home" : psEsc(st.replace(/_/g, " "))
+            }${batt == null ? "" : " · " + Math.round(batt) + "%"}${
+              steps == null ? "" : " · " + Math.round(steps).toLocaleString()
+            }</div>
+          </div>
+        </div>`;
+    }).join("");
+    return `${this._head(sec)}<div class="ps-ppl">${cells}</div>`;
+  },
+
+  _secRooms(sec) {
+    const h = this._hass;
+    const cells = (sec.rooms || []).map((r) => {
+      const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
+      return `<div class="ps-rc ${r.accent ? "acc" : ""}" data-info="${psEsc(r.temp)}">
+          <span class="ps-rn2">${psEsc(r.name || pcName(h, r.temp))}</span>
+          <b>${t == null ? "—" : t.toFixed(1) + "°"}</b>
+          <span class="ps-rh">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
+        </div>`;
+    }).join("");
+    return `${this._head(sec)}<div class="ps-rstrip">${cells}</div>`;
+  },
+
+  _secQuick(sec) {
+    const h = this._hass;
+    const tone = (t) => {
+      const s = pcState(h, t.entity);
+      if (t.alert_when && t.alert_when.indexOf(s) >= 0) return "alert";
+      if (t.on_when) return t.on_when.indexOf(s) >= 0 ? "on" : "";
+      return s === "on" || s === "playing" || s === "cleaning" ? "on" : "";
+    };
+    const tiles = (sec.tiles || []).map((t, i) => {
+      const vs = h.states[t.value_entity || t.entity];
+      const raw = vs ? vs.state : "";
+      const unit = vs && vs.attributes.unit_of_measurement ? " " + vs.attributes.unit_of_measurement : "";
+      const value = t.value_text || (raw ? raw.replace(/_/g, " ") + unit : "—");
+      let bar = "";
+      if (t.bar_entity) {
+        const pct = pcNum(h, t.bar_entity);
+        if (pct != null) {
+          const p = Math.max(0, Math.min(100, (pct / (t.bar_max || 100)) * 100));
+          const warn = t.bar_warn_above == null ? 80 : t.bar_warn_above;
+          const crit = t.bar_critical_above == null ? 95 : t.bar_critical_above;
+          const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-cool)";
+          bar = `<div class="ps-bar"><i style="width:${p.toFixed(0)}%;background:${c}"></i></div>`;
+        }
+      }
+      return `<button class="ps-qt ${tone(t)}" type="button" data-tile="${i}">
+          <ha-icon icon="${psEsc(t.icon || "mdi:circle-outline")}"></ha-icon>
+          <span><span class="ps-qn ps-trunc">${psEsc(pcName(h, t.entity, t.name))}</span>
+          <span class="ps-qv ps-trunc">${psEsc(value)}</span></span>${bar}
+        </button>`;
+    }).join("");
+    return `${this._head(sec)}<div class="ps-qgrid">${tiles}</div>`;
+  },
+
+  _secCalendar(sec) {
+    const days = sec.days || 5;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    let out = "";
+    for (let d = 0; d < days; d++) {
+      const day = new Date(today.getTime() + d * 86400000);
+      const next = day.getTime() + 86400000;
+      const evs = this._events.filter((e) => e.t >= day.getTime() && e.t < next);
+      out += `<div class="ps-cday">
+        <div class="ps-cdt ${d === 0 ? "today" : ""}">
+          <div class="ps-dw">${day.toLocaleDateString([], { weekday: "short" })}</div>
+          <div class="ps-dn">${day.getDate()}</div>
+        </div>
+        <div class="ps-cev">${evs.length
+          ? evs.map((e) => `<div class="ps-ev"><i style="background:${psEsc(e.color)}"></i>
+              <span class="ps-trunc">${psEsc(e.name)}</span>
+              <span class="ps-et">${e.allDay ? "all day"
+                : new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>`).join("")
+          : `<div class="ps-ev none">Nothing scheduled</div>`}</div>
+      </div>`;
+    }
+    return `${this._head(sec)}${out}`;
+  },
+
+  _fired(list) {
+    const h = this._hass;
+    return (list || []).filter((f) => {
+      const st = pcState(h, f.entity);
+      if (f.state !== undefined) return st === f.state;
+      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable" && st !== "unknown";
+      return false;
+    });
+  },
+
+  _meterHtml(m) {
+    const v = pcNum(this._hass, m.entity);
+    const p = v == null ? 0 : Math.max(0, Math.min(100, v));
+    const warn = m.warn_above == null ? 80 : m.warn_above;
+    const crit = m.critical_above == null ? 95 : m.critical_above;
+    const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-good)";
+    return `<div class="ps-sysrow" data-info="${psEsc(m.entity)}">
+        <span class="ps-sn">${psEsc(m.label)}</span>
+        <span class="ps-sv">${m.text ? psEsc(pcState(this._hass, m.entity))
+          : (v == null ? "\u2014" : v.toFixed(1) + "%")}</span>
+        <span class="ps-meter"><i style="width:${p.toFixed(0)}%;background:${c}"></i></span>
+      </div>`;
+  },
+
+  _statsHtml(list) {
+    const h = this._hass;
+    return (list || []).map((x) => {
+      const st = h.states[x.entity];
+      const raw = st ? st.state : "";
+      const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+      const txt = x.map && x.map[raw] ? x.map[raw] : raw + (unit ? " " + unit : "");
+      const good = x.good_when && x.good_when.indexOf(raw) >= 0;
+      const bad = x.bad_when && x.bad_when.indexOf(raw) >= 0;
+      return `<div class="ps-st" data-info="${psEsc(x.entity)}">
+          <span class="ps-stk">${psEsc(x.label)}</span>
+          <span class="ps-stv ${bad ? "ps-warnc" : good ? "ps-good" : ""}">${psEsc(txt || "\u2014")}</span>
+        </div>`;
+    }).join("");
+  },
+
+  _switchesHtml(items) {
+    return (items || []).map((it) => {
+      const on = pcState(this._hass, it.entity) === "on";
+      const missing = !this._hass.states[it.entity];
+      return `<div class="ps-sw ${missing ? "gone" : ""}">
+          <ha-icon icon="${psEsc(it.icon || "mdi:application")}"></ha-icon>
+          <span class="ps-trunc">${psEsc(it.name)}</span>
+          ${it.url ? `<button class="ps-link" type="button" data-url="${psEsc(it.url)}"
+            aria-label="Open ${psEsc(it.name)}">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+          </button>` : ""}
+          ${missing ? `<span class="ps-chip">missing</span>`
+            : `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(it.entity)}"
+               role="switch" aria-checked="${on}" aria-label="${psEsc(it.name)}"><i></i></button>`}
+        </div>`;
+    }).join("");
+  },
+
+  /* A NAS, a floor robot and a litter box are three devices, not six peer
+     groups — the robots were sitting at the same level as a Docker category,
+     which made them read like a subsystem of the server. Each device owns its
+     own header, health and meters, and only the NAS has groups inside it. */
+  _devicesHtml(sec) {
+    return (sec.devices || []).map((d, di) => {
+      const key = sec.key + "|dev|" + (d.key || d.name);
+      const open = !!this._openGroups[key];
+      const faults = this._fired(d.faults);
+      const sub = d.subtitle_entity ? pcState(this._hass, d.subtitle_entity) : (d.subtitle || "");
+      const chip = d.chip ? pcState(this._hass, d.chip) : "";
+
+      const groups = (d.groups || []).map((g) => {
+        const gkey = key + "|" + g.name;
+        const gopen = !!this._openGroups[gkey];
+        const items = g.items || [];
+        const on = items.filter((it) => pcState(this._hass, it.entity) === "on").length;
+        return `<div class="ps-grp ${gopen ? "open" : ""}">
+            <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
+              <ha-icon icon="${psEsc(g.icon || "mdi:folder-outline")}"></ha-icon>
+              <span class="ps-gn">${psEsc(g.name)}</span>
+              <span class="ps-chip ${on ? "good" : ""}">${on} of ${items.length}</span>
+              <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+            </button>
+            <div class="ps-grpb"><div class="ps-swrap">${this._switchesHtml(items)}</div></div>
+          </div>`;
+      }).join("");
+
+      const buttons = (d.buttons || []).map((b, i) =>
+        `<button class="ps-btn" type="button" data-dbtn="${di}|${i}">${psEsc(b.name)}</button>`).join("");
+
+      return `<div class="ps-dev ${open ? "open" : ""}">
+          <button class="ps-devh" type="button" data-group="${psEsc(key)}" aria-expanded="${open}">
+            <span class="ps-devi ${faults.length ? "bad" : ""}"><ha-icon icon="${psEsc(d.icon || "mdi:devices")}"></ha-icon></span>
+            <span class="ps-grow">
+              <span class="ps-devn">${psEsc(d.name)}</span>
+              <span class="ps-devs">${psEsc(sub)}</span>
+            </span>
+            ${faults.length
+              ? `<span class="ps-chip bad"><span class="ps-dot"></span>${faults.length}</span>`
+              : chip ? `<span class="ps-chip">${psEsc(chip)}</span>`
+              : `<span class="ps-chip good"><span class="ps-dot"></span>OK</span>`}
+            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+          </button>
+
+          ${faults.length ? `<div class="ps-faults">${faults.map((f) =>
+            `<div class="ps-fault" data-info="${psEsc(f.entity)}"><span class="ps-dotc bad"></span>
+              <span class="ps-grow"><b>${psEsc(f.label)}</b> ${psEsc(f.detail || "")}</span></div>`).join("")}</div>` : ""}
+          ${(d.meters || []).map((m) => this._meterHtml(m)).join("")}
+
+          <div class="ps-devb">
+            ${d.stats ? `<div class="ps-stats">${this._statsHtml(d.stats)}</div>` : ""}
+            ${groups}
+            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
+          </div>
+        </div>`;
+    }).join("");
+  },
+
+  /* The section that got the most attention: collapsed shows meters, expanded
+     shows every group's stats, every container switch and the robot controls
+     that used to need the #devices popup. */
+  _secSystems(sec) {
+    const h = this._hass;
+    if (sec.devices) {
+      const all = (sec.devices || []).reduce((n, d) => n + this._fired(d.faults).length, 0);
+      return `${this._head(sec, all
+        ? `<span class="ps-chip bad"><span class="ps-dot"></span>${all} fault${all > 1 ? "s" : ""}</span>`
+        : `<span class="ps-chip good"><span class="ps-dot"></span>Healthy</span>`)}
+        ${this._devicesHtml(sec)}`;
+    }
+
+    const faults = (sec.faults || []).filter((f) => {
+      const st = pcState(h, f.entity);
+      if (f.state !== undefined) return st === f.state;
+      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable";
+      return false;
+    });
+
+    const meters = (sec.meters || []).map((m) => {
+      const v = pcNum(h, m.entity);
+      const p = v == null ? 0 : Math.max(0, Math.min(100, v));
+      const warn = m.warn_above == null ? 80 : m.warn_above;
+      const crit = m.critical_above == null ? 95 : m.critical_above;
+      const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-good)";
+      return `<div class="ps-sysrow" data-info="${psEsc(m.entity)}">
+          <ha-icon icon="${psEsc(m.icon || "mdi:chart-box-outline")}"></ha-icon>
+          <span class="ps-sn">${psEsc(m.label)}</span>
+          <span class="ps-sv">${m.text ? psEsc(pcState(h, m.entity)) : (v == null ? "—" : v.toFixed(1) + "%")}</span>
+          <span class="ps-meter"><i style="width:${p.toFixed(0)}%;background:${c}"></i></span>
+        </div>`;
+    }).join("");
+
+    const groups = (sec.groups || []).map((g) => {
+      const gkey = sec.key + "|" + g.name;
+      const gopen = !!this._openGroups[gkey];
+
+      const stats = (g.stats || []).map((s) => {
+        const st = h.states[s.entity];
+        const raw = st ? st.state : "";
+        const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+        const txt = s.map && s.map[raw] ? s.map[raw] : raw + (unit ? " " + unit : "");
+        const good = s.good_when && s.good_when.indexOf(raw) >= 0;
+        const bad = s.bad_when && s.bad_when.indexOf(raw) >= 0;
+        return `<div class="ps-st" data-info="${psEsc(s.entity)}">
+            <span class="ps-stk">${psEsc(s.label)}</span>
+            <span class="ps-stv ${bad ? "ps-warnc" : good ? "ps-good" : ""}">${psEsc(txt || "—")}</span>
+          </div>`;
+      }).join("");
+
+      const items = (g.items || []).map((it) => {
+        const on = pcState(h, it.entity) === "on";
+        return `<div class="ps-sw">
+            <ha-icon icon="${psEsc(it.icon || "mdi:application")}"></ha-icon>
+            <span class="ps-trunc">${psEsc(it.name)}</span>
+            ${it.url ? `<button class="ps-link" type="button" data-url="${psEsc(it.url)}" aria-label="Open ${psEsc(it.name)}">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+            </button>` : ""}
+            <button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(it.entity)}"
+              role="switch" aria-checked="${on}" aria-label="${psEsc(it.name)}"><i></i></button>
+          </div>`;
+      }).join("");
+
+      const buttons = (g.buttons || []).map((b, i) =>
+        `<button class="ps-btn" type="button" data-gbtn="${psEsc(g.name)}|${i}">${psEsc(b.name)}</button>`).join("");
+
+      /* A collapsed group still has to say something useful, or there is no
+         reason to leave it shut: switch groups report how many are on. */
+      let summary = "";
+      if (g.chip) {
+        summary = `<span class="ps-chip">${psEsc(pcState(h, g.chip))}</span>`;
+      } else if ((g.items || []).length) {
+        const on = g.items.filter((it) => pcState(h, it.entity) === "on").length;
+        summary = `<span class="ps-chip ${on ? "good" : ""}">${on} of ${g.items.length} on</span>`;
+      }
+
+      return `<div class="ps-grp ${gopen ? "open" : ""}">
+          <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
+            <ha-icon icon="${psEsc(g.icon || "mdi:server")}"></ha-icon>
+            <span class="ps-gn">${psEsc(g.name)}</span>
+            ${summary}
+            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+          </button>
+          <div class="ps-grpb">
+            ${stats ? `<div class="ps-stats">${stats}</div>` : ""}
+            ${items ? `<div class="ps-swrap">${items}</div>` : ""}
+            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
+          </div>
+        </div>`;
+    }).join("");
+
+    const sub = sec.subtitle_entity ? pcState(h, sec.subtitle_entity) : "";
+
+    return `
+      ${this._head(sec, faults.length
+        ? `<span class="ps-chip bad"><span class="ps-dot"></span>${faults.length} fault${faults.length > 1 ? "s" : ""}</span>`
+        : `<span class="ps-chip good"><span class="ps-dot"></span>Healthy</span>`)}
+      ${sub ? `<div class="ps-sub2">${psEsc(sub)}</div>` : ""}
+      ${faults.length ? `<div class="ps-faults">${faults.map((f) =>
+        `<div class="ps-fault" data-info="${psEsc(f.entity)}"><span class="ps-dotc bad"></span>
+          <span class="ps-grow"><b>${psEsc(f.label)}</b> ${psEsc(f.detail || "")}</span></div>`).join("")}</div>` : ""}
+      ${meters}
+      <div class="ps-xtra">${groups}</div>`;
+  },
+});
+
+/* ============================================================================
+ * purdy-shell-card — GTTC schedule
+ *
+ * GTTC keeps four schedules at once and the base one is not the one running.
+ * `climate.gttc` only ever carries the window that happens to be active, so
+ * the whole day comes from the `gttc/get_schedule` websocket command, and the
+ * preset actually in force is found by matching `current_schedule_entry`
+ * against each preset's plan for today — `active_preset` is null when GTTC
+ * picks one situationally.
+ *
+ * Writes (`update_entry` / `delete_entry`) always land in the ACTIVE preset,
+ * so editing is offered only where the write goes where it looks like it goes.
+ * ========================================================================== */
+
+Object.assign(PurdyShellCard.prototype, {
+  async _fetchSchedule() {
+    const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+    if (!sec || !this._hass || !this._hass.callWS) return;
+    const extra = sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
+    try {
+      this._sched = await this._hass.callWS({ type: "gttc/get_schedule", ...extra });
+      this._last = null;
+      this._render();
+    } catch (e) {
+      this._sched = null;
+    this._dragging = false;   // a volume drag must survive the state repaint
+    this._armed = null;       // key of a destructive control awaiting a second tap
+    this._logged = {};        // rule key -> firedAt already written to the log
+    this._results = null;     // music search results, null until a query runs
+    this._recent = [];
+    this._query = "";
+    this._schedEdit = null;   // index of the entry being edited, or "new"
+    this._schedNote = null;
+    this._schedScope = undefined; // preset key being viewed; null = base lists
+    this._schedDay = null;        // day being viewed; null = today
+    this._sel = [];           // rooms the user picked, overriding what is playing
+    this._pins = [];          // saved playlists
+    }
+  },
+
+  /* GTTC keeps FOUR schedules at once: the base weekday/weekend lists, and a
+     named preset per situation (home / work_from_home / away / sleep), each
+     with its own seven-day plan. `active_preset` is only set when a preset is
+     pinned — when GTTC picks one situationally it stays null, so reading the
+     base lists shows a schedule the house is not running. The live window on
+     the climate entity is the one reliable signal of which is in force, so
+     match against that. */
+  _activePreset() {
+    const s = this._sched;
+    if (s && s.active_preset && s.presets && s.presets[s.active_preset]) return s.active_preset;
+    return null;
+  },
+
+  _dayName(offset) {
+    const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    return names[offset == null ? new Date().getDay() : offset];
+  },
+
+  /* Which schedule is actually running: the pinned preset, else whichever
+     preset owns the window the thermostat reports, else the base lists. */
+  _detectScope() {
+    const s = this._sched;
+    if (!s || !this._hass) return null;
+    const pinned = this._activePreset();
+    if (pinned) return pinned;
+
+    const sec = ((this._config || {}).sections || []).find((x) => x.type === "climate" && x.schedule);
+    const th = sec && sec.goal && this._hass.states[sec.goal];
+    const cur = th && th.attributes.current_schedule_entry;
+    if (cur) {
+      const today = this._dayName();
+      const same = (e) => e.time_start === cur.time_start && e.time_end === cur.time_end &&
+        Number(e.target_temp) === Number(cur.target_temp);
+      const keys = Object.keys(s.presets || {});
+      for (const k of keys) {
+        const list = (s.presets[k].schedule && s.presets[k].schedule[today]) || [];
+        if (list.some(same)) return k;
+      }
+      const base = s.mode === "per_day"
+        ? ((s.per_day && s.per_day[today]) || [])
+        : (s[new Date().getDay() % 6 === 0 ? "weekend" : "weekday"] || []);
+      if (base.some(same)) return null;
+    }
+    return null;
+  },
+
+  _scope() {
+    return this._schedScope === undefined ? this._detectScope() : this._schedScope;
+  },
+
+  /* Presets and per_day mode are seven-day; the base split is two-bucket. */
+  _perDay() {
+    return !!this._scope() || (this._sched && this._sched.mode === "per_day");
+  },
+
+  _schedDayName() {
+    if (this._schedDay) return this._schedDay;
+    if (this._perDay()) return this._dayName();
+    return new Date().getDay() % 6 === 0 ? "weekend" : "weekday";
+  },
+
+  _schedEntries() {
+    const s = this._sched;
+    if (!s) return [];
+    const day = this._schedDayName();
+    const scope = this._scope();
+    if (scope && s.presets && s.presets[scope]) {
+      return (s.presets[scope].schedule && s.presets[scope].schedule[day]) || [];
+    }
+    if (s.mode === "per_day") return (s.per_day && s.per_day[day]) || [];
+    return s[day] || [];
+  },
+
+  _schedToday() {
+    return this._schedEntries();
+  },
+
+  _zoneName(id) {
+    if (!id || !this._sched) return null;
+    const z = (this._sched.zones || []).find((x) => x.id === id);
+    return z ? z.name : null;
+  },
+
+  /* GTTC's update_entry / delete_entry write to the ACTIVE preset, so editing
+     anything else would silently land in the wrong schedule. Only offer it
+     where the write will go where it looks like it goes. */
+  _schedEditable(sec) {
+    if ((sec.schedule || {}).editable === false) return false;
+    return this._scope() === this._activePreset();
+  },
+
+  _schedWs(msg) {
+    const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+    const extra = sec && sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
+    return this._hass.callWS({ ...msg, ...extra });
+  },
+
+  async _schedSave() {
+    const root = this.shadowRoot;
+    const val = (f) => {
+      const el = root.querySelector(`[data-f="${f}"]`);
+      return el ? el.value : "";
+    };
+    const entries = this._schedEntries().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+    const orig = this._schedEdit === "new" ? null : entries[this._schedEdit];
+    const msg = {
+      type: "gttc/update_entry",
+      day: this._schedDayName(),
+      time_start: val("time_start"),
+      time_end: val("time_end"),
+      target_temp: parseFloat(val("target_temp")),
+    };
+    if (!msg.time_start || !msg.time_end || !Number.isFinite(msg.target_temp)) {
+      this._schedNote = "Start, end and heat temperature are required.";
+      this._render();
+      return;
+    }
+    const cool = parseFloat(val("cooling_temp"));
+    if (Number.isFinite(cool)) msg.cooling_temp = cool;
+    if (orig) {
+      msg.old_time_start = orig.time_start;
+      msg.old_time_end = orig.time_end;
+      if (orig.zone_id) msg.zone_id = orig.zone_id;
+      if (orig.away_temp != null) msg.away_temp = orig.away_temp;
+    }
+    try {
+      const res = await this._schedWs(msg);
+      this._schedNote = res && res.conflicts && res.conflicts.length
+        ? "Saved \u2014 overlaps another window, check the times." : null;
+      this._schedEdit = null;
+      await this._fetchSchedule();
+    } catch (err) {
+      this._schedNote = "Save failed: " + ((err && err.message) || "unknown error");
+      this._render();
+    }
+  },
+
+  async _schedDelete() {
+    const entries = this._schedEntries().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+    const orig = entries[this._schedEdit];
+    if (!orig) return;
+    try {
+      await this._schedWs({
+        type: "gttc/delete_entry", day: this._schedDayName(),
+        time_start: orig.time_start, time_end: orig.time_end,
+      });
+      this._schedEdit = null;
+      this._schedNote = null;
+    this._schedScope = undefined; // preset key being viewed; null = base lists
+    this._schedDay = null;        // day being viewed; null = today
+    this._sel = [];           // rooms the user picked, overriding what is playing
+    this._pins = [];          // saved playlists
+      await this._fetchSchedule();
+    } catch (err) {
+      this._schedNote = "Delete failed: " + ((err && err.message) || "unknown error");
+      this._render();
+    }
+  },
+
+  _scheduleHtml(sec) {
+    const h = this._hass;
+    const sd = this._sched;
+    const th = h.states[sec.goal];
+    const cur = th && th.attributes.current_schedule_entry;
+    const scope = this._scope();
+    const day = this._schedDayName();
+    const editable = this._schedEditable(sec);
+    const entries = this._schedEntries().slice()
+      .sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+
+    /* Which of the four schedules you are looking at. */
+    const labels = (sd && sd.preset_labels) || {};
+    const scopes = [{ k: null, label: "Base" }].concat(
+      Object.keys((sd && sd.presets) || {}).map((k) => ({ k, label: labels[k] || k })));
+    const scopeTabs = sd && scopes.length > 1
+      ? `<div class="ps-tabs">${scopes.map((x) => `
+          <button class="ps-tab ${x.k === scope ? "on" : ""}" type="button"
+            data-scope="${x.k === null ? "__base__" : psEsc(x.k)}">${psEsc(x.label)}</button>`).join("")}</div>`
+      : "";
+
+    const days = this._perDay()
+      ? [["monday", "Mon"], ["tuesday", "Tue"], ["wednesday", "Wed"], ["thursday", "Thu"],
+         ["friday", "Fri"], ["saturday", "Sat"], ["sunday", "Sun"]]
+      : [["weekday", "Weekdays"], ["weekend", "Weekend"]];
+    const dayTabs = `<div class="ps-tabs">${days.map(([k, lbl]) => `
+        <button class="ps-tab ${k === day ? "on" : ""}" type="button" data-sday="${k}">${psEsc(lbl)}</button>`).join("")}</div>`;
+
+    const nowPct = ((new Date().getHours() * 60 + new Date().getMinutes()) / 1440) * 100;
+    const isToday = this._perDay() ? day === this._dayName()
+      : day === (new Date().getDay() % 6 === 0 ? "weekend" : "weekday");
+
+    let bars = "";
+    entries.forEach((e, i) => {
+      const st = psMins(e.time_start);
+      let en = e.time_end ? psMins(e.time_end)
+        : (i + 1 < entries.length ? psMins(entries[i + 1].time_start) : 1440);
+      if (en <= st) en = 1440;                    // a window that wraps midnight
+      const live = isToday && cur && cur.time_start === e.time_start && cur.time_end === e.time_end;
+      bars += `<span class="ps-seg ${live ? "live" : ""}"
+        style="left:${((st / 1440) * 100).toFixed(2)}%;width:${Math.max(1.2, ((en - st) / 1440) * 100).toFixed(2)}%"
+        >${e.cooling_temp != null ? Math.round(e.cooling_temp) + "\u00B0" : Math.round(e.target_temp) + "\u00B0"}</span>`;
+    });
+
+    const rows = entries.map((e, i) => {
+      const live = isToday && cur && cur.time_start === e.time_start && cur.time_end === e.time_end;
+      const zone = this._zoneName(e.zone_id);
+      return `<button class="ps-sr ${live ? "live" : ""}" type="button" ${
+          editable ? `data-sedit="${i}"` : "disabled"}>
+          <span class="ps-srt">${psEsc(psMinsToClock(psMins(e.time_start)))}\u2013${
+            psEsc(psMinsToClock(psMins(e.time_end || "23:59")))}</span>
+          <span class="ps-srv"><i class="h"></i>${e.target_temp == null ? "\u2014" : Math.round(e.target_temp) + "\u00B0"}${
+            e.cooling_temp == null ? "" : `<i class="c"></i>${Math.round(e.cooling_temp)}\u00B0`}${
+            zone ? `<span class="ps-srz">${psEsc(zone)}</span>` : ""}</span>
+          ${live ? `<span class="ps-chip cool">now</span>` : ""}
+        </button>`;
+    }).join("");
+
+    let editor = "";
+    if (editable && this._schedEdit !== null) {
+      const isNew = this._schedEdit === "new";
+      const e = isNew ? {} : (entries[this._schedEdit] || {});
+      editor = `<div class="ps-sedit">
+          <div class="ps-sform">
+            <label>Start<input type="time" data-f="time_start" value="${psEsc(e.time_start || "")}" /></label>
+            <label>End<input type="time" data-f="time_end" value="${psEsc(e.time_end || "")}" /></label>
+            <label>Heat<input type="number" inputmode="decimal" data-f="target_temp" value="${
+              e.target_temp == null ? "" : e.target_temp}" /></label>
+            <label>Cool<input type="number" inputmode="decimal" data-f="cooling_temp" value="${
+              e.cooling_temp == null ? "" : e.cooling_temp}" /></label>
+          </div>
+          ${this._schedNote ? `<div class="ps-snote">${psEsc(this._schedNote)}</div>` : ""}
+          <div class="ps-btns">
+            <button class="ps-btn primary" type="button" id="ps-ssave">Save</button>
+            <button class="ps-btn" type="button" id="ps-scancel">Cancel</button>
+            ${isNew ? "" : `<button class="ps-btn danger ${this._armed === "sdel" ? "armed" : ""}"
+              type="button" data-arm="sdel">${this._armed === "sdel" ? "Tap again" : "Delete"}</button>`}
+          </div>
+        </div>`;
+    }
+
+    const modeId = (sec.schedule || {}).mode_entity;
+    const onId = (sec.schedule || {}).switch_entity;
+    const on = onId ? pcState(h, onId) === "on" : null;
+
+    return `<div class="ps-sched">
+        <div class="ps-schedh">
+          <span class="ps-lbl">Schedule</span>
+          ${modeId ? `<span class="ps-chip">${psEsc(pcState(h, modeId))}</span>` : ""}
+          ${onId ? `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(onId)}"
+            role="switch" aria-checked="${on}" aria-label="Schedule enabled"><i></i></button>` : ""}
+        </div>
+        ${cur ? `<div class="ps-schednow">Holding <b>${Math.round(cur.effective_temp)}\u00B0</b>
+          until ${psEsc(psMinsToClock(psMins(cur.time_end)))}
+          <span class="ps-flat">(${Math.round(cur.target_temp)}\u00B0 heat${
+            cur.cooling_temp == null ? "" : " / " + Math.round(cur.cooling_temp) + "\u00B0 cool"})</span></div>` : ""}
+        ${scopeTabs}
+        ${sd ? dayTabs : ""}
+        ${entries.length ? `<div class="ps-timeline">${bars}
+            ${isToday ? `<span class="ps-nowline" style="left:${nowPct.toFixed(2)}%"></span>` : ""}</div>
+          <div class="ps-tscale"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>12a</span></div>
+          <div class="ps-srs">${rows}</div>`
+        : `<div class="ps-flat" style="font-size:11px">${this._sched === null
+            ? "Schedule unavailable." : "No windows set for this day."}</div>`}
+        ${editor}
+        ${editable && this._schedEdit === null && sd
+          ? `<div class="ps-btns"><button class="ps-btn" type="button" data-sedit="new">Add a window</button></div>` : ""}
+        ${!editable && sd ? `<div class="ps-note">Read-only \u2014 GTTC writes edits to the active preset${
+          this._activePreset() ? "" : ", and none is pinned"}. Pin one to edit here.</div>` : ""}
+      </div>`;
+  },
+});
+
+/* ============================================================================
+ * purdy-shell-card — Music Assistant
+ *
+ * Music targets a room, not a card: _activePlayer() is whatever the user last
+ * tapped, else whatever is actually playing, else default_player, so a stale
+ * pick falls back rather than targeting a dead entity.
+ *
+ * Saved playlists live in a 255-character input_text, so the oldest saves are
+ * dropped rather than the write failing.
+ * ========================================================================== */
+
+Object.assign(PurdyShellCard.prototype, {
+  /* GTTC exposes the whole schedule over its own websocket command; the
+     climate entity only ever carries the window that happens to be active. */
+  /* Recently listened comes from HA's recorder, not Music Assistant: MA's
+     last_played / play_count are empty in this install, so its own
+     "recently played" ordering is silently meaningless. Every MA player logs
+     media_title, media_artist and a playable media_content_id per state
+     change, so read it back from there. Bounded by recorder retention. */
+  async _fetchRecent() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    if (!sec || !this._hass || !this._hass.callApi) return;
+    const ids = (sec.players || []).map((p) => p.entity);
+    if (!ids.length) return;
+    const start = new Date(Date.now() - (sec.recent_hours || 48) * 3600 * 1000).toISOString();
+    try {
+      const res = await this._hass.callApi("GET", `history/period/${start}?filter_entity_id=${ids.join(",")}`);
+      const rows = [];
+      (res || []).forEach((series) => (series || []).forEach((e) => {
+        const a = e.attributes || {};
+        if (!a.media_title || !a.media_content_id) return;
+        if (a.app_id !== "music_assistant" && PS_MUSIC_TYPES.indexOf(a.media_content_type) < 0) return;
+        rows.push({
+          t: new Date(e.last_changed || e.last_updated).getTime(),
+          uri: a.media_content_id,
+          name: a.media_title,
+          sub: a.media_artist || a.media_album_name || "",
+          kind: "track",
+        });
+      }));
+      rows.sort((x, y) => y.t - x.t);
+      const seen = {};
+      const out = [];
+      rows.forEach((r) => {
+        if (seen[r.uri] || !Number.isFinite(r.t)) return;
+        seen[r.uri] = 1;
+        out.push(r);
+      });
+      this._recent = out.slice(0, sec.recent_max || 8);
+      this._last = null;
+      this._render();
+    } catch (err) {
+      /* Recorder may be purged; the list just stays empty. */
+    }
+  },
+
+  async _runSearch() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    const q = (this._query || "").trim();
+    const entry = sec && sec.config_entry;
+    if (!q || !entry) {
+      this._results = q && !entry ? [] : null;
+      this._render();
+      return;
+    }
+    this._searching = true;
+    this._render();
+    try {
+      const r = await this._hass.callService(
+        "music_assistant", "search",
+        { config_entry_id: entry, name: q }, undefined, false, true
+      );
+      const d = (r && r.response) || {};
+      const rows = [];
+      const take = (arr, kind, n) => (arr || []).slice(0, n).forEach((x) => rows.push({
+        uri: x.uri, name: x.name, kind, image: x.image,
+        sub: kind === "track" && x.artists && x.artists.length
+          ? x.artists.map((a) => a.name).join(", ") : kind,
+      }));
+      take(d.tracks, "track", 4);
+      take(d.playlists, "playlist", 3);
+      take(d.albums, "album", 2);
+      take(d.artists, "artist", 2);
+      this._results = rows;
+    } catch (err) {
+      this._results = [];
+    }
+    this._searching = false;
+    this._render();
+  },
+
+  _playUri(uri, kind) {
+    const targets = this._targets();
+    if (!uri || !targets.length) return;
+    this._hass.callService("music_assistant", "play_media", {
+      entity_id: targets, media_id: uri, media_type: kind || "track", enqueue: "replace",
+    });
+  },
+
+  /* --- saved playlists ----------------------------------------------------
+     A store is either a todo list (unbounded) or an input_text (`uri~name`
+     pairs, and that helper caps at 255 characters, so the oldest pins fall
+     off rather than the write failing). */
+  _pinStore() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    return sec && sec.pins && sec.pins.store;
+  },
+
+  async _loadPins() {
+    const store = this._pinStore();
+    if (!store || !this._hass) return;
+    if (store.indexOf("todo.") === 0) {
+      if (!this._hass.callWS) return;
+      try {
+        const res = await this._hass.callWS({ type: "todo/item/list", entity_id: store });
+        this._pins = ((res && res.items) || [])
+          .filter((it) => it.status !== "completed" && it.description)
+          .map((it) => ({ name: it.summary, uri: it.description, uid: it.uid }));
+      } catch (e) { this._pins = []; }
+    } else {
+      const raw = pcState(this._hass, store);
+      this._pins = (!raw || raw === "unknown" || raw === "unavailable") ? [] :
+        raw.split("|").map((pair) => {
+          const i = pair.indexOf("~");
+          return i < 0 ? null : { uri: pair.slice(0, i), name: pair.slice(i + 1) };
+        }).filter(Boolean);
+    }
+    this._last = null;
+    this._render();
+  },
+
+  _writePins(list) {
+    const store = this._pinStore();
+    if (!store) return;
+    let pairs = list.map((p) => p.uri + "~" + p.name);
+    while (pairs.length && pairs.join("|").length > 255) pairs.shift();
+    this._hass.callService("input_text", "set_value", { entity_id: store, value: pairs.join("|") });
+  },
+
+  _isPinned(uri) {
+    return this._pins.some((p) => p.uri === uri);
+  },
+
+  async _togglePin(uri, name, kind) {
+    const store = this._pinStore();
+    if (!store || !uri) return;
+    const existing = this._pins.find((p) => p.uri === uri);
+    if (store.indexOf("todo.") === 0) {
+      if (existing) {
+        await this._hass.callService("todo", "remove_item", { entity_id: store, item: existing.uid });
+      } else {
+        await this._hass.callService("todo", "add_item", {
+          entity_id: store, item: name || "Saved playlist", description: uri,
+        });
+      }
+      this._loadPins();
+      return;
+    }
+    const next = existing
+      ? this._pins.filter((p) => p.uri !== uri)
+      : this._pins.concat([{ uri, name: (name || "Saved").slice(0, 40) }]);
+    this._pins = next;
+    this._writePins(next);
+    this._last = null;
+    this._render();
+  },
+
+  /* What is playing right now, as something that can be pinned. MA reports the
+     queue item, so prefer the playlist it came from when there is one. */
+  _pinnable() {
+    const np = this._nowPlaying();
+    if (!np) return null;
+    const a = np.st.attributes;
+    const uri = a.media_playlist_content_id || a.media_content_id;
+    if (!uri) return null;
+    const name = a.media_playlist || a.media_album_name || a.media_title;
+    const kind = a.media_playlist ? "playlist" : (a.media_content_type || "track");
+    return { uri, name, kind };
+  },
+
+  /* Which room a preset, a search result or the transport acts on: whatever
+     the user last picked, else whatever is actually playing, else the default. */
+  _targets() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    if (!sec) return [];
+    const known = (sec.players || []).map((p) => p.entity);
+    const picked = (this._sel || []).filter((e) => known.indexOf(e) >= 0);
+    if (picked.length) return picked;
+    const np = this._nowPlaying();
+    if (np) return [np.entity];
+    const fallback = sec.default_player || known[0];
+    return fallback ? [fallback] : [];
+  },
+
+  /* The room the transport and the main volume act on: the first selected. */
+  _activePlayer() {
+    return this._targets()[0] || null;
+  },
+
+  _isPicked(entity) {
+    return (this._sel || []).indexOf(entity) >= 0;
+  },
+
+  /* Tapping toggles, so two taps play to two rooms and tapping again drops
+     one. Emptying the selection falls back to whatever is playing. */
+  _togglePick(entity) {
+    const cur = this._sel || [];
+    this._sel = cur.indexOf(entity) >= 0 ? cur.filter((e) => e !== entity) : cur.concat([entity]);
+    this._render();
+  },
+
+  /* The one player worth showing in the mini bar: prefer something actually
+     playing, fall back to whatever is paused with a title. */
+  _nowPlaying() {
+    const np = this._config.now_playing || {};
+    const players = np.players || [];
+    const hass = this._hass;
+    if (!hass) return null;
+    let paused = null;
+    for (const p of players) {
+      const st = hass.states[p.entity];
+      if (!st || !psIsMusic(st)) continue;
+      const title = st.attributes.media_title;
+      if (!title) continue;
+      if (st.state === "playing") return { ...p, st, playing: true };
+      if (!paused && st.state === "paused") paused = { ...p, st, playing: false };
+    }
+    return paused;
+  },
+
+  _secMusic(sec) {
+    const h = this._hass;
+    const np = this._nowPlaying();
+    const art = np && np.st.attributes.entity_picture_local;
+    const active = this._activePlayer();
+    const players = (sec.players || []).map((p) => {
+      const st = h.states[p.entity];
+      const live = st && st.state === "playing" && psIsMusic(st);
+      const on = this._isPicked(p.entity) || (!(this._sel || []).length && p.entity === active);
+      return `<button class="ps-mr ${on ? "sel" : ""}" type="button"
+        data-pick="${psEsc(p.entity)}" aria-pressed="${on}">
+        ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>`;
+    }).join("");
+
+    const presets = (sec.presets || []).map((p, i) =>
+      `<button class="ps-pr" type="button" data-preset="${i}">
+        <ha-icon icon="${psEsc(p.icon || "mdi:playlist-music")}"></ha-icon>
+        <span class="ps-trunc">${psEsc(p.name)}</span></button>`).join("");
+
+    return `
+      ${this._head(sec, (this._sel || []).length > 1
+        ? `<span class="ps-chip cool">${this._sel.length} rooms</span>`
+        : `<span class="ps-chip">${np ? (np.playing ? "Playing" : "Paused") : "Idle"}</span>`)}
+      <div class="ps-now">
+        <div class="ps-art">${art
+          ? `<img src="${psEsc(art)}" alt="" />`
+          : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+        <div class="ps-grow">
+          <div class="ps-nt ps-trunc">${np ? psEsc(np.st.attributes.media_title) : "Nothing playing"}</div>
+          <div class="ps-ns ps-trunc">${np
+            ? psEsc([np.st.attributes.media_artist, np.name].filter(Boolean).join(" · "))
+            : "Pick a room to start"}</div>
+        </div>
+        ${this._pinBtn()}
+        ${np ? `<button class="ps-tb" type="button" data-mp="playpause" data-entity="${psEsc(np.entity)}">
+          <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
+            ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>` : ""}
+      </div>
+      <div class="ps-mroom">${players}</div>
+      <div class="ps-btns" style="margin-top:10px">
+        <button class="ps-btn" type="button" data-sheet="music">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9a4 4 0 0 1 0 6"/></svg>
+          Controls &amp; volume</button>
+      </div>
+      <div class="ps-xtra">
+        ${this._recentHtml()}
+        ${this._pinsHtml()}
+        <div><span class="ps-lbl">Presets</span><div class="ps-pres">${presets}</div></div>
+      </div>`;
+  },
+
+  /* A star on whatever is playing, so the playlist you just found by
+     searching can be found again without searching for it. */
+  _pinBtn() {
+    if (!this._pinStore()) return "";
+    const item = this._pinnable();
+    if (!item) return "";
+    const on = this._isPinned(item.uri);
+    return `<button class="ps-pin ${on ? "on" : ""}" type="button"
+        data-pin="${psEsc(item.uri)}" data-pinname="${psEsc(item.name)}" data-pinkind="${psEsc(item.kind)}"
+        aria-pressed="${on}" aria-label="${on ? "Remove from saved" : "Save"}">
+        <svg viewBox="0 0 24 24" class="ps-ico" ${on ? 'style="fill:currentColor"' : ""}>
+          <path d="m12 4 2.35 4.76 5.25.77-3.8 3.7.9 5.23L12 15.99l-4.7 2.47.9-5.23-3.8-3.7 5.25-.77Z"/></svg>
+      </button>`;
+  },
+
+  /* What you actually reach for is what you just played, so it leads. */
+  _recentHtml() {
+    if (!this._recent.length) return "";
+    return `<div><span class="ps-lbl">Recently played</span>
+      <div class="ps-mlist" style="margin-top:6px">${this._recent.map((r, i) => `
+        <button class="ps-mi" type="button" data-play="${i}" data-from="recent">
+          <span class="ps-th"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg></span>
+          <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
+          <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span></button>`).join("")}</div></div>`;
+  },
+
+  _pinsHtml() {
+    if (!this._pinStore() || !this._pins.length) return "";
+    return `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Saved</span>
+      <div class="ps-pres">${this._pins.map((p, i) => `
+        <span class="ps-pr">
+          <button class="ps-prplay" type="button" data-pinplay="${i}">
+            <ha-icon icon="mdi:playlist-star"></ha-icon>
+            <span class="ps-trunc">${psEsc(p.name)}</span></button>
+          <button class="ps-prx" type="button" data-pin="${psEsc(p.uri)}"
+            aria-label="Remove ${psEsc(p.name)} from saved">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </span>`).join("")}</div>`;
+  },
+});
+
+/* ============================================================================
+ * purdy-shell-card — attention rules, dismissals and the notification log
+ *
+ * A dismissal is an acknowledgement, not a mute: a row is hidden only while
+ * the triggering entity's last_changed is older than the dismissal, so a fault
+ * that re-fires comes back.
+ * ========================================================================== */
+
+Object.assign(PurdyShellCard.prototype, {
+  /* --- dismissals ---------------------------------------------------------
+     A dismissal is an acknowledgement, not a mute: a row stays hidden only
+     while the triggering entity has not changed since, and `dismiss_hours`
+     caps how long a stale one can hide. Store format is `key:epoch|key:epoch`
+     in an input_text, which caps at 255 characters — so keep rule keys short
+     and drop the oldest entries rather than overflowing the write. */
+  _dismissals() {
+    const raw = pcState(this._hass, this._config.dismiss_store);
+    const out = {};
+    if (!raw || raw === "unknown" || raw === "unavailable") return out;
+    raw.split("|").forEach((pair) => {
+      const bits = pair.split(":");
+      const at = parseInt(bits[1], 10);
+      if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
+    });
+    return out;
+  },
+
+  _writeDismissals(map) {
+    const store = this._config.dismiss_store;
+    if (!store) return;
+    let pairs = Object.keys(map)
+      .map((k) => [k, map[k]])
+      .sort((a, b) => b[1] - a[1])
+      .map((e) => e[0] + ":" + e[1]);
+    while (pairs.length && pairs.join("|").length > 255) pairs.pop();
+    this._hass.callService("input_text", "set_value", {
+      entity_id: store, value: pairs.join("|"),
+    });
+  },
+
+  _dismiss(row) {
+    const map = this._dismissals();
+    map[row.key] = Math.floor(Date.now() / 1000);
+    this._writeDismissals(map);
+    if (this._config.log_to) this._closeLog(row);
+    this._last = null;
+    this._render();
+  },
+
+  async _logItems() {
+    if (!this._config.log_to || !this._hass.callWS) return [];
+    const res = await this._hass.callWS({ type: "todo/item/list", entity_id: this._config.log_to });
+    return (res && res.items) || [];
+  },
+
+  /* One open log entry per raised rule. The key lives in the description so
+     the entry can be found again without depending on the wording. */
+  async _syncLog(rows) {
+    if (!this._config.log_to || !rows.length || !this._hass.callWS) return;
+    let items;
+    try { items = await this._logItems(); } catch (e) { return; }
+    for (const row of rows) {
+      const tag = "[" + row.key + "]";
+      const open = items.find((it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed");
+      if (open) continue;
+      if (this._logged[row.key] === row.firedAt) continue;
+      this._logged[row.key] = row.firedAt;
+      this._hass.callService("todo", "add_item", {
+        entity_id: this._config.log_to,
+        item: row.title,
+        description: tag + " " + row.severity + " \u00B7 " + (row.detail || "") +
+          " \u00B7 raised " + new Date(row.firedAt * 1000).toISOString(),
+      });
+    }
+  },
+
+  async _closeLog(row) {
+    if (!this._hass.callWS) return;
+    let items;
+    try { items = await this._logItems(); } catch (e) { return; }
+    const tag = "[" + row.key + "]";
+    const open = items.find((it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed");
+    if (open) {
+      this._hass.callService("todo", "update_item", {
+        entity_id: this._config.log_to, item: open.uid, status: "completed",
+      });
+    }
+  },
+
+  /* When did this rule's condition last change? A dismissal older than that
+     means the fault re-fired, so the row comes back. */
+  _firedAt(r) {
+    const h = this._hass;
+    if (r.entity && h.states[r.entity]) {
+      return Math.floor(new Date(h.states[r.entity].last_changed).getTime() / 1000);
+    }
+    if (r.match) {
+      const re = new RegExp(r.match);
+      let newest = 0;
+      Object.keys(h.states).forEach((id) => {
+        if (!re.test(id) || h.states[id].state !== (r.state || "on")) return;
+        const t = Math.floor(new Date(h.states[id].last_changed).getTime() / 1000);
+        if (t > newest) newest = t;
+      });
+      return newest;
+    }
+    return 0;
+  },
+
+  /* Everything currently matching, before dismissals are applied. */
+  _raised() {
+    const rules = this._config.attention || [];
+    const hass = this._hass;
+    if (!hass) return [];
+    const out = [];
+    rules.forEach((r, i) => {
+      const hit = (st) => {
+        if (!st) return false;
+        const v = st.state;
+        if (r.state !== undefined) return v === r.state;
+        if (r.state_not !== undefined) return v !== r.state_not && v !== "unavailable" && v !== "unknown";
+        const n = parseFloat(v);
+        if (!Number.isFinite(n)) return false;
+        if (r.above !== undefined) return n > r.above;
+        if (r.below !== undefined) return n < r.below;
+        return false;
+      };
+      if (r.match) {
+        const re = new RegExp(r.match);
+        const names = Object.keys(hass.states)
+          .filter((id) => re.test(id) && hit(hass.states[id]))
+          .map((id) => (hass.states[id].attributes.friendly_name || id).replace(r.strip || "", "").trim());
+        if (names.length) {
+          out.push({
+            key: r.key || "r" + i,
+            severity: r.severity || "info",
+            title: `${names.length} ${r.title || "issues"}`,
+            detail: names.slice(0, 4).join(" · "),
+            entity: null,
+            firedAt: this._firedAt(r),
+          });
+        }
+        return;
+      }
+      if (hit(hass.states[r.entity])) {
+        out.push({
+          key: r.key || "r" + i,
+          severity: r.severity || "warn",
+          title: r.title || pcName(hass, r.entity),
+          detail: r.detail || "",
+          entity: r.entity,
+          firedAt: this._firedAt(r),
+        });
+      }
+    });
+    /* `rank[x] || 3` would treat critical (0) as unranked and sink it below
+       info — the one severity that must always sort first. */
+    const rank = { critical: 0, warn: 1, info: 2 };
+    const at = (x) => (rank[x] === undefined ? 3 : rank[x]);
+    return out.sort((a, b) => at(a.severity) - at(b.severity));
+  },
+
+  /* What the chip and the sheet actually show: raised, minus live dismissals. */
+  _faults() {
+    const dis = this._dismissals();
+    const now = Math.floor(Date.now() / 1000);
+    const hrs = this._config.dismiss_hours;
+    return this._raised().filter((row) => {
+      const at = dis[row.key];
+      if (!at) return true;
+      if (row.firedAt > at) return true;           // it re-fired
+      if (hrs && now - at > hrs * 3600) return true; // the snooze lapsed
+      return false;
+    });
+  },
+
+  /* One sheet, two contents. Both slide over the column rather than pushing
+     it around, so opening either never moves what is under your thumb. */
+  _sheetHtml(faults) {
+    if (!this._sheet) return "";
+    const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+
+    if (this._sheet === "alerts") {
+      if (!faults.length) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          <div class="ps-sheeth"><span class="ps-lbl">Needs attention</span>${close}</div>
+          ${faults.map((f, i) => `<div class="ps-ar" data-info="${psEsc(f.entity || "")}">
+            <span class="ps-dotc ${f.severity}"></span>
+            <span class="ps-grow"><span class="ps-at">${psEsc(f.title)}</span>
+            <span class="ps-ad">${psEsc(f.detail)}</span></span>
+            ${this._config.dismiss_store ? `<button class="ps-x" type="button" data-dismiss="${i}"
+              aria-label="Dismiss ${psEsc(f.title)}">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
+          </div>`).join("")}
+        </div>`;
+    }
+
+    if (this._sheet === "music") {
+      const sec = (this._config.sections || []).find((x) => x.type === "music");
+      const np = this._nowPlaying();
+      if (!sec) return "";
+      const art = np && np.st.attributes.entity_picture_local;
+      const target = np ? np.entity : sec.default_player;
+      const tst = target && this._hass.states[target];
+      const vol = tst && tst.attributes.volume_level != null ? tst.attributes.volume_level : 0;
+      const muted = !!(tst && tst.attributes.is_volume_muted);
+
+      const rooms = (sec.players || []).map((p) => {
+        const st = this._hass.states[p.entity];
+        const live = st && st.state === "playing" && psIsMusic(st);
+        const active = this._isPicked(p.entity) ||
+          (!(this._sel || []).length && this._activePlayer() === p.entity);
+        const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : 0;
+        return `<div class="ps-vrow ${active ? "on" : ""}">
+            <button class="ps-vname" type="button" data-pick="${psEsc(p.entity)}">
+              ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>
+            <input class="ps-vol" type="range" min="0" max="100" step="1"
+              value="${Math.round(pv * 100)}" data-vol="${psEsc(p.entity)}"
+              aria-label="${psEsc(p.name)} volume" />
+            <span class="ps-vnum">${Math.round(pv * 100)}</span>
+          </div>`;
+      }).join("");
+
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Music</span>${close}</div>
+          <div class="ps-now" style="margin-bottom:12px">
+            <div class="ps-art">${art
+              ? `<img src="${psEsc(art)}" alt="" />`
+              : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+            <div class="ps-grow">
+              <div class="ps-nt ps-trunc">${np ? psEsc(np.st.attributes.media_title) : "Nothing playing"}</div>
+              <div class="ps-ns ps-trunc">${np
+                ? psEsc([np.st.attributes.media_artist, np.name].filter(Boolean).join(" \u00B7 "))
+                : "Pick a room below"}</div>
+            </div>
+          </div>
+          <div class="ps-transport">
+            <button class="ps-tb" type="button" data-mpc="media_previous_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Previous">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M18 5v14L8 12zM6 5v14"/></svg></button>
+            <button class="ps-tb big" type="button" data-mp="playpause" data-entity="${psEsc(target || "")}" aria-label="Play or pause">
+              <svg viewBox="0 0 24 24" class="ps-ico">${np && np.playing
+                ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
+            <button class="ps-tb" type="button" data-mpc="media_next_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Next">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 5v14l10-7zM18 5v14"/></svg></button>
+            <button class="ps-tb" type="button" data-mpc="media_stop" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Stop">
+              <svg viewBox="0 0 24 24" class="ps-ico"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg></button>
+          </div>
+          <div class="ps-volmain">
+            <button class="ps-vbtn ${muted ? "muted" : ""}" type="button" data-mute="${psEsc(target || "")}"
+              data-muted="${muted}" aria-label="Mute">
+              <svg viewBox="0 0 24 24" class="ps-ico">${muted
+                ? `<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9.5l5 5M21 9.5l-5 5"/>`
+                : `<path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4zM16 9a4 4 0 0 1 0 6"/>`}</svg></button>
+            <input class="ps-vol" type="range" min="0" max="100" step="1"
+              value="${Math.round(vol * 100)}" data-vol="${psEsc(target || "")}" aria-label="Volume" />
+            <span class="ps-vnum">${Math.round(vol * 100)}</span>
+          </div>
+          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
+          ${rooms}
+
+          ${this._pinsHtml()}
+          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Search</span>
+          <div class="ps-sbox">
+            <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
+            <input id="ps-q" type="search" placeholder="Tracks, albums, playlists\u2026"
+              value="${psEsc(this._query)}" aria-label="Search music" />
+            ${this._query ? `<button class="ps-sclear" type="button" id="ps-qclear" aria-label="Clear">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
+          </div>
+          ${this._searching ? `<div class="ps-note">Searching\u2026</div>` : ""}
+          ${this._results && this._results.length ? `<div class="ps-mlist">${
+            this._results.map((r, i) => `<button class="ps-mi" type="button" data-play="${i}" data-from="results">
+              <span class="ps-th">${r.image ? `<img src="${psEsc(r.image)}" alt="" />`
+                : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</span>
+              <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
+              <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span>
+              <span class="ps-kind">${psEsc(r.kind)}</span></button>`).join("")}</div>` : ""}
+          ${this._results && this._results.length && this._pinStore() ? `<div class="ps-note">
+            Hold a result to save it, or star what is playing.</div>` : ""}
+          ${this._results && !this._results.length && !this._searching
+            ? `<div class="ps-note">${sec.config_entry ? "No results." : "Search needs a Music Assistant config_entry."}</div>` : ""}
+
+          <div style="margin-top:14px">${this._recentHtml()}</div>
+        </div>`;
+    }
+
+    if (this._sheet === "schedule") {
+      const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Thermostat schedule</span>${close}</div>
+          ${this._scheduleHtml(sec)}
+        </div>`;
+    }
+    return "";
+  },
+});
+
+/* ============================================================================
+ * purdy-shell-card — styles
+ *
+ * One sheet, kept whole and in source order. Splitting it by section would
+ * re-order rules and quietly change the cascade.
+ * ========================================================================== */
+
+const PS_STYLES = `
       :host {
         ${PC_TOKENS}
         --ps-text: #e8eef4;
@@ -8025,8 +8074,7 @@ class PurdyShellCard extends PcBaseCard {
 
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
     `;
-  }
-}
+
 pcDefine("climate-panel-card", ClimatePanelCard);
 pcDefine("sleep-panel-card", SleepPanelCard);
 pcDefine("purdy-header-card", PurdyHeaderCard);
