@@ -63,6 +63,72 @@ function pcNavigate(node, path) {
   node.dispatchEvent(ev);
 }
 
+/* ============================================================================
+ * Shared primitives
+ *
+ * Everything here had two or more copies across the cards. A copy is fine
+ * until one of them is fixed and the others are not — which had already
+ * happened to the escaper below.
+ *
+ * What is deliberately NOT here: the hypnogram, the temperature graph and the
+ * ring markup. Those look like duplicates and are not. The sleep card samples
+ * fixed-width bars across a session; the shell draws one step per state change
+ * with risers between lanes. They are different pictures of the same data, and
+ * folding them together would mean picking one and changing how the other view
+ * looks. Only the geometry they genuinely agree on is shared.
+ * ========================================================================== */
+
+/* One escaper. There were four, and the shell's quietly omitted the apostrophe
+   — harmless inside double-quoted attributes, which is exactly why nobody
+   noticed it drift. */
+const PC_ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+function pcEsc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => PC_ESC[c]);
+}
+
+/* Read a state or one of its attributes as a number, or null. Anything
+   non-finite is null so a caller can tell "no reading" from "zero" — the
+   distinction the whole failure-state pass depends on. */
+function pcNumOf(st, attr) {
+  if (!st) return null;
+  const n = parseFloat(attr ? st.attributes[attr] : st.state);
+  return Number.isFinite(n) ? n : null;
+}
+
+/* Ring geometry. Every ring in this bundle is a 270° sweep starting at 135°,
+   and every one of them had its own copy of the marker derivation — including
+   three separate comments explaining the same +90.
+   The markup stays per-card: radii, stroke widths and colours legitimately
+   differ, and the sleep ring butts its segments where the others round them. */
+const PC_RING_START = 135;
+const PC_RING_SWEEP = 270;
+
+function pcRingArc(r) {
+  return 2 * Math.PI * r * (PC_RING_SWEEP / 360);
+}
+
+/* Where a fraction sits on the ring, in degrees. */
+function pcRingAngle(frac) {
+  return PC_RING_START + PC_RING_SWEEP * Math.max(0, Math.min(1, frac));
+}
+
+/* Rotation for a marker authored upright at 12 o'clock. The ring is measured
+   from 3 o'clock, so an upright tick needs the extra quarter turn. */
+function pcRingRotate(frac) {
+  return pcRingAngle(frac) + 90;
+}
+
+/* An MA player also proxies whatever else its source device is doing, so a
+   player is showing *music* only when the app or the content type says so —
+   otherwise a TV episode raises a phantom now-playing row. */
+const PC_MUSIC_TYPES = ["music", "playlist", "track", "album", "radio"];
+function pcIsMusicState(st) {
+  if (!st) return false;
+  const a = st.attributes || {};
+  if (a.app_id === "music_assistant") return true;
+  return PC_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
+}
+
 const CPC_VERSION = "1.1.4";
 
 const CPC_DEFAULTS = {
@@ -208,11 +274,7 @@ class ClimatePanelCard extends HTMLElement {
   }
 
   _num(id, attr) {
-    const s = this._st(id);
-    if (!s) return null;
-    const raw = attr ? s.attributes[attr] : s.state;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) ? n : null;
+    return pcNumOf(this._st(id), attr);
   }
 
   _fmt(n, digits = 1) {
@@ -222,7 +284,7 @@ class ClimatePanelCard extends HTMLElement {
   }
 
   _esc(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    return pcEsc(s);
   }
 
   _goalEntity() {
@@ -412,7 +474,7 @@ class ClimatePanelCard extends HTMLElement {
   _ringSvg(cur, goal) {
     const { min, max } = this._config.ring;
     const R = 46, C = 2 * Math.PI * R;
-    const SWEEP = 270, TRACK = (SWEEP / 360) * C;
+    const TRACK = pcRingArc(R);
     const frac = cur === null ? 0 : Math.min(1, Math.max(0, (cur - min) / (max - min)));
     const fill = frac * TRACK;
     const hvac = this._st(this._config.thermostat);
@@ -421,9 +483,7 @@ class ClimatePanelCard extends HTMLElement {
     let marker = "";
     if (goal !== null && Number.isFinite(goal)) {
       const gfrac = Math.min(1, Math.max(0, (goal - min) / (max - min)));
-      // The marker line is authored at 12 o'clock (-90° from 3 o'clock).
-      // The arc runs clockwise from 135°, so rotate by 135 + frac·sweep + 90.
-      const rot = 135 + gfrac * SWEEP + 90;
+      const rot = pcRingRotate(gfrac);
       marker = `<line x1="54" y1="3" x2="54" y2="13" stroke="var(--cpc-muted)" stroke-width="2.5" stroke-linecap="round" transform="rotate(${rot.toFixed(1)} 54 54)"/>`;
     }
     return `
@@ -1659,15 +1719,11 @@ class SleepPanelCard extends HTMLElement {
   }
 
   _num(id, attr) {
-    const s = this._st(id);
-    if (!s) return null;
-    const raw = attr ? s.attributes[attr] : s.state;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) ? n : null;
+    return pcNumOf(this._st(id), attr);
   }
 
   _esc(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    return pcEsc(s);
   }
 
   _visible(cond) {
@@ -1980,7 +2036,7 @@ class SleepPanelCard extends HTMLElement {
     const goal = goalDeep !== null || goalLight !== null ? (goalDeep || 0) + (goalLight || 0) : null;
 
     const R = 92;
-    const ARC = 2 * Math.PI * R * 0.75; // 270° sweep
+    const ARC = pcRingArc(R);
     const clamp = (v) => Math.max(0, Math.min(1, v / max));
     const dLen = ARC * clamp(d);
     const lLen = ARC * clamp(Math.min(l, Math.max(0, max - d)));
@@ -1988,7 +2044,9 @@ class SleepPanelCard extends HTMLElement {
     let marker = "";
     if (goal !== null && goal > 0 && goal < max) {
       const frac = goal / max;
-      const ang = ((135 + 270 * frac) * Math.PI) / 180;
+      /* This ring draws its tick from trig endpoints rather than a rotate, so
+         it shares the angle but not the upright quarter-turn. */
+      const ang = (pcRingAngle(frac) * Math.PI) / 180;
       const x1 = 120 + 80 * Math.cos(ang);
       const y1 = 120 + 80 * Math.sin(ang);
       const x2 = 120 + 104 * Math.cos(ang);
@@ -4328,18 +4386,12 @@ class PurdyDevicesCard extends PcBaseCard {
 /* States that mean "there is a queue we can act on". */
 const PC_MUSIC_LIVE = ["playing", "paused", "buffering"];
 
-/* An MA player also proxies whatever else its source device is doing — the
-   Living Room Cast reports `playing` all through a Peacock episode. Only treat
-   it as music when Music Assistant is the app driving it, or when the content
-   type says so outright. */
-const PC_MUSIC_TYPES = ["music", "playlist", "track", "album", "radio"];
-
+/* The is-it-music rule itself lives in 05-shared.js; this adds the liveness
+   check the card needs on top of it. */
 function pcIsMusic(hass, id) {
   const st = hass && hass.states[id];
   if (!st || PC_MUSIC_LIVE.indexOf(st.state) < 0) return false;
-  const a = st.attributes || {};
-  if (a.app_id === "music_assistant") return true;
-  return PC_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
+  return pcIsMusicState(st);
 }
 
 class PurdyMusicCard extends PcBaseCard {
@@ -4585,9 +4637,7 @@ class PurdyMusicCard extends PcBaseCard {
   /* Track and playlist names are third-party strings that land in innerHTML —
      "Rock & Roll", a title with a quote, or worse. Escape them. */
   _esc(s) {
-    return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    return pcEsc(s);
   }
 
   _itemHtml(r, group, i) {
@@ -4995,22 +5045,10 @@ function psMins(hhmm) {
   return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
 }
 
-function psEsc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
-  );
-}
-
-/* An MA player is playing *music* only when the app or the content type says
-   so — the same player proxies whatever else its source device is doing, so a
-   TV episode would otherwise raise a phantom now-playing row. */
-const PS_MUSIC_TYPES = ["music", "playlist", "track", "album", "radio"];
-function psIsMusic(st) {
-  if (!st) return false;
-  const a = st.attributes || {};
-  if (a.app_id === "music_assistant") return true;
-  return PS_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
-}
+/* Both of these were local copies. See 05-shared.js — the escaper in
+   particular had already drifted from the other three. */
+const psEsc = pcEsc;
+const psIsMusic = pcIsMusicState;
 
 class PurdyShellCard extends PcBaseCard {
   static getStubConfig() {
@@ -5962,8 +6000,13 @@ class PurdyShellCard extends PcBaseCard {
 
   /* Pure helpers, exposed so the smoke test can exercise them without
      reaching into the bundle's module scope. */
+  /* The bundle is one concatenated script, so its free functions are not
+     reachable from a test that evals it. This is the seam they come out of. */
   static get helpers() {
-    return { minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs };
+    return {
+      minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
+      numOf: pcNumOf, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
+    };
   }
 
   static get styles() {
@@ -6002,24 +6045,24 @@ Object.assign(PurdyShellCard.prototype, {
   _ringSvg(size, stroke, segs, goalFrac) {
     const r = size / 2 - stroke / 2 - 2;
     const c = 2 * Math.PI * r;
-    const arc = c * 0.75;
+    const arc = pcRingArc(r);
     const cx = size / 2;
     let off = 0;
     let out = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
       <circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
         stroke-width="${stroke}" stroke-linecap="round"
-        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
     segs.forEach(([f, col]) => {
       const len = arc * Math.max(0, Math.min(1, f));
       if (len <= 0.2) { off += len; return; }
       out += `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="${col}"
         stroke-width="${stroke}" stroke-linecap="round"
         stroke-dasharray="${len.toFixed(2)} ${c.toFixed(2)}"
-        stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+        stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
       off += len;
     });
     if (goalFrac != null && goalFrac > 0 && goalFrac <= 1) {
-      const deg = 135 + 270 * goalFrac + 90; // ring starts at 3 o'clock; tick drawn at 12
+      const deg = pcRingRotate(goalFrac);
       out += `<line x1="${cx}" y1="${(cx - r - stroke / 2 - 1).toFixed(2)}" x2="${cx}" y2="${(cx - r + stroke / 2 + 1).toFixed(2)}"
         stroke="var(--ps-warn)" stroke-width="2.2" stroke-linecap="round"
         transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;
@@ -7046,7 +7089,7 @@ Object.assign(PurdyShellCard.prototype, {
       (res || []).forEach((series) => (series || []).forEach((e) => {
         const a = e.attributes || {};
         if (!a.media_title || !a.media_content_id) return;
-        if (a.app_id !== "music_assistant" && PS_MUSIC_TYPES.indexOf(a.media_content_type) < 0) return;
+        if (!pcIsMusicState(e)) return;
         rows.push({
           t: new Date(e.last_changed || e.last_updated).getTime(),
           uri: a.media_content_id,

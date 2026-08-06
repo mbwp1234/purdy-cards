@@ -955,6 +955,48 @@ check('shell bind handlers read hass live rather than capturing it', (() => {
   return b.length > 500 && !/const hass = this\._hass;/.test(b) && !/\bhass\./.test(b);
 })());
 
+/* --------------------------------------------------- shared primitives -- */
+const { esc: pcEscFn, numOf: pcNumOfFn, ringArc: pcRingArcFn, ringAngle: pcRingAngleFn, ringRotate: pcRingRotateFn } = SH.helpers;
+/* These had two to four copies each. The point of the assertions is that
+   exactly one implementation survives, and that folding them changed no
+   numbers — the ring geometry is shared precisely so the pictures stay
+   identical. */
+check('there is one escaper implementation, not four',
+  (src.match(/replace\(\/\[&<>"'\]\/g/g) || []).length === 1);
+check('the escaper covers the apostrophe the shell used to miss',
+  pcEscFn("a<b>&\"'") === 'a&lt;b&gt;&amp;&quot;&#39;');
+check('every card routes through it', (() => {
+  const bodies = (src.match(/_esc\(s\) \{\s*return ([^;]+);/g) || []);
+  return bodies.length >= 3 && bodies.every((b) => b.includes('pcEsc(s)'));
+})());
+check('there is one is-it-music rule', (() => {
+  const t = (src.match(/const PC_MUSIC_TYPES = /g) || []).length;
+  return t === 1 && !/PS_MUSIC_TYPES/.test(src);
+})());
+check('a numeric read tells no-reading from zero',
+  pcNumOfFn({ state: '0' }) === 0 &&
+  pcNumOfFn({ state: 'unavailable' }) === null &&
+  pcNumOfFn(null) === null &&
+  pcNumOfFn({ state: 'x', attributes: { temperature: 68 } }, 'temperature') === 68);
+
+/* The three rings all sweep 270° from 135°; the marker derivation had three
+   copies and three comments explaining the same +90. */
+check('the shared arc matches what the climate ring used to compute',
+  Math.abs(pcRingArcFn(46) - (270 / 360) * 2 * Math.PI * 46) < 1e-9);
+check('the shared arc matches what the sleep ring used to compute',
+  Math.abs(pcRingArcFn(92) - 2 * Math.PI * 92 * 0.75) < 1e-9);
+check('the marker angle matches the old inline derivation',
+  Math.abs(pcRingAngleFn(0.4) - (135 + 270 * 0.4)) < 1e-9);
+check('the upright tick keeps its quarter turn',
+  Math.abs(pcRingRotateFn(0.4) - (135 + 270 * 0.4 + 90)) < 1e-9);
+check('the marker angle is clamped to the ring',
+  pcRingAngleFn(-1) === 135 && pcRingAngleFn(2) === 405);
+/* The hypnogram and the temperature graph are NOT shared: they are different
+   pictures of the same data, and folding them would change how v1 looks. */
+check('the divergent renderers were left alone deliberately',
+  fs.readFileSync(new URL('../src/05-shared.js', import.meta.url),'utf8')
+    .includes('different pictures of the same data'));
+
 /* ---------------------------------------------- section reconciliation -- */
 /* The whole point of patching is that an unchanged section is not touched,
    so the interesting assertions are about writes that do NOT happen. The

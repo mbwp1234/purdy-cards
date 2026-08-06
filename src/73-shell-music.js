@@ -29,7 +29,7 @@ Object.assign(PurdyShellCard.prototype, {
       (res || []).forEach((series) => (series || []).forEach((e) => {
         const a = e.attributes || {};
         if (!a.media_title || !a.media_content_id) return;
-        if (a.app_id !== "music_assistant" && PS_MUSIC_TYPES.indexOf(a.media_content_type) < 0) return;
+        if (!pcIsMusicState(e)) return;
         rows.push({
           t: new Date(e.last_changed || e.last_updated).getTime(),
           uri: a.media_content_id,

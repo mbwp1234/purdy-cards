@@ -57,22 +57,10 @@ function psMins(hhmm) {
   return (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
 }
 
-function psEsc(s) {
-  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
-  );
-}
-
-/* An MA player is playing *music* only when the app or the content type says
-   so — the same player proxies whatever else its source device is doing, so a
-   TV episode would otherwise raise a phantom now-playing row. */
-const PS_MUSIC_TYPES = ["music", "playlist", "track", "album", "radio"];
-function psIsMusic(st) {
-  if (!st) return false;
-  const a = st.attributes || {};
-  if (a.app_id === "music_assistant") return true;
-  return PS_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
-}
+/* Both of these were local copies. See 05-shared.js — the escaper in
+   particular had already drifted from the other three. */
+const psEsc = pcEsc;
+const psIsMusic = pcIsMusicState;
 
 class PurdyShellCard extends PcBaseCard {
   static getStubConfig() {
@@ -1024,8 +1012,13 @@ class PurdyShellCard extends PcBaseCard {
 
   /* Pure helpers, exposed so the smoke test can exercise them without
      reaching into the bundle's module scope. */
+  /* The bundle is one concatenated script, so its free functions are not
+     reachable from a test that evals it. This is the seam they come out of. */
   static get helpers() {
-    return { minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs };
+    return {
+      minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
+      numOf: pcNumOf, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
+    };
   }
 
   static get styles() {

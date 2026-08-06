@@ -136,15 +136,11 @@ class SleepPanelCard extends HTMLElement {
   }
 
   _num(id, attr) {
-    const s = this._st(id);
-    if (!s) return null;
-    const raw = attr ? s.attributes[attr] : s.state;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) ? n : null;
+    return pcNumOf(this._st(id), attr);
   }
 
   _esc(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    return pcEsc(s);
   }
 
   _visible(cond) {
@@ -457,7 +453,7 @@ class SleepPanelCard extends HTMLElement {
     const goal = goalDeep !== null || goalLight !== null ? (goalDeep || 0) + (goalLight || 0) : null;
 
     const R = 92;
-    const ARC = 2 * Math.PI * R * 0.75; // 270° sweep
+    const ARC = pcRingArc(R);
     const clamp = (v) => Math.max(0, Math.min(1, v / max));
     const dLen = ARC * clamp(d);
     const lLen = ARC * clamp(Math.min(l, Math.max(0, max - d)));
@@ -465,7 +461,9 @@ class SleepPanelCard extends HTMLElement {
     let marker = "";
     if (goal !== null && goal > 0 && goal < max) {
       const frac = goal / max;
-      const ang = ((135 + 270 * frac) * Math.PI) / 180;
+      /* This ring draws its tick from trig endpoints rather than a rotate, so
+         it shares the angle but not the upright quarter-turn. */
+      const ang = (pcRingAngle(frac) * Math.PI) / 180;
       const x1 = 120 + 80 * Math.cos(ang);
       const y1 = 120 + 80 * Math.sin(ang);
       const x2 = 120 + 104 * Math.cos(ang);

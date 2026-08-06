@@ -29,24 +29,24 @@ Object.assign(PurdyShellCard.prototype, {
   _ringSvg(size, stroke, segs, goalFrac) {
     const r = size / 2 - stroke / 2 - 2;
     const c = 2 * Math.PI * r;
-    const arc = c * 0.75;
+    const arc = pcRingArc(r);
     const cx = size / 2;
     let off = 0;
     let out = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
       <circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
         stroke-width="${stroke}" stroke-linecap="round"
-        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
     segs.forEach(([f, col]) => {
       const len = arc * Math.max(0, Math.min(1, f));
       if (len <= 0.2) { off += len; return; }
       out += `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="${col}"
         stroke-width="${stroke}" stroke-linecap="round"
         stroke-dasharray="${len.toFixed(2)} ${c.toFixed(2)}"
-        stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(135 ${cx} ${cx})"/>`;
+        stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
       off += len;
     });
     if (goalFrac != null && goalFrac > 0 && goalFrac <= 1) {
-      const deg = 135 + 270 * goalFrac + 90; // ring starts at 3 o'clock; tick drawn at 12
+      const deg = pcRingRotate(goalFrac);
       out += `<line x1="${cx}" y1="${(cx - r - stroke / 2 - 1).toFixed(2)}" x2="${cx}" y2="${(cx - r + stroke / 2 + 1).toFixed(2)}"
         stroke="var(--ps-warn)" stroke-width="2.2" stroke-linecap="round"
         transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;

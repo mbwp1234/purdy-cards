@@ -16,18 +16,12 @@
 /* States that mean "there is a queue we can act on". */
 const PC_MUSIC_LIVE = ["playing", "paused", "buffering"];
 
-/* An MA player also proxies whatever else its source device is doing — the
-   Living Room Cast reports `playing` all through a Peacock episode. Only treat
-   it as music when Music Assistant is the app driving it, or when the content
-   type says so outright. */
-const PC_MUSIC_TYPES = ["music", "playlist", "track", "album", "radio"];
-
+/* The is-it-music rule itself lives in 05-shared.js; this adds the liveness
+   check the card needs on top of it. */
 function pcIsMusic(hass, id) {
   const st = hass && hass.states[id];
   if (!st || PC_MUSIC_LIVE.indexOf(st.state) < 0) return false;
-  const a = st.attributes || {};
-  if (a.app_id === "music_assistant") return true;
-  return PC_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
+  return pcIsMusicState(st);
 }
 
 class PurdyMusicCard extends PcBaseCard {
@@ -273,9 +267,7 @@ class PurdyMusicCard extends PcBaseCard {
   /* Track and playlist names are third-party strings that land in innerHTML —
      "Rock & Roll", a title with a quote, or worse. Escape them. */
   _esc(s) {
-    return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    return pcEsc(s);
   }
 
   _itemHtml(r, group, i) {

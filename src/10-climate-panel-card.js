@@ -143,11 +143,7 @@ class ClimatePanelCard extends HTMLElement {
   }
 
   _num(id, attr) {
-    const s = this._st(id);
-    if (!s) return null;
-    const raw = attr ? s.attributes[attr] : s.state;
-    const n = parseFloat(raw);
-    return Number.isFinite(n) ? n : null;
+    return pcNumOf(this._st(id), attr);
   }
 
   _fmt(n, digits = 1) {
@@ -157,7 +153,7 @@ class ClimatePanelCard extends HTMLElement {
   }
 
   _esc(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    return pcEsc(s);
   }
 
   _goalEntity() {
@@ -347,7 +343,7 @@ class ClimatePanelCard extends HTMLElement {
   _ringSvg(cur, goal) {
     const { min, max } = this._config.ring;
     const R = 46, C = 2 * Math.PI * R;
-    const SWEEP = 270, TRACK = (SWEEP / 360) * C;
+    const TRACK = pcRingArc(R);
     const frac = cur === null ? 0 : Math.min(1, Math.max(0, (cur - min) / (max - min)));
     const fill = frac * TRACK;
     const hvac = this._st(this._config.thermostat);
@@ -356,9 +352,7 @@ class ClimatePanelCard extends HTMLElement {
     let marker = "";
     if (goal !== null && Number.isFinite(goal)) {
       const gfrac = Math.min(1, Math.max(0, (goal - min) / (max - min)));
-      // The marker line is authored at 12 o'clock (-90° from 3 o'clock).
-      // The arc runs clockwise from 135°, so rotate by 135 + frac·sweep + 90.
-      const rot = 135 + gfrac * SWEEP + 90;
+      const rot = pcRingRotate(gfrac);
       marker = `<line x1="54" y1="3" x2="54" y2="13" stroke="var(--cpc-muted)" stroke-width="2.5" stroke-linecap="round" transform="rotate(${rot.toFixed(1)} 54 54)"/>`;
     }
     return `
