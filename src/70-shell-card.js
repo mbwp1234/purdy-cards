@@ -2277,19 +2277,20 @@ class PurdyShellCard extends PcBaseCard {
     });
   }
 
-  /* Scrubbing must never compete with scrolling.
+  /* Scrubbing must never compete with scrolling, and only one mechanism can
+   * actually hold a touch gesture once it has begun.
    *
-   * Earlier attempts kept the graph listening to every pointermove and tried
-   * to let the page through with `touch-action: pan-y`. That is the wrong
-   * shape: on touch, the first move of a scroll gesture lands on the graph,
-   * and any handling of it fights the scroller.
+   * `touch-action` is read at gesture start and cannot be taken back: with
+   * `auto` the browser owns the gesture, so the first vertical move starts a
+   * scroll and fires `pointercancel`, killing any drag. Pointer capture does
+   * not help — the gesture is already gone. The one thing that does work
+   * mid-gesture is `preventDefault()` on a NON-PASSIVE `touchmove`.
    *
-   * So the two input types get two different contracts. A mouse hovers and
-   * scrubs immediately — there is no scroll gesture to confuse it with. A
-   * finger scrolls by default and only enters scrub mode after a deliberate
-   * long press; moving before that press completes cancels it, because a
-   * quick drag is a scroll. Only once scrub mode is entered does the element
-   * take `touch-action: none` and capture the pointer.
+   * So the two input types get two implementations. A mouse uses pointer
+   * events and scrubs on hover, having no scroll gesture to be confused with.
+   * A finger uses raw touch events: it scrolls freely until a deliberate press
+   * completes, after which every touchmove is prevented and the gesture is
+   * ours until the finger lifts — wherever on the screen it goes.
    */
   _bindScrub() {
     const root = this.shadowRoot;
@@ -2306,7 +2307,6 @@ class PurdyShellCard extends PcBaseCard {
       let holdTimer = null;
       let startX = 0;
       let startY = 0;
-      let pid = null;
 
       const hide = () => {
         cross.hidden = true;
@@ -2317,14 +2317,8 @@ class PurdyShellCard extends PcBaseCard {
       const stop = () => {
         clearTimeout(holdTimer);
         holdTimer = null;
-        if (scrubbing) {
-          scrubbing = false;
-          box.classList.remove("scrubbing");
-          if (pid != null && box.releasePointerCapture) {
-            try { box.releasePointerCapture(pid); } catch (e) { /* already gone */ }
-          }
-        }
-        pid = null;
+        scrubbing = false;
+        box.classList.remove("scrubbing");
         hide();
       };
 
@@ -2369,77 +2363,69 @@ class PurdyShellCard extends PcBaseCard {
         out.classList.add("live");
       };
 
-      box.addEventListener("pointerdown", (ev) => {
-        if (ev.pointerType === "mouse") {
-          scrubbing = true;
-          readout(ev.clientX);
-          return;
-        }
-        /* Touch and pen: assume a scroll until proven otherwise. */
-        startX = ev.clientX;
-        startY = ev.clientY;
-        pid = ev.pointerId;
+      /* ---- mouse: hover, no gesture to fight ---- */
+      box.addEventListener("pointermove", (ev) => {
+        if (ev.pointerType !== "mouse") return;
+        readout(ev.clientX);
+      });
+      box.addEventListener("pointerleave", (ev) => {
+        if (ev.pointerType !== "mouse") return;
+        hide();
+      });
+
+      /* ---- touch: scroll by default, own the gesture once pressed ---- */
+      const TOL = 18;   // a thumb on glass wanders; that is not a swipe
+      const HOLD = 340;
+
+      box.addEventListener("touchstart", (ev) => {
+        if (ev.touches.length !== 1) return;
+        const t = ev.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
         clearTimeout(holdTimer);
         holdTimer = setTimeout(() => {
           scrubbing = true;
           box.classList.add("scrubbing");
-          if (box.setPointerCapture) {
-            try { box.setPointerCapture(pid); } catch (e) { /* pointer already released */ }
-          }
           readout(startX);
-        }, 340);
-      });
+        }, HOLD);
+      }, { passive: true });
 
-      box.addEventListener("pointermove", (ev) => {
-        if (ev.pointerType === "mouse") {
-          readout(ev.clientX);
-          return;
-        }
+      /* Non-passive: once scrubbing, this preventDefault is the only thing
+         that stops the page scrolling out from under the drag. */
+      box.addEventListener("touchmove", (ev) => {
+        const t = ev.touches[0];
+        if (!t) return;
         if (scrubbing) {
           ev.preventDefault();
-          if (pid != null && box.setPointerCapture && !box.hasPointerCapture?.(pid)) {
-            try { box.setPointerCapture(pid); } catch (e) { /* pointer gone */ }
-          }
           /* Only X matters, so the thumb can drop below the plot and out of
-             the way while still moving the crosshair. */
-          readout(ev.clientX);
+             its own way — off the element entirely is fine. */
+          readout(t.clientX);
           return;
         }
-        /* Moved a real distance before the press completed — that is a
-           scroll, so let go. Generous, because a thumb resting on glass
-           wanders a few pixels and that should not count as a swipe. */
         if (holdTimer &&
-            (Math.abs(ev.clientX - startX) > 18 || Math.abs(ev.clientY - startY) > 18)) {
+            (Math.abs(t.clientX - startX) > TOL || Math.abs(t.clientY - startY) > TOL)) {
           clearTimeout(holdTimer);
           holdTimer = null;
-          pid = null;
         }
-      });
+      }, { passive: false });
 
-      /* A tap is unambiguously not a scroll, so it is the primary way in:
-         lift without having moved and the readout appears where you touched,
-         then clears itself. The long press above is for dragging along. */
-      box.addEventListener("pointerup", (ev) => {
-        if (ev.pointerType !== "mouse" && !scrubbing &&
-            Math.abs(ev.clientX - startX) <= 18 && Math.abs(ev.clientY - startY) <= 18) {
+      box.addEventListener("touchend", (ev) => {
+        const t = ev.changedTouches && ev.changedTouches[0];
+        /* A tap is unambiguously not a scroll, so it is the quick way in:
+           lift without having moved and the readout appears, then clears. */
+        if (!scrubbing && t &&
+            Math.abs(t.clientX - startX) <= TOL && Math.abs(t.clientY - startY) <= TOL) {
           clearTimeout(holdTimer);
           holdTimer = null;
-          pid = null;
-          readout(ev.clientX);
+          readout(t.clientX);
           clearTimeout(this._tapTimer);
           this._tapTimer = setTimeout(hide, 5000);
           return;
         }
         stop();
       });
-      box.addEventListener("pointercancel", stop);
-      /* Crossing the graph's edge must NOT end a drag — moving the thumb below
-         the plot is exactly how you get it out of your own way. Pointer
-         capture keeps the events coming, so leave only ends a mouse hover. */
-      box.addEventListener("pointerleave", (ev) => {
-        if (scrubbing && ev.pointerType !== "mouse") return;
-        stop();
-      });
+
+      box.addEventListener("touchcancel", stop);
     });
   }
 

@@ -884,9 +884,18 @@ check('graphs claim the gesture only while scrubbing', /\[data-scrub\]\.scrubbin
 check('the wave no longer pins touch-action itself', !/\.ps-wave \{[^}]*touch-action/.test(shs));
 check('the hypnogram no longer pins touch-action itself', !/\.ps-hypplot \{[^}]*touch-action/.test(shs));
 check('scrubbing is entered by long press, not by any contact', src.includes('setTimeout(') && src.includes('box.classList.add("scrubbing")'));
-check('a move before the press completes cancels it', src.includes('Moved a real distance before the press completed'));
-check('a mouse scrubs without waiting', src.includes('ev.pointerType === "mouse"'));
+/* touch-action is read at gesture start and cannot be taken back, so pointer
+   events alone cannot hold a drag once the browser has begun scrolling. A
+   non-passive touchmove that preventDefaults is the only thing that can. */
+check('touch is handled by raw touch events, not pointer events', src.includes('addEventListener("touchmove"'));
+check('touchmove is non-passive so it can hold the gesture', src.includes('{ passive: false }'));
+check('touchstart stays passive so an ordinary swipe is never delayed', src.includes('{ passive: true }'));
+check('the drag prevents the page scrolling out from under it', /if \(scrubbing\) \{\s*ev\.preventDefault\(\);/.test(src));
+check('pointer handlers are mouse-only now', /ev\.pointerType !== "mouse"\) return;/.test(src));
+check('a move before the press completes cancels it', src.includes('holdTimer = null;'));
+check('a mouse scrubs without waiting', src.includes('mouse: hover, no gesture to fight'));
 check('a tap alone shows the readout', src.includes('A tap is unambiguously not a scroll'));
+check('a tap that turned into a drag does not leave a stale readout', src.includes('stop();'));
 
 /* The scrubber was written but never wired: an unrelated edit moved the
    render tail, a string replace silently missed, and _bindScrub sat there
@@ -1149,9 +1158,12 @@ check('the readout restores its resting text', src.includes('out.innerHTML = res
 check('the thumb may leave the plot while scrubbing', src.includes('thumb can drop below the plot'));
 /* Crossing the graph edge used to fire pointerleave and kill the drag, which
    is precisely the gesture the readout-above-plot change invites. */
-check('leaving the plot does not end a touch drag', src.includes("if (scrubbing && ev.pointerType !== \"mouse\") return;"));
-check('a wandering thumb still enters scrub mode', src.includes('> 18'));
-check('capture is retaken if the first attempt lost the race', src.includes('hasPointerCapture'));
+check('leaving the plot cannot end a touch drag, because pointerleave is mouse-only',
+  /pointerleave", \(ev\) => \{\s*if \(ev\.pointerType !== "mouse"\) return;/.test(src) &&
+  src.includes('off the element entirely is fine'));
+check('a wandering thumb still enters scrub mode', src.includes('const TOL = 18'));
+check('no pointer capture is needed, since touch events are not retargeted',
+  !src.includes('setPointerCapture'));
 check('hypnogram plot is positioned for a crosshair', shs.includes('.ps-hypplot { position: relative'));
 
 const shx = new SH();
