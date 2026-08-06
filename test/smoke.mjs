@@ -718,6 +718,108 @@ mrh._hass = { ...svcHass, callApi: async () => { throw new Error('should not be 
 await mrh._fetchRecent();
 check('compact mode never fetches history', mrh._recent.length===0);
 
+
+// ---------------------------------------------------------------- shell ---
+check('purdy-shell-card defined', names.includes('purdy-shell-card'));
+const SH = defined['purdy-shell-card'];
+const shs = SH.styles;
+check('shell styles carry shared --pc-panel token', shs.includes('--pc-panel:'));
+check('shell aliases ps->pc for cool', shs.includes('--ps-cool: var(--pc-cool)'));
+check('shell has the gradient ground', shs.includes('.ps-ground'));
+check('shell column is one glass pane', shs.includes('.ps-col') && shs.includes('backdrop-filter'));
+check('shell sections divided by hairline not gap', shs.includes('.ps-sect + .ps-sect { border-top'));
+check('shell dock is fixed', /\.ps-dockwrap \{[^}]*position: fixed/.test(shs));
+check('shell expand CSS present', shs.includes('.ps-sect.open .ps-xtra'));
+check('shell styles have no unresolved placeholder', !shs.includes('${'));
+
+let sherr = null;
+try { new SH().setConfig({ sections: [{ type: 'nope' }] }); } catch (e) { sherr = e.message; }
+check('shell rejects an unknown section type', /unknown section type/.test(sherr || ''));
+let sherr2 = null;
+try { new SH().setConfig({ weather: 'weather.x' }); } catch (e) { sherr2 = e.message; }
+check('shell requires sections', /'sections'/.test(sherr2 || ''));
+
+const shell = new SH();
+shell.setConfig({
+  weather: 'weather.kcho',
+  attention: [
+    { entity: 'vacuum.litter', state: 'error', severity: 'critical', title: 'Litter' },
+    { match: 'battery_plus_low$', state: 'on', severity: 'info', title: 'low batteries', strip: 'Battery low' },
+  ],
+  now_playing: { players: [{ entity: 'media_player.a', name: 'Kitchen' }] },
+  dock: [{ icon: 'mdi:home', name: 'Home', link: '/lovelace/x' }],
+  sections: [
+    { type: 'sleep', key: 'joel', sleep_state: 'sensor.sleep', ring: { deep: 'sensor.d', light: 'sensor.l' },
+      vitals: [{ label: 'Heart', entity: 'sensor.hr', baseline: 'sensor.hrb', unit: 'bpm', digits: 0, lower_is_better: true }] },
+    { type: 'climate', key: 'clim', goal: 'climate.g', graph: { inside: 'sensor.in', outside: 'sensor.out' },
+      zones: { select: 'select.z', options: [{ label: '1st', option: '1st floor', temp: 'sensor.z1' }] } },
+    { type: 'systems', key: 'sys', meters: [{ label: 'Array', entity: 'sensor.array' }],
+      groups: [{ name: 'Docker', items: [{ entity: 'switch.c1', name: 'Jellyfin' }] }] },
+  ],
+});
+check('shell watches nested section entities', shell._watched.includes('sensor.hr') && shell._watched.includes('sensor.z1'));
+check('shell watches dock + now_playing entities', shell._watched.includes('media_player.a'));
+check('shell history entities are graph + sleep only',
+  JSON.stringify(shell._historyEntities().sort()) === JSON.stringify(['sensor.in','sensor.out','sensor.sleep'].sort()));
+check('shell getCardSize is full-view sized', shell.getCardSize() === 30);
+
+shell._hass = { states: {
+  'vacuum.litter': { state: 'error', attributes: {} },
+  'binary_sensor.front_battery_plus_low': { state: 'on', attributes: { friendly_name: 'Front door Battery low' } },
+  'binary_sensor.office_battery_plus_low': { state: 'on', attributes: { friendly_name: 'Office Battery low' } },
+  'binary_sensor.attic_battery_plus_low': { state: 'off', attributes: { friendly_name: 'Attic Battery low' } },
+} };
+const f = shell._faults();
+check('shell fault rules fire', f.length === 2);
+check('shell sorts critical first', f[0].severity === 'critical');
+check('shell group rule collapses matches into one row', f[1].title === '2 low batteries');
+check('shell group rule strips the label suffix', /Front door/.test(f[1].detail) && !/Battery low/.test(f[1].detail));
+check('shell group rule ignores non-firing members', !/Attic/.test(f[1].detail));
+
+// now-playing: a TV episode on an MA-mirrored player must not raise a music row
+shell._hass = { states: { 'media_player.a': { state: 'playing',
+  attributes: { app_id: 'peacock_tv', media_content_type: 'tvshow', media_title: 'Episode 14' } } } };
+check('shell now-playing ignores a TV show', shell._nowPlaying() === null);
+shell._hass = { states: { 'media_player.a': { state: 'playing',
+  attributes: { app_id: 'music_assistant', media_title: 'Dance Mode' } } } };
+check('shell now-playing accepts music', (shell._nowPlaying() || {}).playing === true);
+shell._hass = { states: { 'media_player.a': { state: 'paused',
+  attributes: { app_id: 'music_assistant', media_title: 'Dance Mode' } } } };
+check('shell now-playing falls back to paused', (shell._nowPlaying() || {}).playing === false);
+shell._hass = { states: { 'media_player.a': { state: 'idle', attributes: { app_id: 'music_assistant' } } } };
+check('shell now-playing is null when idle', shell._nowPlaying() === null);
+
+// bedtime helpers are minutes past midnight, never printed raw
+const { minsToClock: psMinsToClock, dur: psDur, esc: psEsc } = SH.helpers;
+check('shell converts bedtime minutes to a clock', psMinsToClock(1165) === '7:25 PM');
+check('shell bedtime handles midnight', psMinsToClock(0) === '12:00 AM');
+check('shell bedtime handles noon', psMinsToClock(720) === '12:00 PM');
+check('shell bedtime tolerates null', psMinsToClock(null) === '—');
+check('shell duration formats hours and minutes', psDur(207) === '3h 27m');
+check('shell duration formats sub-hour', psDur(42) === '42m');
+check('shell escapes markup in titles', psEsc('<b>&"') === '&lt;b&gt;&amp;&quot;');
+
+// the ring lays segments end to end on a 270-degree arc
+const ring = shell._ringSvg(98, 8, [[0.0342, '#AA78FF'], [0.2508, '#50A0FF']], 0.8925);
+check('ring draws a track plus both segments', (ring.match(/<circle/g) || []).length === 3);
+check('ring offsets the second segment past the first', /stroke-dashoffset="-\d/.test(ring));
+check('ring draws the goal tick when a goal is given', ring.includes('<line'));
+const ringNoGoal = shell._ringSvg(92, 7.5, [[0.5, '#4dd0e1']], null);
+check('ring omits the tick with no goal', !ringNoGoal.includes('<line'));
+
+// the sleep span stops at the session break rather than gluing two nights
+shell._hass = { states: {} };
+shell._history = { 'sensor.sleep': [
+  { t: Date.now() - 30 * 3600e3, s: 'light_sleep' },
+  { t: Date.now() - 29 * 3600e3, s: 'deep_sleep' },
+  { t: Date.now() - 3 * 3600e3, s: 'light_sleep' },
+  { t: Date.now() - 2 * 3600e3, s: 'deep_sleep' },
+] };
+const shSpan = shell._sleepSpan({ sleep_state: 'sensor.sleep' });
+check('sleep span starts at this session, not last night', Date.now() - shSpan.from < 4 * 3600e3);
+check('sleep span drops the previous session rows', shSpan.rows.length === 2);
+check('sleep span is null with no sleep history', shell._sleepSpan({ sleep_state: 'sensor.none' }) === null);
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
