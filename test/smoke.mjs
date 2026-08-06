@@ -912,6 +912,135 @@ check('a drag suppresses the repaint that would drop the slider', (() => {
   const held = shm.shadowRoot.innerHTML === 'KEEP'; shm._dragging = false; return held;
 })());
 
+// ---- parity with the original view ----
+const NOW_S = Math.floor(Date.now() / 1000);
+const shp = new SH();
+shp.setConfig({
+  dismiss_store: 'input_text.dis', dismiss_hours: 12, log_to: 'todo.log',
+  attention: [{ key: 'lit', entity: 'vacuum.l', state: 'error', severity: 'critical', title: 'Litter' }],
+  sections: [
+    { type: 'tv', key: 'tv', title: 'TV', tvs: [
+      { name: 'Living', media_player: 'media_player.tv', app_sensor: 'sensor.app', remote: 'remote.tv' }] },
+    { type: 'climate', key: 'clim', goal: 'climate.g',
+      hold: { remaining: 'sensor.rem', cancel_service: 'gttc.cancel_override' },
+      schedule: { api: 'gttc' } },
+  ],
+});
+check('shell watches the dismissal store', shp._watched.includes('input_text.dis'));
+check('shell watches tv entities', shp._watched.includes('media_player.tv') && shp._watched.includes('sensor.app'));
+
+shp._hass = { states: {
+  'vacuum.l': { state: 'error', attributes: {}, last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
+  'input_text.dis': { state: '', attributes: {} },
+  'media_player.tv': { state: 'off', attributes: {} },
+  'sensor.app': { state: 'Netflix', attributes: {} },
+  'sensor.rem': { state: '0', attributes: {} },
+  'climate.g': { state: 'cool', attributes: {} },
+} };
+check('a raised fault shows while undismissed', shp._faults().length === 1);
+check('raised rows carry a key and a fire time', shp._raised()[0].key === 'lit' && shp._raised()[0].firedAt > 0);
+
+shp._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 60), attributes: {} };
+check('a dismissal hides the row', shp._faults().length === 0);
+shp._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 1200), attributes: {} };
+check('a re-fire brings the row back', shp._faults().length === 1);
+shp._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 13 * 3600), attributes: {} };
+check('dismiss_hours caps how long a stale row hides', shp._faults().length === 1);
+check('malformed dismissal store is ignored, not fatal', (() => {
+  shp._hass.states['input_text.dis'] = { state: 'unknown', attributes: {} };
+  return Object.keys(shp._dismissals()).length === 0;
+})());
+
+// the store is a 255-char input_text, so the oldest keys must be dropped
+let written = null;
+shp._hass.callService = (d, sv, data) => { written = data.value; };
+const big = {};
+for (let i = 0; i < 60; i++) big['key' + i] = NOW_S - i;
+shp._writeDismissals(big);
+check('dismissal store never exceeds the 255-char cap', written.length <= 255);
+check('dismissal store keeps the newest keys', written.indexOf('key0:') === 0);
+
+check('tv section hides when every set is off', shp._secTv(shp._config.sections[0]) === '');
+shp._hass.states['media_player.tv'] = { state: 'on', attributes: {} };
+const tvh = shp._secTv(shp._config.sections[0]);
+check('tv section appears when a set is on', /Netflix/.test(tvh) && /data-tvoff="remote.tv"/.test(tvh));
+
+check('hold row hides with no hold', shp._holdHtml(shp._config.sections[1]) === '');
+shp._hass.states['sensor.rem'] = { state: '45', attributes: {} };
+check('hold row shows the time left', /45m/.test(shp._holdHtml(shp._config.sections[1])));
+shp._armed = 'hold';
+check('hold cancel needs a second tap', /Tap again/.test(shp._holdHtml(shp._config.sections[1])));
+shp._armed = null;
+
+// recently listened is recorder-derived, and must not file a TV show as a track
+const shr = new SH();
+shr.setConfig({ sections: [{ type: 'music', key: 'music', recent_hours: 48, recent_max: 5,
+  players: [{ entity: 'media_player.a', name: 'K' }] }] });
+shr._hass = { states: {}, callApi: async () => [[
+  { last_changed: '2026-08-05T20:00:00-04:00', attributes: { app_id: 'music_assistant', media_title: 'Old', media_artist: 'A', media_content_id: 'u:1' } },
+  { last_changed: '2026-08-05T21:00:00-04:00', attributes: { app_id: 'music_assistant', media_title: 'New', media_artist: 'B', media_content_id: 'u:2' } },
+  { last_changed: '2026-08-05T21:30:00-04:00', attributes: { app_id: 'music_assistant', media_title: 'New', media_artist: 'B', media_content_id: 'u:2' } },
+  { last_changed: '2026-08-05T21:45:00-04:00', attributes: { app_id: 'peacock_tv', media_title: 'Ep 14', media_content_id: 'u:tv' } },
+  { last_changed: '2026-08-05T19:00:00-04:00', attributes: { app_id: 'music_assistant', media_title: 'No URI', media_artist: 'C' } },
+]] };
+await shr._fetchRecent();
+check('recent is newest first', shr._recent[0].name === 'New' && shr._recent[1].name === 'Old');
+check('recent dedupes a repeated track', shr._recent.length === 2);
+check('recent drops a TV app', !shr._recent.some((r) => r.name === 'Ep 14'));
+check('recent drops rows with no playable uri', !shr._recent.some((r) => r.name === 'No URI'));
+
+// search needs a config entry, and says so rather than silently returning nothing
+const shq = new SH();
+shq.setConfig({ sections: [{ type: 'music', key: 'music', players: [{ entity: 'media_player.a', name: 'K' }] }] });
+shq._hass = { states: {} };
+shq._query = 'bluey';
+await shq._runSearch();
+check('search without a config entry yields an empty result, not a crash',
+  Array.isArray(shq._results) && shq._results.length === 0);
+
+shq._config.sections[0].config_entry = 'ENTRY';
+let svcArgs = null;
+shq._hass.callService = async (d, sv, data, t, x, ret) => {
+  svcArgs = { d, sv, data, ret };
+  return { response: { tracks: [{ uri: 'u:t', name: 'Dance Mode', artists: [{ name: 'Bluey' }] }],
+                       playlists: [{ uri: 'u:p', name: 'Mix' }] } };
+};
+await shq._runSearch();
+check('search calls music_assistant.search with a response', svcArgs.d === 'music_assistant' && svcArgs.sv === 'search' && svcArgs.ret === true);
+check('search passes the config entry', svcArgs.data.config_entry_id === 'ENTRY');
+check('search flattens tracks and playlists', shq._results.length === 2 && shq._results[0].kind === 'track');
+check('a track result names its artists', shq._results[0].sub === 'Bluey');
+
+let played = null;
+shq._hass.callService = (d, sv, data) => { played = { d, sv, data }; };
+shq._playUri('u:p', 'playlist');
+check('playing a result uses music_assistant.play_media', played.d === 'music_assistant' && played.sv === 'play_media');
+check('play_media replaces the queue on the default player', played.data.enqueue === 'replace' && played.data.entity_id === 'media_player.a');
+
+// schedule editing addresses the right day and carries the old times
+const shs2 = new SH();
+shs2.setConfig({ sections: [{ type: 'climate', key: 'clim', goal: 'climate.g', schedule: { api: 'gttc' } }] });
+shs2._hass = { states: { 'climate.g': { state: 'cool', attributes: {} } } };
+shs2._sched = { weekday: [{ time_start: '06:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }],
+                weekend: [{ time_start: '08:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }] };
+const isWknd = new Date().getDay() === 0 || new Date().getDay() === 6;
+check('schedule edits address today’s day bucket', shs2._schedDayName() === (isWknd ? 'weekend' : 'weekday'));
+// _schedDelete refetches afterwards, so capture every message, not the last
+const wsMsgs = [];
+const schedFixture = { weekday: [{ time_start: '06:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }],
+                       weekend: [{ time_start: '08:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }] };
+shs2._hass.callWS = async (m) => { wsMsgs.push(m); return schedFixture; };
+shs2._schedEdit = 0;
+await shs2._schedDelete();
+const del = wsMsgs.find((m) => m.type === 'gttc/delete_entry');
+check('delete names the entry by its own times', !!del && del.time_start === (isWknd ? '08:00' : '06:00'));
+check('delete names today’s day bucket', del.day === (isWknd ? 'weekend' : 'weekday'));
+check('delete refetches the schedule afterwards', wsMsgs.some((m) => m.type === 'gttc/get_schedule'));
+check('delete clears the editor', shs2._schedEdit === null);
+check('schedule rows are tappable when editable', /data-sedit="0"/.test(shs2._scheduleHtml(shs2._config.sections[0])));
+shs2._config.sections[0].schedule.editable = false;
+check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtml(shs2._config.sections[0])));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

@@ -14,7 +14,7 @@
  * ========================================================================== */
 
 const PS_SECTIONS = [
-  "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems",
+  "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
@@ -91,6 +91,13 @@ class PurdyShellCard extends PcBaseCard {
     this._events = [];
     this._sched = null;
     this._dragging = false;   // a volume drag must survive the state repaint
+    this._armed = null;       // key of a destructive control awaiting a second tap
+    this._logged = {};        // rule key -> firedAt already written to the log
+    this._results = null;     // music search results, null until a query runs
+    this._recent = [];
+    this._query = "";
+    this._schedEdit = null;   // index of the entry being edited, or "new"
+    this._schedNote = null;
     this._pending = false;
   }
 
@@ -122,6 +129,7 @@ class PurdyShellCard extends PcBaseCard {
       this._startHistory();
       this._fetchEvents();
       this._fetchSchedule();
+      this._fetchRecent();
     }
   }
 
@@ -141,6 +149,7 @@ class PurdyShellCard extends PcBaseCard {
     const ids = [c.weather, c.occupancy].filter(Boolean);
     const push = (x) => { if (x) ids.push(x); };
 
+    push(c.dismiss_store);
     (c.attention || []).forEach((r) => push(r.entity));
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
@@ -170,6 +179,11 @@ class PurdyShellCard extends PcBaseCard {
         (s.rooms || []).forEach((r) => { push(r.temp); push(r.humidity); });
         (s.chips || []).forEach((ch) => push(ch.entity));
         push((s.hold || {}).remaining);
+        push((s.schedule || {}).mode_entity);
+        push((s.schedule || {}).switch_entity);
+      }
+      if (s.type === "tv") {
+        (s.tvs || []).forEach((t) => { push(t.media_player); push(t.app_sensor); push(t.remote); });
       }
       if (s.type === "people") {
         (s.people || []).forEach((p) => { push(p.entity); push(p.battery); push(p.steps); });
@@ -250,6 +264,93 @@ class PurdyShellCard extends PcBaseCard {
 
   /* GTTC exposes the whole schedule over its own websocket command; the
      climate entity only ever carries the window that happens to be active. */
+  /* Recently listened comes from HA's recorder, not Music Assistant: MA's
+     last_played / play_count are empty in this install, so its own
+     "recently played" ordering is silently meaningless. Every MA player logs
+     media_title, media_artist and a playable media_content_id per state
+     change, so read it back from there. Bounded by recorder retention. */
+  async _fetchRecent() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    if (!sec || !this._hass || !this._hass.callApi) return;
+    const ids = (sec.players || []).map((p) => p.entity);
+    if (!ids.length) return;
+    const start = new Date(Date.now() - (sec.recent_hours || 48) * 3600 * 1000).toISOString();
+    try {
+      const res = await this._hass.callApi("GET", `history/period/${start}?filter_entity_id=${ids.join(",")}`);
+      const rows = [];
+      (res || []).forEach((series) => (series || []).forEach((e) => {
+        const a = e.attributes || {};
+        if (!a.media_title || !a.media_content_id) return;
+        if (a.app_id !== "music_assistant" && PS_MUSIC_TYPES.indexOf(a.media_content_type) < 0) return;
+        rows.push({
+          t: new Date(e.last_changed || e.last_updated).getTime(),
+          uri: a.media_content_id,
+          name: a.media_title,
+          sub: a.media_artist || a.media_album_name || "",
+          kind: "track",
+        });
+      }));
+      rows.sort((x, y) => y.t - x.t);
+      const seen = {};
+      const out = [];
+      rows.forEach((r) => {
+        if (seen[r.uri] || !Number.isFinite(r.t)) return;
+        seen[r.uri] = 1;
+        out.push(r);
+      });
+      this._recent = out.slice(0, sec.recent_max || 8);
+      this._last = null;
+      this._render();
+    } catch (err) {
+      /* Recorder may be purged; the list just stays empty. */
+    }
+  }
+
+  async _runSearch() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    const q = (this._query || "").trim();
+    const entry = sec && sec.config_entry;
+    if (!q || !entry) {
+      this._results = q && !entry ? [] : null;
+      this._render();
+      return;
+    }
+    this._searching = true;
+    this._render();
+    try {
+      const r = await this._hass.callService(
+        "music_assistant", "search",
+        { config_entry_id: entry, name: q }, undefined, false, true
+      );
+      const d = (r && r.response) || {};
+      const rows = [];
+      const take = (arr, kind, n) => (arr || []).slice(0, n).forEach((x) => rows.push({
+        uri: x.uri, name: x.name, kind, image: x.image,
+        sub: kind === "track" && x.artists && x.artists.length
+          ? x.artists.map((a) => a.name).join(", ") : kind,
+      }));
+      take(d.tracks, "track", 4);
+      take(d.playlists, "playlist", 3);
+      take(d.albums, "album", 2);
+      take(d.artists, "artist", 2);
+      this._results = rows;
+    } catch (err) {
+      this._results = [];
+    }
+    this._searching = false;
+    this._render();
+  }
+
+  _playUri(uri, kind) {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    const np = this._nowPlaying();
+    const target = np ? np.entity : (sec && (sec.default_player || (sec.players[0] || {}).entity));
+    if (!uri || !target) return;
+    this._hass.callService("music_assistant", "play_media", {
+      entity_id: target, media_id: uri, media_type: kind || "track", enqueue: "replace",
+    });
+  }
+
   async _fetchSchedule() {
     const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
     if (!sec || !this._hass || !this._hass.callWS) return;
@@ -261,6 +362,13 @@ class PurdyShellCard extends PcBaseCard {
     } catch (e) {
       this._sched = null;
     this._dragging = false;   // a volume drag must survive the state repaint
+    this._armed = null;       // key of a destructive control awaiting a second tap
+    this._logged = {};        // rule key -> firedAt already written to the log
+    this._results = null;     // music search results, null until a query runs
+    this._recent = [];
+    this._query = "";
+    this._schedEdit = null;   // index of the entry being edited, or "new"
+    this._schedNote = null;
     }
   }
 
@@ -276,6 +384,79 @@ class PurdyShellCard extends PcBaseCard {
     return s[dow === 0 || dow === 6 ? "weekend" : "weekday"] || [];
   }
 
+  _schedDayName() {
+    const s = this._sched;
+    const dow = new Date().getDay();
+    if (s && s.mode === "per_day") {
+      return ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][dow];
+    }
+    return dow === 0 || dow === 6 ? "weekend" : "weekday";
+  }
+
+  _schedWs(msg) {
+    const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+    const extra = sec && sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
+    return this._hass.callWS({ ...msg, ...extra });
+  }
+
+  async _schedSave() {
+    const root = this.shadowRoot;
+    const val = (f) => {
+      const el = root.querySelector(`[data-f="${f}"]`);
+      return el ? el.value : "";
+    };
+    const entries = this._schedToday().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+    const orig = this._schedEdit === "new" ? null : entries[this._schedEdit];
+    const msg = {
+      type: "gttc/update_entry",
+      day: this._schedDayName(),
+      time_start: val("time_start"),
+      time_end: val("time_end"),
+      target_temp: parseFloat(val("target_temp")),
+    };
+    if (!msg.time_start || !msg.time_end || !Number.isFinite(msg.target_temp)) {
+      this._schedNote = "Start, end and heat temperature are required.";
+      this._render();
+      return;
+    }
+    const cool = parseFloat(val("cooling_temp"));
+    if (Number.isFinite(cool)) msg.cooling_temp = cool;
+    if (orig) {
+      msg.old_time_start = orig.time_start;
+      msg.old_time_end = orig.time_end;
+      if (orig.zone_id) msg.zone_id = orig.zone_id;
+      if (orig.away_temp != null) msg.away_temp = orig.away_temp;
+    }
+    try {
+      const res = await this._schedWs(msg);
+      this._schedNote = res && res.conflicts && res.conflicts.length
+        ? "Saved \u2014 overlaps another window, check the times." : null;
+      this._schedEdit = null;
+      await this._fetchSchedule();
+    } catch (err) {
+      this._schedNote = "Save failed: " + ((err && err.message) || "unknown error");
+      this._render();
+    }
+  }
+
+  async _schedDelete() {
+    const entries = this._schedToday().slice().sort((a, b) => psMins(a.time_start) - psMins(b.time_start));
+    const orig = entries[this._schedEdit];
+    if (!orig) return;
+    try {
+      await this._schedWs({
+        type: "gttc/delete_entry", day: this._schedDayName(),
+        time_start: orig.time_start, time_end: orig.time_end,
+      });
+      this._schedEdit = null;
+      this._schedNote = null;
+      await this._fetchSchedule();
+    } catch (err) {
+      this._schedNote = "Delete failed: " + ((err && err.message) || "unknown error");
+      this._render();
+    }
+  }
+
   _scheduleHtml(sec) {
     const h = this._hass;
     const cfg = sec.schedule || {};
@@ -289,7 +470,8 @@ class PurdyShellCard extends PcBaseCard {
     let bars = "";
     entries.forEach((e, i) => {
       const start = psMins(e.time_start);
-      const end = i + 1 < entries.length ? psMins(entries[i + 1].time_start) : 1440;
+      const end = e.time_end ? psMins(e.time_end)
+        : (i + 1 < entries.length ? psMins(entries[i + 1].time_start) : 1440);
       const left = (start / 1440) * 100;
       const w = Math.max(1.2, ((end - start) / 1440) * 100);
       const live = cur && cur.time_start === e.time_start;
@@ -297,15 +479,40 @@ class PurdyShellCard extends PcBaseCard {
         >${e.cooling_temp != null ? Math.round(e.cooling_temp) + "\u00B0" : ""}</span>`;
     });
 
-    const rows = entries.map((e) => {
+    const editable = cfg.editable !== false;
+    const rows = entries.map((e, i) => {
       const live = cur && cur.time_start === e.time_start;
-      return `<div class="ps-sr ${live ? "live" : ""}">
+      return `<button class="ps-sr ${live ? "live" : ""}" type="button" ${
+          editable ? `data-sedit="${i}"` : "disabled"}>
           <span class="ps-srt">${psEsc(psMinsToClock(psMins(e.time_start)))}</span>
           <span class="ps-srv"><i class="h"></i>${e.target_temp == null ? "\u2014" : Math.round(e.target_temp) + "\u00B0"}
             <i class="c"></i>${e.cooling_temp == null ? "\u2014" : Math.round(e.cooling_temp) + "\u00B0"}</span>
           ${live ? `<span class="ps-chip cool">now</span>` : ""}
-        </div>`;
+        </button>`;
     }).join("");
+
+    let editor = "";
+    if (editable && this._schedEdit !== null) {
+      const isNew = this._schedEdit === "new";
+      const e = isNew ? {} : (entries[this._schedEdit] || {});
+      editor = `<div class="ps-sedit">
+          <div class="ps-sform">
+            <label>Start<input type="time" data-f="time_start" value="${psEsc(e.time_start || "")}" /></label>
+            <label>End<input type="time" data-f="time_end" value="${psEsc(e.time_end || "")}" /></label>
+            <label>Heat<input type="number" inputmode="decimal" data-f="target_temp" value="${
+              e.target_temp == null ? "" : e.target_temp}" /></label>
+            <label>Cool<input type="number" inputmode="decimal" data-f="cooling_temp" value="${
+              e.cooling_temp == null ? "" : e.cooling_temp}" /></label>
+          </div>
+          ${this._schedNote ? `<div class="ps-snote">${psEsc(this._schedNote)}</div>` : ""}
+          <div class="ps-btns">
+            <button class="ps-btn primary" type="button" id="ps-ssave">Save</button>
+            <button class="ps-btn" type="button" id="ps-scancel">Cancel</button>
+            ${isNew ? "" : `<button class="ps-btn danger ${this._armed === "sdel" ? "armed" : ""}"
+              type="button" data-arm="sdel">${this._armed === "sdel" ? "Tap again" : "Delete"}</button>`}
+          </div>
+        </div>`;
+    }
 
     const modeId = cfg.mode_entity;
     const onId = cfg.switch_entity;
@@ -327,6 +534,9 @@ class PurdyShellCard extends PcBaseCard {
           <div class="ps-srs">${rows}</div>`
         : `<div class="ps-flat" style="font-size:11px">${this._sched === null
             ? "Schedule unavailable." : "No windows set for today."}</div>`}
+        ${editor}
+        ${editable && this._schedEdit === null && this._sched
+          ? `<div class="ps-btns"><button class="ps-btn" type="button" data-sedit="new">Add a window</button></div>` : ""}
       </div>`;
   }
 
@@ -385,14 +595,113 @@ class PurdyShellCard extends PcBaseCard {
     return String(u.name).trim().split(/\s+/)[0];
   }
 
-  /* Attention rules. Same grammar as purdy-attention-card: one of
-     state / state_not / above / below, plus `match:` for a group rule. */
-  _faults() {
+  /* --- dismissals ---------------------------------------------------------
+     A dismissal is an acknowledgement, not a mute: a row stays hidden only
+     while the triggering entity has not changed since, and `dismiss_hours`
+     caps how long a stale one can hide. Store format is `key:epoch|key:epoch`
+     in an input_text, which caps at 255 characters — so keep rule keys short
+     and drop the oldest entries rather than overflowing the write. */
+  _dismissals() {
+    const raw = pcState(this._hass, this._config.dismiss_store);
+    const out = {};
+    if (!raw || raw === "unknown" || raw === "unavailable") return out;
+    raw.split("|").forEach((pair) => {
+      const bits = pair.split(":");
+      const at = parseInt(bits[1], 10);
+      if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
+    });
+    return out;
+  }
+
+  _writeDismissals(map) {
+    const store = this._config.dismiss_store;
+    if (!store) return;
+    let pairs = Object.keys(map)
+      .map((k) => [k, map[k]])
+      .sort((a, b) => b[1] - a[1])
+      .map((e) => e[0] + ":" + e[1]);
+    while (pairs.length && pairs.join("|").length > 255) pairs.pop();
+    this._hass.callService("input_text", "set_value", {
+      entity_id: store, value: pairs.join("|"),
+    });
+  }
+
+  _dismiss(row) {
+    const map = this._dismissals();
+    map[row.key] = Math.floor(Date.now() / 1000);
+    this._writeDismissals(map);
+    if (this._config.log_to) this._closeLog(row);
+    this._last = null;
+    this._render();
+  }
+
+  async _logItems() {
+    if (!this._config.log_to || !this._hass.callWS) return [];
+    const res = await this._hass.callWS({ type: "todo/item/list", entity_id: this._config.log_to });
+    return (res && res.items) || [];
+  }
+
+  /* One open log entry per raised rule. The key lives in the description so
+     the entry can be found again without depending on the wording. */
+  async _syncLog(rows) {
+    if (!this._config.log_to || !rows.length || !this._hass.callWS) return;
+    let items;
+    try { items = await this._logItems(); } catch (e) { return; }
+    for (const row of rows) {
+      const tag = "[" + row.key + "]";
+      const open = items.find((it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed");
+      if (open) continue;
+      if (this._logged[row.key] === row.firedAt) continue;
+      this._logged[row.key] = row.firedAt;
+      this._hass.callService("todo", "add_item", {
+        entity_id: this._config.log_to,
+        item: row.title,
+        description: tag + " " + row.severity + " \u00B7 " + (row.detail || "") +
+          " \u00B7 raised " + new Date(row.firedAt * 1000).toISOString(),
+      });
+    }
+  }
+
+  async _closeLog(row) {
+    if (!this._hass.callWS) return;
+    let items;
+    try { items = await this._logItems(); } catch (e) { return; }
+    const tag = "[" + row.key + "]";
+    const open = items.find((it) => (it.description || "").indexOf(tag) >= 0 && it.status !== "completed");
+    if (open) {
+      this._hass.callService("todo", "update_item", {
+        entity_id: this._config.log_to, item: open.uid, status: "completed",
+      });
+    }
+  }
+
+  /* When did this rule's condition last change? A dismissal older than that
+     means the fault re-fired, so the row comes back. */
+  _firedAt(r) {
+    const h = this._hass;
+    if (r.entity && h.states[r.entity]) {
+      return Math.floor(new Date(h.states[r.entity].last_changed).getTime() / 1000);
+    }
+    if (r.match) {
+      const re = new RegExp(r.match);
+      let newest = 0;
+      Object.keys(h.states).forEach((id) => {
+        if (!re.test(id) || h.states[id].state !== (r.state || "on")) return;
+        const t = Math.floor(new Date(h.states[id].last_changed).getTime() / 1000);
+        if (t > newest) newest = t;
+      });
+      return newest;
+    }
+    return 0;
+  }
+
+  /* Everything currently matching, before dismissals are applied. */
+  _raised() {
     const rules = this._config.attention || [];
     const hass = this._hass;
     if (!hass) return [];
     const out = [];
-    rules.forEach((r) => {
+    rules.forEach((r, i) => {
       const hit = (st) => {
         if (!st) return false;
         const v = st.state;
@@ -411,20 +720,24 @@ class PurdyShellCard extends PcBaseCard {
           .map((id) => (hass.states[id].attributes.friendly_name || id).replace(r.strip || "", "").trim());
         if (names.length) {
           out.push({
+            key: r.key || "r" + i,
             severity: r.severity || "info",
             title: `${names.length} ${r.title || "issues"}`,
             detail: names.slice(0, 4).join(" · "),
             entity: null,
+            firedAt: this._firedAt(r),
           });
         }
         return;
       }
       if (hit(hass.states[r.entity])) {
         out.push({
+          key: r.key || "r" + i,
           severity: r.severity || "warn",
           title: r.title || pcName(hass, r.entity),
           detail: r.detail || "",
           entity: r.entity,
+          firedAt: this._firedAt(r),
         });
       }
     });
@@ -433,6 +746,20 @@ class PurdyShellCard extends PcBaseCard {
     const rank = { critical: 0, warn: 1, info: 2 };
     const at = (x) => (rank[x] === undefined ? 3 : rank[x]);
     return out.sort((a, b) => at(a.severity) - at(b.severity));
+  }
+
+  /* What the chip and the sheet actually show: raised, minus live dismissals. */
+  _faults() {
+    const dis = this._dismissals();
+    const now = Math.floor(Date.now() / 1000);
+    const hrs = this._config.dismiss_hours;
+    return this._raised().filter((row) => {
+      const at = dis[row.key];
+      if (!at) return true;
+      if (row.firedAt > at) return true;           // it re-fired
+      if (hrs && now - at > hrs * 3600) return true; // the snooze lapsed
+      return false;
+    });
   }
 
   /* The one player worth showing in the mini bar: prefer something actually
@@ -778,6 +1105,7 @@ class PurdyShellCard extends PcBaseCard {
         </div>
       </div>
       <div class="ps-zpair">${zones}${outside}</div>
+      ${this._holdHtml(sec)}
       <div class="ps-xtra">
         ${sec.schedule ? `<div class="ps-btns">
           <button class="ps-btn" type="button" data-sheet="schedule">
@@ -792,6 +1120,47 @@ class PurdyShellCard extends PcBaseCard {
           <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "—" : inNow.toFixed(1) + "°"}</b></span>
           <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "—" : outNow.toFixed(1) + "°"}</b></span>
         </div>${wave}</div>` : ""}`;
+  }
+
+  /* Renders nothing at all when every television is off, the same way the
+     conditional card it replaces disappeared from the old view. */
+  _secTv(sec) {
+    const h = this._hass;
+    const live = (sec.tvs || []).filter((t) => {
+      const st = pcState(h, t.media_player);
+      return st && st !== "off" && st !== "unavailable" && st !== "unknown";
+    });
+    if (!live.length) return "";
+    const rows = live.map((t) => {
+      const app = pcState(h, t.app_sensor);
+      return `<div class="ps-tvrow">
+          <svg viewBox="0 0 24 24" class="ps-ico"><rect x="2.5" y="5" width="19" height="12" rx="2"/><path d="M8.5 20.5h7"/></svg>
+          <span class="ps-grow"><span class="ps-tvn">${psEsc(t.name)}</span>
+            <span class="ps-tva ps-trunc">${psEsc(app && app !== "unknown" ? app : "On")}</span></span>
+          <button class="ps-tvoff" type="button" data-tvoff="${psEsc(t.remote || t.media_player)}"
+            aria-label="Turn off ${psEsc(t.name)}">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 3.5v8"/><path d="M6.8 7.2a7.5 7.5 0 1 0 10.4 0"/></svg>
+          </button>
+        </div>`;
+    }).join("");
+    return `${this._head(sec, `<span class="ps-chip good"><span class="ps-dot"></span>${live.length} on</span>`)}${rows}`;
+  }
+
+  /* A manual hold outranks the schedule, so it gets its own row with a
+     two-tap cancel rather than hiding among the chips. */
+  _holdHtml(sec) {
+    const hold = sec.hold;
+    if (!hold || !hold.remaining) return "";
+    const raw = pcState(this._hass, hold.remaining);
+    const mins = parseFloat(raw);
+    if (!Number.isFinite(mins) || mins <= 0) return "";
+    const armed = this._armed === "hold";
+    return `<button class="ps-hold ${armed ? "armed" : ""}" type="button" data-arm="hold">
+        <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
+        <span class="ps-grow">${armed ? "Tap again to cancel the hold"
+          : `Hold active \u00B7 ${psDur(mins)} left`}</span>
+        <span class="ps-holdx">${armed ? "Cancel" : "\u00D7"}</span>
+      </button>`;
   }
 
   _secPeople(sec) {
@@ -1039,6 +1408,8 @@ class PurdyShellCard extends PcBaseCard {
     const c = this._config;
     const now = new Date();
     const who = this._who();
+    const raised = this._raised();
+    if (this._config.log_to) this._syncLog(raised);
     const faults = this._faults();
     const worst = faults.length
       ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
@@ -1065,7 +1436,9 @@ class PurdyShellCard extends PcBaseCard {
         quick: () => this._secQuick(sec),
         calendar: () => this._secCalendar(sec),
         systems: () => this._secSystems(sec),
+        tv: () => this._secTv(sec),
       }[sec.type]();
+      if (!body) return "";   // a self-hiding section takes its divider with it
       const open = this._open === sec.key;
       return `<div class="ps-sect ${open ? "open" : ""}" data-sect="${psEsc(sec.key)}">${body}</div>`;
     }).join("");
@@ -1136,10 +1509,14 @@ class PurdyShellCard extends PcBaseCard {
       return `<div class="ps-scrim" id="ps-scrim"></div>
         <div class="ps-sheet">
           <div class="ps-sheeth"><span class="ps-lbl">Needs attention</span>${close}</div>
-          ${faults.map((f) => `<div class="ps-ar" data-info="${psEsc(f.entity || "")}">
+          ${faults.map((f, i) => `<div class="ps-ar" data-info="${psEsc(f.entity || "")}">
             <span class="ps-dotc ${f.severity}"></span>
             <span class="ps-grow"><span class="ps-at">${psEsc(f.title)}</span>
-            <span class="ps-ad">${psEsc(f.detail)}</span></span></div>`).join("")}
+            <span class="ps-ad">${psEsc(f.detail)}</span></span>
+            ${this._config.dismiss_store ? `<button class="ps-x" type="button" data-dismiss="${i}"
+              aria-label="Dismiss ${psEsc(f.title)}">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
+          </div>`).join("")}
         </div>`;
     }
 
@@ -1205,6 +1582,32 @@ class PurdyShellCard extends PcBaseCard {
           </div>
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
           ${rooms}
+
+          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Search</span>
+          <div class="ps-sbox">
+            <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
+            <input id="ps-q" type="search" placeholder="Tracks, albums, playlists\u2026"
+              value="${psEsc(this._query)}" aria-label="Search music" />
+            ${this._query ? `<button class="ps-sclear" type="button" id="ps-qclear" aria-label="Clear">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
+          </div>
+          ${this._searching ? `<div class="ps-note">Searching\u2026</div>` : ""}
+          ${this._results && this._results.length ? `<div class="ps-mlist">${
+            this._results.map((r, i) => `<button class="ps-mi" type="button" data-play="${i}" data-from="results">
+              <span class="ps-th">${r.image ? `<img src="${psEsc(r.image)}" alt="" />`
+                : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</span>
+              <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
+              <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span>
+              <span class="ps-kind">${psEsc(r.kind)}</span></button>`).join("")}</div>` : ""}
+          ${this._results && !this._results.length && !this._searching
+            ? `<div class="ps-note">${sec.config_entry ? "No results." : "Search needs a Music Assistant config_entry."}</div>` : ""}
+
+          ${this._recent.length ? `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Recently listened</span>
+            <div class="ps-mlist">${this._recent.map((r, i) => `
+              <button class="ps-mi" type="button" data-play="${i}" data-from="recent">
+                <span class="ps-th"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg></span>
+                <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
+                <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span></button>`).join("")}</div>` : ""}
         </div>`;
     }
 
@@ -1244,6 +1647,105 @@ class PurdyShellCard extends PcBaseCard {
       el.addEventListener("click", (e) => {
         if (e.target.closest("button")) return;
         pcMoreInfo(this, el.dataset.info);
+      });
+    });
+
+    /* Two-tap confirm for anything destructive: the first tap arms, the
+       second runs. A modal would be heavier than the action deserves. */
+    root.querySelectorAll("[data-arm]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const k = el.dataset.arm;
+        if (this._armed !== k) {
+          this._armed = k;
+          this._render();
+          clearTimeout(this._armTimer);
+          this._armTimer = setTimeout(() => { this._armed = null; this._render(); }, 5000);
+          return;
+        }
+        this._armed = null;
+        clearTimeout(this._armTimer);
+        if (k === "hold") {
+          const sec = c.sections.find((x) => x.type === "climate");
+          const svc = sec && sec.hold && sec.hold.cancel_service;
+          if (svc && svc.indexOf(".") > 0) {
+            const parts = svc.split(".");
+            hass.callService(parts[0], parts[1], (sec.hold.cancel_data) || {});
+          }
+          this._render();
+        } else if (k === "sdel") {
+          this._schedDelete();
+        }
+      });
+    });
+
+    root.querySelectorAll("[data-dismiss]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const rows = this._faults();
+        const row = rows[parseInt(el.dataset.dismiss, 10)];
+        if (row) this._dismiss(row);
+      });
+    });
+
+    root.querySelectorAll("[data-tvoff]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = el.dataset.tvoff;
+        hass.callService(id.split(".")[0], "turn_off", { entity_id: id });
+      });
+    });
+
+    root.querySelectorAll("[data-sedit]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const v = el.dataset.sedit;
+        this._schedEdit = v === "new" ? "new" : parseInt(v, 10);
+        this._schedNote = null;
+        this._armed = null;
+        this._render();
+      });
+    });
+    const sSave = root.getElementById("ps-ssave");
+    if (sSave) sSave.addEventListener("click", (e) => { e.stopPropagation(); this._schedSave(); });
+    const sCancel = root.getElementById("ps-scancel");
+    if (sCancel) sCancel.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._schedEdit = null; this._schedNote = null; this._armed = null; this._render();
+    });
+    /* Typing must not be eaten by the repaint, so the field owns its value
+       until the query is submitted. */
+    root.querySelectorAll("[data-f]").forEach((el) => {
+      el.addEventListener("pointerdown", () => { this._dragging = true; });
+      el.addEventListener("blur", () => { this._dragging = false; });
+      el.addEventListener("click", (e) => e.stopPropagation());
+    });
+
+    const q = root.getElementById("ps-q");
+    if (q) {
+      q.addEventListener("focus", () => { this._dragging = true; });
+      q.addEventListener("blur", () => { this._dragging = false; });
+      q.addEventListener("click", (e) => e.stopPropagation());
+      q.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        this._query = q.value;
+        this._dragging = false;
+        this._runSearch();
+      });
+      q.addEventListener("search", () => { this._query = q.value; this._dragging = false; this._runSearch(); });
+    }
+    const qc = root.getElementById("ps-qclear");
+    if (qc) qc.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._query = ""; this._results = null; this._dragging = false; this._render();
+    });
+
+    root.querySelectorAll("[data-play]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const list = el.dataset.from === "recent" ? this._recent : (this._results || []);
+        const item = list[parseInt(el.dataset.play, 10)];
+        if (item) this._playUri(item.uri, item.kind);
       });
     });
 
@@ -1751,6 +2253,63 @@ class PurdyShellCard extends PcBaseCard {
       .ps-srv i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 4px 0 0; }
       .ps-srv i.h { background: var(--ps-heat); }
       .ps-srv i.c { background: var(--ps-cool); margin-left: 10px; }
+
+      /* television */
+      .ps-tvrow { display: flex; align-items: center; gap: 10px; padding: 7px 0;
+                  border-top: 1px solid var(--ps-hair-soft); }
+      .ps-tvrow:first-of-type { border-top: 0; }
+      .ps-tvrow > .ps-ico { color: var(--ps-dim); }
+      .ps-tvn { display: block; font-size: 12.5px; font-weight: 650; }
+      .ps-tva { display: block; font-size: 10.5px; color: var(--ps-dim); }
+      .ps-tvoff { width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.08);
+                  display: grid; place-items: center; color: var(--ps-muted); flex: 0 0 auto; }
+      .ps-tvoff:active { color: var(--ps-bad); }
+
+      /* hold */
+      .ps-hold { display: flex; align-items: center; gap: 9px; width: 100%; margin-top: 10px;
+                 background: rgba(242,193,78,.13); color: var(--ps-warn); border-radius: 12px;
+                 padding: 8px 11px; font-size: 11.5px; font-weight: 650; }
+      .ps-hold.armed { background: var(--ps-warn); color: #1a1a1a; }
+      .ps-holdx { font-size: 12px; font-weight: 700; }
+
+      /* schedule editor */
+      .ps-sedit { display: flex; flex-direction: column; gap: 9px; background: var(--ps-fill);
+                  border-radius: 14px; padding: 11px; }
+      .ps-sform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .ps-sform label { display: flex; flex-direction: column; gap: 4px; font-size: 10px;
+                        letter-spacing: .08em; text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
+      .ps-sform input { background: rgba(255,255,255,.07); color: var(--ps-text);
+                        border: 1px solid var(--ps-hair); border-radius: 10px; padding: 8px 9px;
+                        font: inherit; font-size: 14px; font-variant-numeric: tabular-nums;
+                        color-scheme: dark; min-width: 0; }
+      .ps-sform input:focus { outline: 2px solid var(--ps-cool); outline-offset: 1px; }
+      .ps-snote { font-size: 11px; color: var(--ps-warn); }
+      .ps-btn.primary { background: var(--ps-cool); color: #0f1317; }
+      .ps-btn.danger { color: var(--ps-bad); }
+      .ps-btn.armed { background: var(--ps-warn); color: #1a1a1a; }
+      .ps-btn { display: inline-flex; align-items: center; gap: 7px; }
+      .ps-sr { width: 100%; text-align: left; }
+      .ps-sr[disabled] { cursor: default; }
+
+      /* search + lists */
+      .ps-sbox { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,.06);
+                 border-radius: 13px; padding: 0 11px; height: 40px; color: var(--ps-dim); }
+      .ps-sbox input { flex: 1; min-width: 0; border: 0; background: none; outline: none;
+                       font: inherit; font-size: 13.5px; color: var(--ps-text); height: 100%; }
+      .ps-sbox input::placeholder { color: var(--ps-dim); }
+      .ps-sclear { display: flex; color: var(--ps-dim); }
+      .ps-note { font-size: 11.5px; color: var(--ps-dim); padding: 9px 2px; }
+      .ps-mlist { display: flex; flex-direction: column; gap: 1px; }
+      .ps-mi { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 4px;
+               border-radius: 11px; text-align: left; }
+      .ps-mi:active { background: rgba(255,255,255,.06); }
+      .ps-th { width: 34px; height: 34px; border-radius: 9px; background: rgba(255,255,255,.07);
+               display: grid; place-items: center; color: var(--ps-dim); flex: 0 0 auto; overflow: hidden; }
+      .ps-th .ps-ico { width: 15px; height: 15px; }
+      .ps-min { display: block; font-size: 12.5px; font-weight: 650; }
+      .ps-mis { display: block; font-size: 10.5px; color: var(--ps-dim); }
+      .ps-kind { flex: 0 0 auto; font-size: 8.5px; letter-spacing: .09em; text-transform: uppercase;
+                 color: var(--ps-dim); background: rgba(255,255,255,.07); padding: 3px 7px; border-radius: 999px; }
 
       /* music controls */
       .ps-transport { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 14px; }
