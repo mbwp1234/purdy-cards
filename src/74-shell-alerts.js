@@ -188,10 +188,20 @@ Object.assign(PurdyShellCard.prototype, {
        be expressed as a string — so this only leaves it a mount point. */
     const hosted = (this._config.sheets || {})[this._sheet];
     if (hosted && hosted.card) {
+      /* `dim` is for a hosted card that hardcodes a light surface instead of
+         reading HA's card variables — dreame-vacuum-map-card writes #fff in
+         seventy places, so there is nothing to re-theme from out here and a
+         floodlight in the middle of a dark sheet is the result. A filter is
+         the only lever, so it is opt-in per sheet and never applied by
+         default: it dims the map's own colours along with the background,
+         which is a trade the config should make deliberately. */
+      const dim = Number(hosted.dim);
+      const dimStyle = Number.isFinite(dim) && dim > 0 && dim < 1
+        ? ` style="filter:brightness(${dim.toFixed(2)})"` : "";
       return `<div class="ps-scrim" id="ps-scrim"></div>
         <div class="ps-sheet tall">
           <div class="ps-sheeth"><span class="ps-lbl">${psEsc(hosted.title || "")}</span>${close}</div>
-          <div class="ps-host" id="ps-host"></div>
+          <div class="ps-host" id="ps-host"${dimStyle}></div>
         </div>`;
     }
 

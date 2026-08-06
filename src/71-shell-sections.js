@@ -76,7 +76,10 @@ Object.assign(PurdyShellCard.prototype, {
     const pad = Math.max(1.5, (hi - lo) * 0.18);
     lo -= pad; hi += pad;
 
-    const W = 360, H = 74, TOP = 24, BOT = 3;
+    /* TOP was 24 of 74 — a third of the graph reserved as blank headroom for
+       a label that does not live there, showing up as a gap between the
+       legend and the plot. The lines get the room back. */
+    const W = 360, H = 74, TOP = 8, BOT = 3;
     const px = (t) => ((t - t0) / (t1 - t0)) * W;
     const py = (v) => TOP + (1 - (v - lo) / (hi - lo)) * (H - TOP - BOT);
     const line = (arr) =>
@@ -194,6 +197,22 @@ Object.assign(PurdyShellCard.prototype, {
   _humanize(s) {
     const t = String(s == null ? "" : s).replace(/[_-]+/g, " ").trim();
     return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+  },
+
+  /* Why the goal is what it is. Humanising alone left a bare word sitting
+     under the temperature — "Schedule" reads as a stray link rather than a
+     status, where "Manual override" happened to read as a sentence. Say what
+     the known reasons mean and fall back to humanising the rest. */
+  _reasonText(raw) {
+    const known = {
+      schedule: "Following the schedule",
+      manual_override: "Manual override — holding this goal",
+      window_open: "Paused — a window is open",
+      away: "Away setback",
+      preset: "Set by the active preset",
+    };
+    const k = String(raw == null ? "" : raw).toLowerCase();
+    return known[k] || this._humanize(raw);
   },
 
   /* One header treatment for every section.
@@ -426,7 +445,7 @@ Object.assign(PurdyShellCard.prototype, {
             <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
-          ${reason ? `<div class="ps-reason">${psEsc(this._humanize(reason))}</div>` : ""}
+          ${reason ? `<div class="ps-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
         </div>
       </div>
       <div class="ps-zpair">${zones}${outside}</div>

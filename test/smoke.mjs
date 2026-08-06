@@ -1091,9 +1091,13 @@ check('a dock entry with its own destination still reaches it while faults exist
 check('an entry with no destination of its own still falls back to the alerts sheet',
   /!d\.sheet && !d\.section && !d\.link\) \{[\s\S]{0,120}this\._sheet = "alerts"/.test(shellSrc));
 
-/* Glass inside glass reads as a card in a card. */
+/* Glass inside glass reads as a card in a card. Asserted on the config the
+   card is actually handed, not on the source spelling — the previous string
+   match broke the moment the object was given a name. */
 check('a hosted card is told not to draw its own surface',
-  /el\.setConfig\(\{ bare: true, \.\.\.spec\.card \}\)/.test(shellSrc));
+  /bare: true, \.\.\.spec\.card/.test(shellSrc));
+check('an explicit bare:false in config still wins',
+  shellSrc.indexOf('bare: true, ...spec.card') > 0);
 /* `bare` is our convention; a third-party card may reject an unknown key, and
    losing the card over a cosmetic hint would be a poor trade. */
 check('a card that rejects bare is retried without it', (() => {
@@ -1944,7 +1948,72 @@ shcr._hass = { states: { 'climate.g': { state: 'cool',
 const climHtml = shcr._secClimate(shcr._config.sections[0]);
 check('the climate ring marks the goal', /<line[^>]*stroke="var\(--ps-text\)"/.test(climHtml));
 check('the climate reason reads as a sentence',
-  /Manual override/.test(climHtml) && !/manual_override/.test(climHtml));
+  /Manual override — holding this goal/.test(climHtml) && !/manual_override/.test(climHtml));
+check('a bare reason word is expanded into a status', (() => {
+  shcr._hass.states['climate.g'].attributes.hvac_action_reason = 'schedule';
+  const h = shcr._secClimate(shcr._config.sections[0]);
+  shcr._hass.states['climate.g'].attributes.hvac_action_reason = 'manual_override';
+  return /Following the schedule/.test(h);
+})());
+check('an unknown reason still gets humanised',
+  shcr._reasonText('some_new_reason') === 'Some new reason');
+check('the temperature graph does not reserve a third of itself as blank',
+  /TOP = 8/.test(shellSrc));
+
+/* Hosted sheets printed their title twice: the sheet chrome names itself next
+   to the close button, and the card printed its own underneath. */
+const shht = new SH();
+shht.setConfig({
+  sections: [{ type: 'quick', key: 'q', tiles: [] }],
+  sheets: {
+    tv: { title: 'Televisions', card: { type: 'purdy-remote-card', title: 'Televisions' } },
+    keep: { title: 'Kept', keep_title: true, card: { type: 'purdy-remote-card', title: 'Kept' } },
+    bare: { card: { type: 'purdy-remote-card', title: 'Only title' } },
+  },
+});
+shht._hass = { states: {} };
+const hostCfg = (key) => {
+  shht._sheet = key;
+  let seen = null;
+  const el = { setConfig: (c) => { seen = c; }, set hass(h) {} };
+  shht.shadowRoot = { getElementById: () => ({ innerHTML: '', firstChild: null,
+    appendChild() {}, }) };
+  const realCreate = globalThis.document.createElement;
+  globalThis.document.createElement = () => el;
+  const realGet = globalThis.customElements.get;
+  globalThis.customElements.get = () => function () {};
+  shht._hosted = null; shht._hostedKey = null;
+  shht._mountSheetCard();
+  globalThis.document.createElement = realCreate;
+  globalThis.customElements.get = realGet;
+  return seen;
+};
+check('a hosted card does not repeat the sheet title', hostCfg('tv').title === '');
+check('the title is blanked, not deleted, so a header chip survives',
+  Object.prototype.hasOwnProperty.call(hostCfg('tv'), 'title'));
+check('keep_title opts out', hostCfg('keep').title === 'Kept');
+check('a sheet with no title of its own leaves the card alone',
+  hostCfg('bare').title === 'Only title');
+check('a hosted card is still told it is nested', hostCfg('tv').bare === true);
+
+/* A hosted card that hardcodes a light surface can only be filtered. */
+const shdim = new SH();
+shdim.setConfig({
+  sections: [{ type: 'quick', key: 'q', tiles: [] }],
+  sheets: {
+    vac: { title: 'Jeeves', dim: 0.8, card: { type: 'x-card' } },
+    plain: { title: 'Plain', card: { type: 'x-card' } },
+  },
+});
+shdim._hass = { states: {} };
+shdim._sheet = 'vac';
+check('a dimmed sheet filters its host', /filter:brightness\(0\.80\)/.test(shdim._sheetHtml([])));
+shdim._sheet = 'plain';
+check('dimming is opt-in, never the default', !/filter:brightness/.test(shdim._sheetHtml([])));
+shdim._sheet = 'vac';
+shdim._config.sheets.vac.dim = 5;
+check('an out-of-range dim is ignored rather than blanking the sheet',
+  !/filter:brightness/.test(shdim._sheetHtml([])));
 check('the hvac action chip is humanised too', /Cooling/.test(climHtml));
 
 /* Wakeups alone always read the live counter, so a reset before the card was

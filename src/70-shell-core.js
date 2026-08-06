@@ -422,18 +422,26 @@ class PurdyShellCard extends PcBaseCard {
     }
 
     const el = document.createElement(tag);
+    /* The sheet has already drawn a surface, so the card must not draw a
+       second one — the shell is what knows it is nesting, so it defaults
+       `bare` rather than making every hosted config remember to. Listed
+       first so an explicit `bare: false` in config still wins. */
+    const hostCfg = { bare: true, ...spec.card };
+    /* And it has already written the title, for the same reason: the sheet
+       chrome names itself next to the close button. Leaving the card's own
+       title set printed it twice — "TELEVISIONS / Televisions",
+       "NOTIFICATIONS / NOTIFICATIONS". Blanked rather than deleted, so a card
+       that puts a chip or a button in the same header row keeps it. */
+    if (spec.title && !spec.keep_title) hostCfg.title = "";
     try {
-      /* The sheet has already drawn a surface, so the card must not draw a
-         second one — the shell is what knows it is nesting, so it defaults
-         `bare` rather than making every hosted config remember to. Listed
-         first so an explicit `bare: false` in config still wins. */
-      el.setConfig({ bare: true, ...spec.card });
+      el.setConfig(hostCfg);
     } catch (err) {
       try {
         /* `bare` is our own convention. A third-party card is entitled to
            reject a key it has never heard of, and losing the whole card over
            a cosmetic hint would be a poor trade — so try again without it and
-           accept the nested surface. */
+           accept the nested surface. The blank title is dropped too: a card
+           that validates its config strictly may require one. */
         el.setConfig({ ...spec.card });
       } catch (err2) {
         /* A card that rejects its own config must say so here rather than
