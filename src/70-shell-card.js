@@ -2193,6 +2193,10 @@ class PurdyShellCard extends PcBaseCard {
       };
       el.addEventListener("pointerdown", hold);
       el.addEventListener("touchstart", hold, { passive: true });
+      /* Scrolling away from a slider fires neither change nor blur, which
+         would leave _dragging stuck and freeze every later repaint. */
+      ["pointercancel", "pointerleave"].forEach((ev) =>
+        el.addEventListener(ev, () => { this._dragging = false; }));
       el.addEventListener("input", (e) => {
         e.stopPropagation();
         const num = el.parentElement && el.parentElement.querySelector(".ps-vnum");
@@ -2618,10 +2622,7 @@ class PurdyShellCard extends PcBaseCard {
       .ps-tb { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
                background: rgba(255,255,255,.09); flex: 0 0 auto; }
       .ps-tb .ps-ico { width: 18px; height: 18px; }
-      .ps-mroom { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
-                  margin: 11px -15px 0; padding: 0 15px 2px;
-                  touch-action: pan-x pan-y; overscroll-behavior-x: contain; }
-      .ps-mroom::-webkit-scrollbar { display: none; }
+      .ps-mroom { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
       .ps-mr { flex: 0 0 auto; padding: 7px 12px; border-radius: 12px; background: var(--ps-fill);
                color: var(--ps-muted); font-size: 11px; font-weight: 650;
                display: inline-flex; align-items: center; gap: 6px; }
@@ -2634,10 +2635,8 @@ class PurdyShellCard extends PcBaseCard {
       .ps-pr ha-icon { --mdc-icon-size: 16px; color: var(--ps-cool); }
 
       /* rooms */
-      .ps-rstrip { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; margin: 0 -15px;
-                   padding: 0 15px 2px; touch-action: pan-x pan-y; overscroll-behavior-x: contain; }
-      .ps-rstrip::-webkit-scrollbar { display: none; }
-      .ps-rc { flex: 0 0 auto; min-width: 82px; background: var(--ps-fill); border-radius: 15px;
+      .ps-rstrip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+      .ps-rc { min-width: 0; background: var(--ps-fill); border-radius: 15px;
                padding: 9px 11px; cursor: pointer; }
       .ps-rc.acc { background: rgba(77,208,225,.12); }
       .ps-rn2 { font-size: 8.5px; letter-spacing: .11em; text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
@@ -2769,10 +2768,9 @@ class PurdyShellCard extends PcBaseCard {
       .ps-holdx { font-size: 12px; font-weight: 700; }
 
       /* schedule tabs */
-      .ps-tabs { display: flex; gap: 3px; background: var(--ps-fill); border-radius: 11px; padding: 3px;
-                 overflow-x: auto; scrollbar-width: none; }
-      .ps-tabs::-webkit-scrollbar { display: none; }
-      .ps-tab { flex: 1 0 auto; min-width: 40px; border-radius: 9px; padding: 7px 10px; font-size: 11px;
+      .ps-tabs { display: flex; flex-wrap: wrap; gap: 3px; background: var(--ps-fill);
+                 border-radius: 11px; padding: 3px; }
+      .ps-tab { flex: 1 1 auto; min-width: 40px; border-radius: 9px; padding: 7px 10px; font-size: 11px;
                 font-weight: 650; color: var(--ps-muted); text-align: center; white-space: nowrap; }
       .ps-tab.on { background: rgba(255,255,255,.1); color: var(--ps-text);
                    box-shadow: inset 0 0 0 1px var(--ps-hair); }
@@ -2839,6 +2837,8 @@ class PurdyShellCard extends PcBaseCard {
       .ps-sclear { display: flex; color: var(--ps-dim); }
       .ps-note { font-size: 11.5px; color: var(--ps-dim); padding: 9px 2px; }
       .ps-mlist { display: flex; flex-direction: column; gap: 1px; }
+      /* Nothing in the view scrolls sideways any more; only the sheet scrolls,
+         and only downwards. */
       .ps-mi { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 4px;
                border-radius: 11px; text-align: left; }
       .ps-mi:active { background: rgba(255,255,255,.06); }

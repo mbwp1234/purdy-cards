@@ -897,7 +897,13 @@ check('every graph container is bound', (() => {
   const defs = (src.match(/data-scrub="/g) || []).length;
   return defs >= 2 && src.includes('querySelectorAll("[data-scrub]")');
 })());
-check('horizontal strips contain their own overscroll', shs.includes('overscroll-behavior-x: contain'));
+/* A horizontal scroller inside a vertical page always loses the axis lock, so
+   there should be none left: everything wraps or grids instead. */
+check('the music room strip wraps rather than scrolling', /\.ps-mroom \{[^}]*flex-wrap: wrap/.test(shs) && !/\.ps-mroom \{[^}]*overflow-x/.test(shs));
+check('the schedule tabs wrap rather than scrolling', /\.ps-tabs \{[^}]*flex-wrap: wrap/.test(shs) && !/\.ps-tabs \{[^}]*overflow-x/.test(shs));
+check('the rooms strip is a grid rather than a scroller', /\.ps-rstrip \{[^}]*display: grid/.test(shs) && !/\.ps-rstrip \{[^}]*overflow-x/.test(shs));
+check('no horizontal scroller is left in the view', !/overflow-x: auto/.test(shs));
+check('a cancelled slider gesture releases the repaint lock', src.includes('would leave _dragging stuck'));
 check('sheet has a taller schedule variant', shs.includes('.ps-sheet.tall'));
 
 const shsh = new SH();
