@@ -28,6 +28,44 @@ console.log('defined elements:', names.join(', '));
 let fail = 0;
 const check = (label, cond) => { console.log((cond?'  PASS  ':'  FAIL  ')+label); if(!cond) fail++; };
 
+/* A DOM node real enough to reconcile against, and to stand in for a hosted
+   custom element. The plain stub answers null to everything. */
+class MiniNode {
+  constructor() {
+    this.dataset = {}; this.className = ''; this._html = ''; this.writes = 0;
+    this.parent = null; this.kids = [];
+    this._hassCount = 0;            // doubles as a stand-in custom element
+  }
+  setConfig(c) { this._cfg = c; }
+  set hass(h) { this._hassSet = true; this._hassCount++; this._h = h; }
+  get hass() { return this._h; }
+  get innerHTML() { return this._html; }
+  set innerHTML(v) { this._html = v; this.writes++; }
+  get children() { return this.kids; }
+  get firstChild() { return this.kids[0] || null; }
+  get nextSibling() {
+    if (!this.parent) return null;
+    return this.parent.kids[this.parent.kids.indexOf(this) + 1] || null;
+  }
+  insertBefore(node, ref) {
+    if (node.parent) {
+      const j = node.parent.kids.indexOf(node);
+      if (j >= 0) node.parent.kids.splice(j, 1);
+    }
+    const at = ref ? this.kids.indexOf(ref) : this.kids.length;
+    this.kids.splice(at < 0 ? this.kids.length : at, 0, node);
+    node.parent = this;
+    return node;
+  }
+  appendChild(node) { return this.insertBefore(node, null); }
+  remove() {
+    if (!this.parent) return;
+    const i = this.parent.kids.indexOf(this);
+    if (i >= 0) this.parent.kids.splice(i, 1);
+    this.parent = null;
+  }
+}
+
 check('climate-panel-card defined', names.includes('climate-panel-card'));
 check('sleep-panel-card defined', names.includes('sleep-panel-card'));
 check('both panels registered in customCards', ['climate-panel-card','sleep-panel-card'].every(t => window.customCards.some(c => c.type===t)));
@@ -969,6 +1007,76 @@ check('shell bind handlers read hass live rather than capturing it', (() => {
 
 const { offline: pcOfflineFn, reading: pcReadingFn, esc: pcEscFn, numOf: pcNumOfFn, ringArc: pcRingArcFn, ringAngle: pcRingAngleFn, ringRotate: pcRingRotateFn } = SH.helpers;
 
+/* ---------------------------------------------------- hosted sheets -- */
+/* The TV and the notification log moved off Bubble pop-ups onto the same
+   sheet the music uses. Rather than reimplement a working remote, the sheet
+   hosts the existing card — so the assertions are about the mount, not the
+   contents. */
+const shhost = new SH();
+shhost.setConfig({
+  sheets: {
+    tv: { title: 'Televisions', card: { type: 'custom:purdy-remote-card', glass: true,
+      tvs: [{ name: 'Living', remote: 'remote.tv', app_sensor: 'sensor.app',
+        media_player: 'media_player.tv' }], apps: [] } },
+    nope: { title: 'Broken', card: { type: 'custom:not-a-real-card' } },
+  },
+  dock: [
+    { icon: 'mdi:television', name: 'TV', sheet: 'tv' },
+    { icon: 'mdi:bell', name: 'Alerts', alert_when_faults: true, sheet: 'notifications' },
+  ],
+  sections: [{ type: 'quick', key: 'q', tiles: [] }],
+});
+shhost._hass = { states: {} };
+
+check('no hosted sheet renders while none is open', shhost._sheetHtml([]) === '');
+shhost._sheet = 'tv';
+const hostHtml = shhost._sheetHtml([]);
+check('a hosted sheet renders the same sheet chrome as music',
+  /ps-sheet tall/.test(hostHtml) && /id="ps-close"/.test(hostHtml) && /id="ps-scrim"/.test(hostHtml));
+check('a hosted sheet is titled from its config', /Televisions/.test(hostHtml));
+check('a hosted sheet leaves a mount point rather than markup', /id="ps-host"/.test(hostHtml));
+
+/* Mounting needs a DOM, so reuse the mini-DOM from the reconciliation block. */
+const savedDoc2 = globalThis.document;
+const hostNode = new MiniNode();
+let made = null;
+globalThis.document = { createElement: (t) => { made = new MiniNode(); made.tag = t; return made; } };
+shhost.shadowRoot = { getElementById: (id) => (id === 'ps-host' ? hostNode : null), querySelectorAll: () => [] };
+made = null;
+shhost._mountSheetCard();
+check('the hosted card is created from its type, minus the custom: prefix',
+  made && made.tag === 'purdy-remote-card');
+check('the hosted card is configured and fed hass',
+  made && made._cfg && made._hassSet === true);
+check('the hosted card is attached to the mount point', hostNode.kids[0] === made);
+
+/* It must survive repaints, or the remote would lose its selected device and
+   the log its scroll position every time any state changed. */
+const first = made;
+made = null;
+shhost._mountSheetCard();
+check('a repaint does not rebuild the hosted card', made === null && shhost._hosted === first);
+check('a surviving hosted card still gets fresh hass', first._hassCount > 1);
+
+/* A card that is not registered, or rejects its config, must not throw out of
+   the render and take the whole shell down. */
+shhost._sheet = 'nope';
+hostNode.kids = [];
+shhost._mountSheetCard();
+check('an unregistered card reports itself instead of throwing',
+  /not registered/.test(hostNode._html));
+shhost._sheet = null;
+shhost._mountSheetCard();
+check('closing a hosted sheet releases the card', shhost._hosted === null);
+globalThis.document = savedDoc2;
+
+check('faults outrank a dock entry that also carries a sheet', (() => {
+  const b = shellSrc.slice(shellSrc.indexOf('this._each("[data-dock]"'));
+  return b.indexOf('d.alert_when_faults') < b.indexOf('if (d.sheet)');
+})());
+check('a now-playing tv row can open a sheet instead of a hash pop-up',
+  /sec\.remote_sheet/.test(shellSrc));
+
 /* ------------------------------------------------- hypnogram time axis -- */
 /* The axis ran to Date.now() whatever the sock was doing, so as the day went
    on the night was squeezed into a shrinking slice with a growing empty tail. */
@@ -1206,35 +1314,8 @@ check('the divergent renderers were left alone deliberately',
 /* ---------------------------------------------- section reconciliation -- */
 /* The whole point of patching is that an unchanged section is not touched,
    so the interesting assertions are about writes that do NOT happen. The
-   stub DOM above answers null to everything, which would let every one of
-   these pass vacuously — hence a real enough mini-DOM. */
-class MiniNode {
-  constructor() { this.dataset = {}; this.className = ''; this._html = ''; this.writes = 0; this.parent = null; this.kids = []; }
-  get innerHTML() { return this._html; }
-  set innerHTML(v) { this._html = v; this.writes++; }
-  get children() { return this.kids; }
-  get firstChild() { return this.kids[0] || null; }
-  get nextSibling() {
-    if (!this.parent) return null;
-    return this.parent.kids[this.parent.kids.indexOf(this) + 1] || null;
-  }
-  insertBefore(node, ref) {
-    if (node.parent) {
-      const j = node.parent.kids.indexOf(node);
-      if (j >= 0) node.parent.kids.splice(j, 1);
-    }
-    const at = ref ? this.kids.indexOf(ref) : this.kids.length;
-    this.kids.splice(at < 0 ? this.kids.length : at, 0, node);
-    node.parent = this;
-    return node;
-  }
-  remove() {
-    if (!this.parent) return;
-    const i = this.parent.kids.indexOf(this);
-    if (i >= 0) this.parent.kids.splice(i, 1);
-    this.parent = null;
-  }
-}
+   stub DOM answers null to everything, which would let every one of these
+   pass vacuously — hence the MiniNode defined at the top. */
 const savedDoc = globalThis.document;
 globalThis.document = { createElement: () => new MiniNode() };
 

@@ -449,7 +449,12 @@ Object.assign(PurdyShellCard.prototype, {
       if (!st || st === "off" || st === "unavailable" || st === "unknown") return;
       const app = pcState(h, t.app_sensor);
       const shown = app && app !== "unknown" && app !== "unavailable" ? app : "On";
-      rows.push(`<div class="ps-npr" data-nav="${psEsc(sec.remote_link || "#tvs")}" role="button" tabindex="0">
+      /* Prefer a sheet when one is configured; a hash link is the older path
+         and leaves a Bubble pop-up to be closed. */
+      const open = sec.remote_sheet
+        ? `data-sheet="${psEsc(sec.remote_sheet)}"`
+        : `data-nav="${psEsc(sec.remote_link || "#tvs")}"`;
+      rows.push(`<div class="ps-npr" ${open} role="button" tabindex="0">
           <div class="ps-npart ps-npapp">${this._appIcon(sec, app)}</div>
           <div class="ps-grow">
             <div class="ps-npt ps-trunc">${psEsc(shown)}</div>

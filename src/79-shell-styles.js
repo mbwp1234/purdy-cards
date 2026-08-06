@@ -509,6 +509,11 @@ const PS_STYLES = `
       .ps-db.on { color: var(--ps-cool); background: rgba(77,208,225,.13); }
       .ps-db.alert { color: var(--ps-bad); }
 
+      /* a sheet hosting an existing card — the card brings its own surface,
+         so the host adds nothing but room */
+      .ps-host { margin: 2px -4px 0; }
+      .ps-host > * { display: block; }
+
       /* now playing — music and television in one list */
       .ps-npr {
         display: flex; align-items: center; gap: 11px; padding: 8px 2px;

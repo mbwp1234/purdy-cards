@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.25.1";
+const PC_VERSION = "1.26.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -5373,6 +5373,52 @@ class PurdyShellCard extends PcBaseCard {
     have.forEach((n) => n.remove());
   }
 
+  /* Attach the card a hosted sheet wraps, and keep feeding it hass.
+   *
+   * It is built once and then left alone: the sheet's markup is identical
+   * between repaints, so _patch skips it and the element survives — which is
+   * what keeps the remote's selected device and the notification list's scroll
+   * position from resetting under the thumb every time a state changes.
+   */
+  _mountSheetCard() {
+    const spec = (this._config.sheets || {})[this._sheet];
+    const host = this.shadowRoot.getElementById("ps-host");
+    if (!spec || !spec.card || !host) {
+      this._hosted = null;
+      this._hostedKey = null;
+      return;
+    }
+    if (this._hosted && this._hostedKey === this._sheet && host.firstChild) {
+      this._hosted.hass = this._hass;
+      return;
+    }
+
+    const tag = String(spec.card.type || "").replace(/^custom:/, "");
+    if (!tag || !customElements.get(tag)) {
+      host.innerHTML = `<div class="ps-nohist">${psEsc(tag || "card")} is not registered</div>`;
+      this._hosted = null;
+      this._hostedKey = this._sheet;
+      return;
+    }
+
+    const el = document.createElement(tag);
+    try {
+      el.setConfig({ ...spec.card });
+    } catch (err) {
+      /* A card that rejects its config must say so here rather than throwing
+         out of the render and taking the whole shell down. */
+      host.innerHTML = `<div class="ps-nohist">${psEsc(tag)}: ${psEsc((err && err.message) || "bad config")}</div>`;
+      this._hosted = null;
+      this._hostedKey = this._sheet;
+      return;
+    }
+    el.hass = this._hass;
+    host.innerHTML = "";
+    host.appendChild(el);
+    this._hosted = el;
+    this._hostedKey = this._sheet;
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
     /* Repainting mid-drag would rip the slider out from under the thumb. */
@@ -5453,6 +5499,7 @@ class PurdyShellCard extends PcBaseCard {
     this._patchSections(sections);
 
     this._patch("ps-sheetslot", this._sheetHtml(faults));
+    this._mountSheetCard();
 
     this._patch("ps-dockwrap", `
         ${np ? `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
@@ -5873,9 +5920,17 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
-        /* A sheet slides over the column instead of expanding inside it, so
-           music opens the way the TV pop-up does rather than pushing the page
-           around under the thumb. */
+        /* Faults outrank the button's normal destination — that is the whole
+           point of the bell — so this is tested before `sheet` and `section`,
+           both of which the same entry may also carry. */
+        if (d.alert_when_faults && this._faults().length) {
+          psClosePopup();
+          this._sheet = "alerts";
+          this._render();
+          return;
+        }
+        /* A sheet slides over the column instead of expanding inside it, so it
+           never moves what is under your thumb. */
         if (d.sheet) {
           psClosePopup();
           this._sheet = this._sheet === d.sheet ? null : d.sheet;
@@ -5888,12 +5943,6 @@ class PurdyShellCard extends PcBaseCard {
           this._render();
           const sect = root.querySelector(`[data-sect="${d.section}"]`);
           if (sect && sect.scrollIntoView) sect.scrollIntoView({ behavior: "smooth", block: "start" });
-          return;
-        }
-        if (d.alert_when_faults && this._faults().length) {
-          psClosePopup();
-          this._sheet = "alerts";
-          this._render();
           return;
         }
         if (!d.link || d.link.charAt(0) !== "#") psClosePopup();
@@ -6525,7 +6574,12 @@ Object.assign(PurdyShellCard.prototype, {
       if (!st || st === "off" || st === "unavailable" || st === "unknown") return;
       const app = pcState(h, t.app_sensor);
       const shown = app && app !== "unknown" && app !== "unavailable" ? app : "On";
-      rows.push(`<div class="ps-npr" data-nav="${psEsc(sec.remote_link || "#tvs")}" role="button" tabindex="0">
+      /* Prefer a sheet when one is configured; a hash link is the older path
+         and leaves a Bubble pop-up to be closed. */
+      const open = sec.remote_sheet
+        ? `data-sheet="${psEsc(sec.remote_sheet)}"`
+        : `data-nav="${psEsc(sec.remote_link || "#tvs")}"`;
+      rows.push(`<div class="ps-npr" ${open} role="button" tabindex="0">
           <div class="ps-npart ps-npapp">${this._appIcon(sec, app)}</div>
           <div class="ps-grow">
             <div class="ps-npt ps-trunc">${psEsc(shown)}</div>
@@ -7737,6 +7791,20 @@ Object.assign(PurdyShellCard.prototype, {
     const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
         <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
 
+    /* A hosted sheet wraps a card that already exists rather than
+       reimplementing it. The remote's d-pad and app grid are 300 lines that
+       work; the point of moving the TV off a Bubble pop-up is the surface, not
+       the contents. The element itself is attached after the patch — it cannot
+       be expressed as a string — so this only leaves it a mount point. */
+    const hosted = (this._config.sheets || {})[this._sheet];
+    if (hosted && hosted.card) {
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(hosted.title || "")}</span>${close}</div>
+          <div class="ps-host" id="ps-host"></div>
+        </div>`;
+    }
+
     if (this._sheet === "alerts") {
       if (!faults.length) return "";
       return `<div class="ps-scrim" id="ps-scrim"></div>
@@ -8372,6 +8440,11 @@ const PS_STYLES = `
       .ps-db span { font-size: 8.5px; letter-spacing: .03em; font-weight: 650; }
       .ps-db.on { color: var(--ps-cool); background: rgba(77,208,225,.13); }
       .ps-db.alert { color: var(--ps-bad); }
+
+      /* a sheet hosting an existing card — the card brings its own surface,
+         so the host adds nothing but room */
+      .ps-host { margin: 2px -4px 0; }
+      .ps-host > * { display: block; }
 
       /* now playing — music and television in one list */
       .ps-npr {

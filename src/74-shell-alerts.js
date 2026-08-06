@@ -181,6 +181,20 @@ Object.assign(PurdyShellCard.prototype, {
     const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
         <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
 
+    /* A hosted sheet wraps a card that already exists rather than
+       reimplementing it. The remote's d-pad and app grid are 300 lines that
+       work; the point of moving the TV off a Bubble pop-up is the surface, not
+       the contents. The element itself is attached after the patch — it cannot
+       be expressed as a string — so this only leaves it a mount point. */
+    const hosted = (this._config.sheets || {})[this._sheet];
+    if (hosted && hosted.card) {
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(hosted.title || "")}</span>${close}</div>
+          <div class="ps-host" id="ps-host"></div>
+        </div>`;
+    }
+
     if (this._sheet === "alerts") {
       if (!faults.length) return "";
       return `<div class="ps-scrim" id="ps-scrim"></div>

@@ -366,6 +366,52 @@ class PurdyShellCard extends PcBaseCard {
     have.forEach((n) => n.remove());
   }
 
+  /* Attach the card a hosted sheet wraps, and keep feeding it hass.
+   *
+   * It is built once and then left alone: the sheet's markup is identical
+   * between repaints, so _patch skips it and the element survives — which is
+   * what keeps the remote's selected device and the notification list's scroll
+   * position from resetting under the thumb every time a state changes.
+   */
+  _mountSheetCard() {
+    const spec = (this._config.sheets || {})[this._sheet];
+    const host = this.shadowRoot.getElementById("ps-host");
+    if (!spec || !spec.card || !host) {
+      this._hosted = null;
+      this._hostedKey = null;
+      return;
+    }
+    if (this._hosted && this._hostedKey === this._sheet && host.firstChild) {
+      this._hosted.hass = this._hass;
+      return;
+    }
+
+    const tag = String(spec.card.type || "").replace(/^custom:/, "");
+    if (!tag || !customElements.get(tag)) {
+      host.innerHTML = `<div class="ps-nohist">${psEsc(tag || "card")} is not registered</div>`;
+      this._hosted = null;
+      this._hostedKey = this._sheet;
+      return;
+    }
+
+    const el = document.createElement(tag);
+    try {
+      el.setConfig({ ...spec.card });
+    } catch (err) {
+      /* A card that rejects its config must say so here rather than throwing
+         out of the render and taking the whole shell down. */
+      host.innerHTML = `<div class="ps-nohist">${psEsc(tag)}: ${psEsc((err && err.message) || "bad config")}</div>`;
+      this._hosted = null;
+      this._hostedKey = this._sheet;
+      return;
+    }
+    el.hass = this._hass;
+    host.innerHTML = "";
+    host.appendChild(el);
+    this._hosted = el;
+    this._hostedKey = this._sheet;
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
     /* Repainting mid-drag would rip the slider out from under the thumb. */
@@ -446,6 +492,7 @@ class PurdyShellCard extends PcBaseCard {
     this._patchSections(sections);
 
     this._patch("ps-sheetslot", this._sheetHtml(faults));
+    this._mountSheetCard();
 
     this._patch("ps-dockwrap", `
         ${np ? `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
@@ -866,9 +913,17 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
-        /* A sheet slides over the column instead of expanding inside it, so
-           music opens the way the TV pop-up does rather than pushing the page
-           around under the thumb. */
+        /* Faults outrank the button's normal destination — that is the whole
+           point of the bell — so this is tested before `sheet` and `section`,
+           both of which the same entry may also carry. */
+        if (d.alert_when_faults && this._faults().length) {
+          psClosePopup();
+          this._sheet = "alerts";
+          this._render();
+          return;
+        }
+        /* A sheet slides over the column instead of expanding inside it, so it
+           never moves what is under your thumb. */
         if (d.sheet) {
           psClosePopup();
           this._sheet = this._sheet === d.sheet ? null : d.sheet;
@@ -881,12 +936,6 @@ class PurdyShellCard extends PcBaseCard {
           this._render();
           const sect = root.querySelector(`[data-sect="${d.section}"]`);
           if (sect && sect.scrollIntoView) sect.scrollIntoView({ behavior: "smooth", block: "start" });
-          return;
-        }
-        if (d.alert_when_faults && this._faults().length) {
-          psClosePopup();
-          this._sheet = "alerts";
-          this._render();
           return;
         }
         if (!d.link || d.link.charAt(0) !== "#") psClosePopup();
