@@ -2071,6 +2071,58 @@ check('today is drawn even when it is clear',
   (someCal.match(/ps-cday/g) || []).length === 2 && /Nothing scheduled/.test(someCal));
 check('the remaining clear days are counted', /3 clear days not shown/.test(someCal));
 
+/* The expanded room list lost its per-room sparkline when the shell replaced
+   the standalone climate card's rooms block. Same picture, so the geometry is
+   shared rather than copied a second time. */
+const shsp = new SH();
+shsp.setConfig({ sections: [{ type: 'climate', key: 'c', goal: 'climate.g',
+  graph: { inside: 'sensor.in' },
+  rooms: [{ name: 'Living Room', temp: 'sensor.lr' }, { name: 'Office', temp: 'sensor.of' }] }] });
+shsp._hass = { states: { 'climate.g': { state: 'cool', attributes: {} },
+  'sensor.lr': { state: '72.4', attributes: {} }, 'sensor.of': { state: '70.1', attributes: {} } } };
+check('room temps join the history fetch', (() => {
+  const ids = shsp._historyEntities();
+  return ids.indexOf('sensor.lr') >= 0 && ids.indexOf('sensor.of') >= 0;
+})());
+check('the history fetch does not ask for the same id twice', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'climate', key: 'c', graph: { inside: 'sensor.lr' },
+    rooms: [{ temp: 'sensor.lr' }] }] });
+  return s._historyEntities().length === 1;
+})());
+const t0 = Date.now() - 3600000;
+shsp._history = { 'sensor.lr': [
+  { t: t0, s: '71.0' }, { t: t0 + 600000, s: '71.8' }, { t: t0 + 1200000, s: '72.4' }] };
+const roomHtml = shsp._secClimate(shsp._config.sections[0]);
+check('a room with history draws a sparkline', /ps-spark[\s\S]{0,200}<polyline/.test(roomHtml));
+check('a room with no history draws an empty box, never a flat line', (() => {
+  const one = roomHtml.slice(roomHtml.indexOf('sensor.of'));
+  return /ps-spark"><svg[^>]*><\/svg>/.test(one);
+})());
+check('the sparkline box keeps its width either way',
+  /\.ps-spark \{[^}]*flex: 0 0 56px/.test(shs));
+check('sparklines can be turned off', (() => {
+  shsp._config.sections[0].room_spark = false;
+  const h = shsp._secClimate(shsp._config.sections[0]);
+  const ids = shsp._historyEntities();
+  delete shsp._config.sections[0].room_spark;
+  return !/ps-spark/.test(h) && ids.indexOf('sensor.of') < 0;
+})());
+check('a flat series is drawn flat, not as amplified noise', (() => {
+  const flat = [{ t: 1, v: 72.4 }, { t: 2, v: 72.4 }, { t: 3, v: 72.4 }];
+  const ys = SH.helpers.sparkPoly(flat, 56, 18, 3).split(' ')
+    .map((p) => parseFloat(p.split(',')[1]));
+  return ys.every((y) => Math.abs(y - ys[0]) < 0.01) && Math.abs(ys[0] - 9) < 0.5;
+})());
+check('too few points yields null, not a line', SH.helpers.sparkPoly([{ t: 1, v: 5 }], 56, 18, 3) === null);
+check('downsampling bucket-averages to the requested count',
+  SH.helpers.downsample(Array.from({ length: 300 }, (_, i) => ({ t: i, v: i })), 28).length === 28);
+check('a short series is left alone by downsampling',
+  SH.helpers.downsample([{ t: 1, v: 1 }, { t: 2, v: 2 }], 28).length === 2);
+check('the standalone climate card uses the same geometry, not a second copy',
+  /_polyline\(points, w, h, pad = 4\) \{\s*return pcSparkPoly/.test(
+    fs.readFileSync(new URL('../src/10-climate-panel-card.js', import.meta.url), 'utf8')));
+
 /* An MA player mirrors its source device: a Twitch stream came back as
    media_content_type "music", and only a missing title kept it off the screen. */
 const isMusic = SH.helpers.isMusic;

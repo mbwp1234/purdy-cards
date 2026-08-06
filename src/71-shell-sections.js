@@ -54,6 +54,30 @@ Object.assign(PurdyShellCard.prototype, {
     return out + "</svg>";
   },
 
+  /* One room, 24h, no axes — enough to answer "is this room drifting?" beside
+     the number that answers "where is it now?".
+   *
+   * An empty box when there is no history, never a flat line: a straight line
+   * through the middle is a claim about the room, and "the recorder has
+   * nothing" is not that claim. The box keeps its size either way so the
+   * column of numbers to its right stays aligned. */
+  _sparkSvg(id) {
+    const W = 56, H = 18;
+    const empty = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"></svg>`;
+    const raw = this._history[id];
+    if (!raw || raw.length < 2) return empty;
+    const pts = raw
+      .map((p) => ({ t: p.t, v: parseFloat(p.s) }))
+      .filter((p) => Number.isFinite(p.v));
+    const poly = pcSparkPoly(pcDownsample(pts, 28), W, H, 3);
+    if (!poly) return empty;
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <polyline fill="none" stroke="var(--ps-cool)" stroke-width="1.5" opacity=".75"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+          points="${poly}"/>
+      </svg>`;
+  },
+
   _waveSvg(sec) {
     const g = sec.graph || {};
     const inside = (this._history[g.inside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
@@ -390,10 +414,12 @@ Object.assign(PurdyShellCard.prototype, {
     const outside = ot == null ? "" :
       `<div class="ps-zc" data-info="${psEsc((sec.outside || {}).temp)}">Outside<b>${ot.toFixed(1)}°</b></div>`;
 
+    const spark = sec.room_spark !== false;
     const rooms = (sec.rooms || []).map((r) => {
       const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
       return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
-          <span class="ps-rn">${psEsc(r.name || pcName(h, r.temp))}</span>
+          <span class="ps-rn ps-trunc">${psEsc(r.name || pcName(h, r.temp))}</span>
+          ${spark ? `<span class="ps-spark">${this._sparkSvg(r.temp)}</span>` : ""}
           <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
           <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
         </div>`;

@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.28.1";
+const PC_VERSION = "1.29.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -167,6 +167,45 @@ function pcRingAngle(frac) {
    from 3 o'clock, so an upright tick needs the extra quarter turn. */
 function pcRingRotate(frac) {
   return pcRingAngle(frac) + 90;
+}
+
+/* Sparkline geometry, shared the same way the ring geometry is: the maths is
+   genuinely identical, the markup stays per-card because the sizes, colours and
+   tokens differ. Bucket-average down to `n` points, then map to a polyline.
+
+   `vmax - vmin < 1` widens a flat series deliberately — a room that held 72.4°
+   all day should read as a flat line through the middle, not as noise
+   amplified to fill the box. */
+function pcDownsample(series, n) {
+  const k = n || 60;
+  if (!series || series.length <= k) return series;
+  const out = [];
+  const bucket = series.length / k;
+  for (let i = 0; i < k; i++) {
+    const slice = series.slice(Math.floor(i * bucket), Math.floor((i + 1) * bucket) || 1);
+    if (!slice.length) continue;
+    const v = slice.reduce((a, p) => a + p.v, 0) / slice.length;
+    out.push({ t: slice[Math.floor(slice.length / 2)].t, v });
+  }
+  return out;
+}
+
+/* null — never a flat line — when there is nothing to draw. A sparkline that
+   invents a straight line through the middle of an empty box is the same lie
+   as a ring that reads zero because the sock is off. */
+function pcSparkPoly(points, w, h, pad) {
+  if (!points || points.length < 2) return null;
+  const p = pad == null ? 4 : pad;
+  const t0 = points[0].t, t1 = points[points.length - 1].t;
+  let vmin = Infinity, vmax = -Infinity;
+  points.forEach((q) => { vmin = Math.min(vmin, q.v); vmax = Math.max(vmax, q.v); });
+  if (vmax - vmin < 1) { vmax += 0.5; vmin -= 0.5; }
+  const span = t1 - t0 || 1;
+  return points.map((q) => {
+    const x = ((q.t - t0) / span) * w;
+    const y = p + (1 - (q.v - vmin) / (vmax - vmin)) * (h - p * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
 }
 
 /* An MA player also proxies whatever else its source device is doing, so a
@@ -553,33 +592,14 @@ class ClimatePanelCard extends HTMLElement {
       </svg>`;
   }
 
+  /* Both delegate to the shared geometry in 05-shared.js — same maths, one
+     copy. The markup stays here because the sizes and tokens are this card's. */
   _polyline(points, w, h, pad = 4) {
-    if (!points || points.length < 2) return null;
-    const t0 = points[0].t, t1 = points[points.length - 1].t;
-    let vmin = Infinity, vmax = -Infinity;
-    points.forEach((p) => { vmin = Math.min(vmin, p.v); vmax = Math.max(vmax, p.v); });
-    if (vmax - vmin < 1) { vmax += 0.5; vmin -= 0.5; }
-    const span = t1 - t0 || 1;
-    return points
-      .map((p) => {
-        const x = ((p.t - t0) / span) * w;
-        const y = pad + (1 - (p.v - vmin) / (vmax - vmin)) * (h - pad * 2);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
+    return pcSparkPoly(points, w, h, pad);
   }
 
   _downsample(series, n = 60) {
-    if (!series || series.length <= n) return series;
-    const out = [];
-    const bucket = series.length / n;
-    for (let i = 0; i < n; i++) {
-      const slice = series.slice(Math.floor(i * bucket), Math.floor((i + 1) * bucket) || 1);
-      if (!slice.length) continue;
-      const v = slice.reduce((a, p) => a + p.v, 0) / slice.length;
-      out.push({ t: slice[Math.floor(slice.length / 2)].t, v });
-    }
-    return out;
+    return pcDownsample(series, n);
   }
 
   _graphSvg() {
@@ -5298,16 +5318,25 @@ class PurdyShellCard extends PcBaseCard {
     return ids.filter(Boolean);
   }
 
+  /* Deduped: a room temp is frequently also the graph's inside sensor, and
+     Joel's room appears in both the climate rooms and the sleep section. The
+     same id twice makes the recorder query longer for no extra data. */
   _historyEntities() {
-    const ids = [];
+    const ids = new Set();
     this._config.sections.forEach((s) => {
-      if (s.type === "climate" && s.graph) {
-        if (s.graph.inside) ids.push(s.graph.inside);
-        if (s.graph.outside) ids.push(s.graph.outside);
+      if (s.type === "climate") {
+        if (s.graph && s.graph.inside) ids.add(s.graph.inside);
+        if (s.graph && s.graph.outside) ids.add(s.graph.outside);
+        /* The expanded room list draws a sparkline per room off the same
+           fetch — a second request for a shorter window would cost more than
+           the extra ids do. */
+        if (s.room_spark !== false) {
+          (s.rooms || []).forEach((r) => { if (r.temp) ids.add(r.temp); });
+        }
       }
-      if (s.type === "sleep" && s.sleep_state) ids.push(s.sleep_state);
+      if (s.type === "sleep" && s.sleep_state) ids.add(s.sleep_state);
     });
-    return ids;
+    return [...ids];
   }
 
   _startHistory() {
@@ -6250,6 +6279,7 @@ class PurdyShellCard extends PcBaseCard {
     return {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
+      sparkPoly: pcSparkPoly, downsample: pcDownsample,
     };
   }
 
@@ -6312,6 +6342,30 @@ Object.assign(PurdyShellCard.prototype, {
         transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;
     }
     return out + "</svg>";
+  },
+
+  /* One room, 24h, no axes — enough to answer "is this room drifting?" beside
+     the number that answers "where is it now?".
+   *
+   * An empty box when there is no history, never a flat line: a straight line
+   * through the middle is a claim about the room, and "the recorder has
+   * nothing" is not that claim. The box keeps its size either way so the
+   * column of numbers to its right stays aligned. */
+  _sparkSvg(id) {
+    const W = 56, H = 18;
+    const empty = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"></svg>`;
+    const raw = this._history[id];
+    if (!raw || raw.length < 2) return empty;
+    const pts = raw
+      .map((p) => ({ t: p.t, v: parseFloat(p.s) }))
+      .filter((p) => Number.isFinite(p.v));
+    const poly = pcSparkPoly(pcDownsample(pts, 28), W, H, 3);
+    if (!poly) return empty;
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <polyline fill="none" stroke="var(--ps-cool)" stroke-width="1.5" opacity=".75"
+          stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+          points="${poly}"/>
+      </svg>`;
   },
 
   _waveSvg(sec) {
@@ -6650,10 +6704,12 @@ Object.assign(PurdyShellCard.prototype, {
     const outside = ot == null ? "" :
       `<div class="ps-zc" data-info="${psEsc((sec.outside || {}).temp)}">Outside<b>${ot.toFixed(1)}°</b></div>`;
 
+    const spark = sec.room_spark !== false;
     const rooms = (sec.rooms || []).map((r) => {
       const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
       return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
-          <span class="ps-rn">${psEsc(r.name || pcName(h, r.temp))}</span>
+          <span class="ps-rn ps-trunc">${psEsc(r.name || pcName(h, r.temp))}</span>
+          ${spark ? `<span class="ps-spark">${this._sparkSvg(r.temp)}</span>` : ""}
           <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
           <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
         </div>`;
@@ -8324,6 +8380,10 @@ const PS_STYLES = `
                 border-top: 1px solid var(--ps-hair-soft); cursor: pointer; }
       .ps-rml:first-child { border-top: 0; }
       .ps-rn { flex: 1; min-width: 0; }
+      /* Fixed width so the numbers to its right stay in a column whether or
+         not a room has history yet. */
+      .ps-spark { flex: 0 0 56px; height: 18px; display: block; }
+      .ps-spark svg { width: 56px; height: 18px; display: block; }
       .ps-rml .ps-v { font-weight: 660; font-variant-numeric: tabular-nums; }
       .ps-rml .ps-h { color: var(--ps-dim); font-size: var(--pc-fs-xs); font-variant-numeric: tabular-nums;
                       width: 46px; text-align: right; }

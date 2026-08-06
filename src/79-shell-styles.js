@@ -166,6 +166,10 @@ const PS_STYLES = `
                 border-top: 1px solid var(--ps-hair-soft); cursor: pointer; }
       .ps-rml:first-child { border-top: 0; }
       .ps-rn { flex: 1; min-width: 0; }
+      /* Fixed width so the numbers to its right stay in a column whether or
+         not a room has history yet. */
+      .ps-spark { flex: 0 0 56px; height: 18px; display: block; }
+      .ps-spark svg { width: 56px; height: 18px; display: block; }
       .ps-rml .ps-v { font-weight: 660; font-variant-numeric: tabular-nums; }
       .ps-rml .ps-h { color: var(--ps-dim); font-size: var(--pc-fs-xs); font-variant-numeric: tabular-nums;
                       width: 46px; text-align: right; }

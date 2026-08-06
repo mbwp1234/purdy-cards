@@ -72,6 +72,45 @@ function pcRingRotate(frac) {
   return pcRingAngle(frac) + 90;
 }
 
+/* Sparkline geometry, shared the same way the ring geometry is: the maths is
+   genuinely identical, the markup stays per-card because the sizes, colours and
+   tokens differ. Bucket-average down to `n` points, then map to a polyline.
+
+   `vmax - vmin < 1` widens a flat series deliberately — a room that held 72.4°
+   all day should read as a flat line through the middle, not as noise
+   amplified to fill the box. */
+function pcDownsample(series, n) {
+  const k = n || 60;
+  if (!series || series.length <= k) return series;
+  const out = [];
+  const bucket = series.length / k;
+  for (let i = 0; i < k; i++) {
+    const slice = series.slice(Math.floor(i * bucket), Math.floor((i + 1) * bucket) || 1);
+    if (!slice.length) continue;
+    const v = slice.reduce((a, p) => a + p.v, 0) / slice.length;
+    out.push({ t: slice[Math.floor(slice.length / 2)].t, v });
+  }
+  return out;
+}
+
+/* null — never a flat line — when there is nothing to draw. A sparkline that
+   invents a straight line through the middle of an empty box is the same lie
+   as a ring that reads zero because the sock is off. */
+function pcSparkPoly(points, w, h, pad) {
+  if (!points || points.length < 2) return null;
+  const p = pad == null ? 4 : pad;
+  const t0 = points[0].t, t1 = points[points.length - 1].t;
+  let vmin = Infinity, vmax = -Infinity;
+  points.forEach((q) => { vmin = Math.min(vmin, q.v); vmax = Math.max(vmax, q.v); });
+  if (vmax - vmin < 1) { vmax += 0.5; vmin -= 0.5; }
+  const span = t1 - t0 || 1;
+  return points.map((q) => {
+    const x = ((q.t - t0) / span) * w;
+    const y = p + (1 - (q.v - vmin) / (vmax - vmin)) * (h - p * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+}
+
 /* An MA player also proxies whatever else its source device is doing, so a
    player is showing *music* only when the app or the content type says so —
    otherwise a TV episode raises a phantom now-playing row. */

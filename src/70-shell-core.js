@@ -240,16 +240,25 @@ class PurdyShellCard extends PcBaseCard {
     return ids.filter(Boolean);
   }
 
+  /* Deduped: a room temp is frequently also the graph's inside sensor, and
+     Joel's room appears in both the climate rooms and the sleep section. The
+     same id twice makes the recorder query longer for no extra data. */
   _historyEntities() {
-    const ids = [];
+    const ids = new Set();
     this._config.sections.forEach((s) => {
-      if (s.type === "climate" && s.graph) {
-        if (s.graph.inside) ids.push(s.graph.inside);
-        if (s.graph.outside) ids.push(s.graph.outside);
+      if (s.type === "climate") {
+        if (s.graph && s.graph.inside) ids.add(s.graph.inside);
+        if (s.graph && s.graph.outside) ids.add(s.graph.outside);
+        /* The expanded room list draws a sparkline per room off the same
+           fetch — a second request for a shorter window would cost more than
+           the extra ids do. */
+        if (s.room_spark !== false) {
+          (s.rooms || []).forEach((r) => { if (r.temp) ids.add(r.temp); });
+        }
       }
-      if (s.type === "sleep" && s.sleep_state) ids.push(s.sleep_state);
+      if (s.type === "sleep" && s.sleep_state) ids.add(s.sleep_state);
     });
-    return ids;
+    return [...ids];
   }
 
   _startHistory() {
@@ -1192,6 +1201,7 @@ class PurdyShellCard extends PcBaseCard {
     return {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
+      sparkPoly: pcSparkPoly, downsample: pcDownsample,
     };
   }
 

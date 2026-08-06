@@ -365,33 +365,14 @@ class ClimatePanelCard extends HTMLElement {
       </svg>`;
   }
 
+  /* Both delegate to the shared geometry in 05-shared.js — same maths, one
+     copy. The markup stays here because the sizes and tokens are this card's. */
   _polyline(points, w, h, pad = 4) {
-    if (!points || points.length < 2) return null;
-    const t0 = points[0].t, t1 = points[points.length - 1].t;
-    let vmin = Infinity, vmax = -Infinity;
-    points.forEach((p) => { vmin = Math.min(vmin, p.v); vmax = Math.max(vmax, p.v); });
-    if (vmax - vmin < 1) { vmax += 0.5; vmin -= 0.5; }
-    const span = t1 - t0 || 1;
-    return points
-      .map((p) => {
-        const x = ((p.t - t0) / span) * w;
-        const y = pad + (1 - (p.v - vmin) / (vmax - vmin)) * (h - pad * 2);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
+    return pcSparkPoly(points, w, h, pad);
   }
 
   _downsample(series, n = 60) {
-    if (!series || series.length <= n) return series;
-    const out = [];
-    const bucket = series.length / n;
-    for (let i = 0; i < n; i++) {
-      const slice = series.slice(Math.floor(i * bucket), Math.floor((i + 1) * bucket) || 1);
-      if (!slice.length) continue;
-      const v = slice.reduce((a, p) => a + p.v, 0) / slice.length;
-      out.push({ t: slice[Math.floor(slice.length / 2)].t, v });
-    }
-    return out;
+    return pcDownsample(series, n);
   }
 
   _graphSvg() {
