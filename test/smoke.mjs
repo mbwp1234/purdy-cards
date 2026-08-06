@@ -876,8 +876,16 @@ check('sections clip rather than hide, so they are not scroll containers',
   /\.ps-sect \{[^}]*overflow-x: clip/.test(shs) && !/\.ps-sect \{[^}]*overflow-x: hidden/.test(shs));
 check('the column clips rather than hides', /\.ps-col \{[^}]*overflow: clip/.test(shs));
 check('shell never widens past the view', shs.includes('max-width: 100%') && shs.includes('overflow-x: clip'));
-check('graphs claim the vertical gesture', /\.ps-wave \{[^}]*touch-action: pan-y/.test(shs));
-check('hypnogram claims the vertical gesture', /\.ps-hyp \{[^}]*touch-action: pan-y/.test(shs));
+/* The graph must default to letting the browser scroll, and only take the
+   gesture once a long press has deliberately entered scrub mode. Any
+   touch-action on the graph containers themselves is the old, broken shape. */
+check('graphs let the browser scroll by default', /\[data-scrub\] \{ touch-action: auto/.test(shs));
+check('graphs claim the gesture only while scrubbing', /\[data-scrub\]\.scrubbing \{ touch-action: none/.test(shs));
+check('the wave no longer pins touch-action itself', !/\.ps-wave \{[^}]*touch-action/.test(shs));
+check('the hypnogram no longer pins touch-action itself', !/\.ps-hypplot \{[^}]*touch-action/.test(shs));
+check('scrubbing is entered by long press, not by any contact', src.includes('setTimeout(') && src.includes('box.classList.add("scrubbing")'));
+check('a move before the press completes cancels it', src.includes('Moved before the press completed'));
+check('a mouse scrubs without waiting', src.includes('ev.pointerType === "mouse"'));
 check('horizontal strips contain their own overscroll', shs.includes('overscroll-behavior-x: contain'));
 check('sheet has a taller schedule variant', shs.includes('.ps-sheet.tall'));
 

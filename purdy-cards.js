@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.18.0";
+const PC_VERSION = "1.19.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -7209,8 +7209,20 @@ class PurdyShellCard extends PcBaseCard {
     });
   }
 
-  /* Direct DOM updates, not a re-render: a repaint per pointermove would be
-     both wasteful and jumpy, and would drop the crosshair mid-drag. */
+  /* Scrubbing must never compete with scrolling.
+   *
+   * Earlier attempts kept the graph listening to every pointermove and tried
+   * to let the page through with `touch-action: pan-y`. That is the wrong
+   * shape: on touch, the first move of a scroll gesture lands on the graph,
+   * and any handling of it fights the scroller.
+   *
+   * So the two input types get two different contracts. A mouse hovers and
+   * scrubs immediately — there is no scroll gesture to confuse it with. A
+   * finger scrolls by default and only enters scrub mode after a deliberate
+   * long press; moving before that press completes cancels it, because a
+   * quick drag is a scroll. Only once scrub mode is entered does the element
+   * take `touch-action: none` and capture the pointer.
+   */
   _bindScrub() {
     const root = this.shadowRoot;
     root.querySelectorAll("[data-scrub]").forEach((box) => {
@@ -7219,12 +7231,35 @@ class PurdyShellCard extends PcBaseCard {
       const tip = box.querySelector(".ps-tip");
       if (!cross || !tip) return;
 
-      const hide = () => { cross.hidden = true; tip.hidden = true; };
+      let scrubbing = false;
+      let holdTimer = null;
+      let startX = 0;
+      let startY = 0;
+      let pid = null;
 
-      const move = (ev) => {
+      const hide = () => {
+        cross.hidden = true;
+        tip.hidden = true;
+      };
+
+      const stop = () => {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+        if (scrubbing) {
+          scrubbing = false;
+          box.classList.remove("scrubbing");
+          if (pid != null && box.releasePointerCapture) {
+            try { box.releasePointerCapture(pid); } catch (e) { /* already gone */ }
+          }
+        }
+        pid = null;
+        hide();
+      };
+
+      const readout = (clientX) => {
         const r = box.getBoundingClientRect();
         if (!r.width) return;
-        const x = Math.max(0, Math.min(r.width, ev.clientX - r.left));
+        const x = Math.max(0, Math.min(r.width, clientX - r.left));
         const f = x / r.width;
 
         let html = null;
@@ -7247,30 +7282,66 @@ class PurdyShellCard extends PcBaseCard {
           if (!d) return;
           const t = d.from + f * (d.to - d.from);
           const rows = d.rows.filter((x) => x.t <= t);
-          const cur = rows.length ? rows[rows.length - 1] : d.rows[0];
-          if (!cur) return;
-          const label = { awake: "Awake", light_sleep: "Light sleep", deep_sleep: "Deep sleep" }[cur.s] || cur.s;
-          const col = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" }[cur.s];
+          const c = rows.length ? rows[rows.length - 1] : d.rows[0];
+          if (!c) return;
+          const label = { awake: "Awake", light_sleep: "Light sleep", deep_sleep: "Deep sleep" }[c.s] || c.s;
+          const col = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" }[c.s];
           html = `<b>${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
             `<span><i style="background:${col}"></i>${label}</span>` +
-            `<span>since ${new Date(cur.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`;
+            `<span>since ${new Date(c.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`;
         }
 
         cross.hidden = false;
         tip.hidden = false;
         cross.style.left = x.toFixed(1) + "px";
         tip.innerHTML = html;
-        /* Keep the tooltip inside the card rather than letting it push the
-           page sideways — the whole point of the earlier overflow fix. */
+        /* Keep the tooltip inside the card so it cannot reintroduce the
+           horizontal overflow that made the page pan sideways. */
         const tw = tip.offsetWidth || 120;
         tip.style.left = Math.max(2, Math.min(r.width - tw - 2, x - tw / 2)).toFixed(1) + "px";
       };
 
-      box.addEventListener("pointermove", move);
-      box.addEventListener("pointerdown", move);
-      box.addEventListener("pointerleave", hide);
-      box.addEventListener("pointercancel", hide);
-      box.addEventListener("pointerup", hide);
+      box.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType === "mouse") {
+          scrubbing = true;
+          readout(ev.clientX);
+          return;
+        }
+        /* Touch and pen: assume a scroll until proven otherwise. */
+        startX = ev.clientX;
+        startY = ev.clientY;
+        pid = ev.pointerId;
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(() => {
+          scrubbing = true;
+          box.classList.add("scrubbing");
+          if (box.setPointerCapture) {
+            try { box.setPointerCapture(pid); } catch (e) { /* pointer already released */ }
+          }
+          readout(startX);
+        }, 380);
+      });
+
+      box.addEventListener("pointermove", (ev) => {
+        if (ev.pointerType === "mouse") {
+          readout(ev.clientX);
+          return;
+        }
+        if (scrubbing) {
+          ev.preventDefault();
+          readout(ev.clientX);
+          return;
+        }
+        /* Moved before the press completed — that is a scroll, so let go. */
+        if (holdTimer &&
+            (Math.abs(ev.clientX - startX) > 8 || Math.abs(ev.clientY - startY) > 8)) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+          pid = null;
+        }
+      });
+
+      ["pointerup", "pointercancel", "pointerleave"].forEach((e) => box.addEventListener(e, stop));
     });
   }
 
@@ -7408,7 +7479,7 @@ class PurdyShellCard extends PcBaseCard {
       .ps-zc b { display: block; font-size: 15px; color: var(--ps-text); font-weight: 660; letter-spacing: -.02em; }
       .ps-zc.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
       .ps-zc.on b { color: var(--ps-cool); }
-      .ps-wave { margin: 11px -15px -15px; position: relative; touch-action: pan-y; }
+      .ps-wave { margin: 11px -15px -15px; position: relative; }
       .ps-wave-svg { width: 100%; height: 74px; display: block; }
       .ps-wlg { position: absolute; top: 6px; left: 15px; display: flex; gap: 12px; font-size: 10px;
                 color: var(--ps-muted); font-variant-numeric: tabular-nums; }
@@ -7437,8 +7508,8 @@ class PurdyShellCard extends PcBaseCard {
       .ps-good { color: var(--ps-good); }
       .ps-flat { color: var(--ps-dim); }
       .ps-warnc { color: var(--ps-warn); }
-      .ps-hyp { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; touch-action: pan-y; }
-      .ps-hyp svg { width: 100%; height: 46px; display: block; touch-action: pan-y; }
+      .ps-hyp { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
+      .ps-hyp svg { width: 100%; height: 46px; display: block; }
       .ps-hypt { display: flex; justify-content: space-between; font-size: 9px; color: var(--ps-dim);
                  font-variant-numeric: tabular-nums; }
       .ps-jrs { display: flex; flex-direction: column; gap: 5px; }
@@ -7580,7 +7651,7 @@ class PurdyShellCard extends PcBaseCard {
       .ps-schednow { font-size: 11.5px; color: var(--ps-muted); font-variant-numeric: tabular-nums; }
       .ps-schednow b { color: var(--ps-text); font-weight: 660; }
       .ps-timeline { position: relative; height: 28px; border-radius: 9px; background: var(--ps-fill);
-                     overflow: hidden; touch-action: pan-y; }
+                     overflow: hidden; }
       .ps-seg { position: absolute; top: 3px; bottom: 3px; border-radius: 6px;
                 background: rgba(77,208,225,.22); border: 1px solid rgba(77,208,225,.4);
                 font-size: 9.5px; font-weight: 650; color: var(--ps-text);
@@ -7649,7 +7720,11 @@ class PurdyShellCard extends PcBaseCard {
       .ps-sr[disabled] { cursor: default; }
 
       /* graph scrubber */
-      .ps-hypplot { position: relative; touch-action: pan-y; }
+      .ps-hypplot { position: relative; }
+      /* Default to letting the browser scroll; claim the gesture only once a
+         long press has deliberately entered scrub mode. */
+      [data-scrub] { touch-action: auto; }
+      [data-scrub].scrubbing { touch-action: none; }
       .ps-cross { position: absolute; top: 0; bottom: 0; width: 1px; z-index: 2; pointer-events: none;
                   background: rgba(255,255,255,.4); }
       .ps-tip { position: absolute; top: 2px; z-index: 3; pointer-events: none; white-space: nowrap;
