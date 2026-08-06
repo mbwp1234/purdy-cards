@@ -1041,6 +1041,67 @@ check('schedule rows are tappable when editable', /data-sedit="0"/.test(shs2._sc
 shs2._config.sections[0].schedule.editable = false;
 check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtml(shs2._config.sections[0])));
 
+// ---- room picking, saved playlists, scrubber ----
+check('scrubber styles present', shs.includes('.ps-cross') && shs.includes('.ps-tip'));
+check('hypnogram plot is positioned for a crosshair', shs.includes('.ps-hypplot { position: relative'));
+
+const shx = new SH();
+shx.setConfig({ now_playing: { players: [{ entity: 'media_player.a', name: 'Kitchen' }] },
+  sections: [{ type: 'music', key: 'music', default_player: 'media_player.a',
+    pins: { store: 'input_text.pins' },
+    players: [{ entity: 'media_player.a', name: 'Kitchen' }, { entity: 'media_player.b', name: 'Living' }] }] });
+check('shell watches the pin store', shx._watched.includes('input_text.pins'));
+shx._hass = { states: {
+  'media_player.a': { state: 'playing', attributes: { app_id: 'music_assistant', media_title: 'Track', media_content_id: 'u:t', media_playlist: 'Backyard BBQ', media_playlist_content_id: 'library://playlist/25' } },
+  'media_player.b': { state: 'idle', attributes: { app_id: 'music_assistant' } },
+  'input_text.pins': { state: '', attributes: {} } } };
+
+check('the playing room is the default target', shx._activePlayer() === 'media_player.a');
+shx._sel = 'media_player.b';
+check('picking a room overrides what is playing', shx._activePlayer() === 'media_player.b');
+shx._sel = 'media_player.zzz';
+check('a stale pick falls back rather than targeting a dead entity', shx._activePlayer() === 'media_player.a');
+shx._sel = null;
+
+const mus = shx._secMusic(shx._config.sections[0]);
+check('rooms select rather than opening more-info', /data-pick="media_player.b"/.test(mus) && !/data-player=/.test(mus));
+check('the active room is marked pressed', /data-pick="media_player.a" aria-pressed="true"/.test(mus));
+
+// pinning prefers the playlist a track came from, not the track
+const pin = shx._pinnable();
+check('pinning prefers the playlist over the queue item', pin.uri === 'library://playlist/25' && pin.kind === 'playlist');
+check('pin name comes from the playlist', pin.name === 'Backyard BBQ');
+
+let pinWrite = null;
+shx._hass.callService = (d, sv, data) => { pinWrite = data.value; };
+await shx._togglePin(pin.uri, pin.name, pin.kind);
+check('saving writes uri~name to the store', pinWrite === 'library://playlist/25~Backyard BBQ');
+check('a saved playlist reports as pinned', shx._isPinned('library://playlist/25'));
+check('saved playlists render their own list', /ps-pinplay|data-pinplay/.test(shx._pinsHtml()));
+await shx._togglePin(pin.uri, pin.name, pin.kind);
+check('saving again unsaves', pinWrite === '' && !shx._isPinned('library://playlist/25'));
+
+shx._hass.states['input_text.pins'] = { state: 'library://playlist/7~Liked|library://playlist/9~Chill', attributes: {} };
+await shx._loadPins();
+check('pins parse back out of the store', shx._pins.length === 2 && shx._pins[1].name === 'Chill');
+shx._hass.states['input_text.pins'] = { state: 'unknown', attributes: {} };
+await shx._loadPins();
+check('an empty pin store is not an error', shx._pins.length === 0);
+
+// the input_text helper caps at 255 characters
+const many = [];
+for (let i = 0; i < 40; i++) many.push({ uri: 'library://playlist/' + i, name: 'Playlist number ' + i });
+shx._writePins(many);
+check('pin store never exceeds the 255-char cap', pinWrite.length <= 255);
+check('pin store keeps the newest saves', pinWrite.indexOf('/39~') > 0);
+
+check('a card with no pin store shows no star', (() => {
+  const n = new SH();
+  n.setConfig({ sections: [{ type: 'music', key: 'music', players: [{ entity: 'media_player.a', name: 'K' }] }] });
+  n._hass = shx._hass;
+  return n._pinBtn() === '' && n._pinsHtml() === '';
+})());
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

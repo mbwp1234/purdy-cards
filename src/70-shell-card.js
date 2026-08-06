@@ -98,6 +98,8 @@ class PurdyShellCard extends PcBaseCard {
     this._query = "";
     this._schedEdit = null;   // index of the entry being edited, or "new"
     this._schedNote = null;
+    this._sel = null;         // room the user picked, overriding what is playing
+    this._pins = [];          // saved playlists
     this._pending = false;
   }
 
@@ -130,6 +132,7 @@ class PurdyShellCard extends PcBaseCard {
       this._fetchEvents();
       this._fetchSchedule();
       this._fetchRecent();
+      this._loadPins();
     }
   }
 
@@ -153,6 +156,7 @@ class PurdyShellCard extends PcBaseCard {
     (c.attention || []).forEach((r) => push(r.entity));
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
+    c.sections.forEach((sx) => { if (sx.type === "music" && sx.pins) push(sx.pins.store); });
 
     c.sections.forEach((s) => {
       if (s.type === "sleep") {
@@ -342,13 +346,92 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   _playUri(uri, kind) {
-    const sec = (this._config.sections || []).find((x) => x.type === "music");
-    const np = this._nowPlaying();
-    const target = np ? np.entity : (sec && (sec.default_player || (sec.players[0] || {}).entity));
+    const target = this._activePlayer();
     if (!uri || !target) return;
     this._hass.callService("music_assistant", "play_media", {
       entity_id: target, media_id: uri, media_type: kind || "track", enqueue: "replace",
     });
+  }
+
+  /* --- saved playlists ----------------------------------------------------
+     A store is either a todo list (unbounded) or an input_text (`uri~name`
+     pairs, and that helper caps at 255 characters, so the oldest pins fall
+     off rather than the write failing). */
+  _pinStore() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    return sec && sec.pins && sec.pins.store;
+  }
+
+  async _loadPins() {
+    const store = this._pinStore();
+    if (!store || !this._hass) return;
+    if (store.indexOf("todo.") === 0) {
+      if (!this._hass.callWS) return;
+      try {
+        const res = await this._hass.callWS({ type: "todo/item/list", entity_id: store });
+        this._pins = ((res && res.items) || [])
+          .filter((it) => it.status !== "completed" && it.description)
+          .map((it) => ({ name: it.summary, uri: it.description, uid: it.uid }));
+      } catch (e) { this._pins = []; }
+    } else {
+      const raw = pcState(this._hass, store);
+      this._pins = (!raw || raw === "unknown" || raw === "unavailable") ? [] :
+        raw.split("|").map((pair) => {
+          const i = pair.indexOf("~");
+          return i < 0 ? null : { uri: pair.slice(0, i), name: pair.slice(i + 1) };
+        }).filter(Boolean);
+    }
+    this._last = null;
+    this._render();
+  }
+
+  _writePins(list) {
+    const store = this._pinStore();
+    if (!store) return;
+    let pairs = list.map((p) => p.uri + "~" + p.name);
+    while (pairs.length && pairs.join("|").length > 255) pairs.shift();
+    this._hass.callService("input_text", "set_value", { entity_id: store, value: pairs.join("|") });
+  }
+
+  _isPinned(uri) {
+    return this._pins.some((p) => p.uri === uri);
+  }
+
+  async _togglePin(uri, name, kind) {
+    const store = this._pinStore();
+    if (!store || !uri) return;
+    const existing = this._pins.find((p) => p.uri === uri);
+    if (store.indexOf("todo.") === 0) {
+      if (existing) {
+        await this._hass.callService("todo", "remove_item", { entity_id: store, item: existing.uid });
+      } else {
+        await this._hass.callService("todo", "add_item", {
+          entity_id: store, item: name || "Saved playlist", description: uri,
+        });
+      }
+      this._loadPins();
+      return;
+    }
+    const next = existing
+      ? this._pins.filter((p) => p.uri !== uri)
+      : this._pins.concat([{ uri, name: (name || "Saved").slice(0, 40) }]);
+    this._pins = next;
+    this._writePins(next);
+    this._last = null;
+    this._render();
+  }
+
+  /* What is playing right now, as something that can be pinned. MA reports the
+     queue item, so prefer the playlist it came from when there is one. */
+  _pinnable() {
+    const np = this._nowPlaying();
+    if (!np) return null;
+    const a = np.st.attributes;
+    const uri = a.media_playlist_content_id || a.media_content_id;
+    if (!uri) return null;
+    const name = a.media_playlist || a.media_album_name || a.media_title;
+    const kind = a.media_playlist ? "playlist" : (a.media_content_type || "track");
+    return { uri, name, kind };
   }
 
   async _fetchSchedule() {
@@ -369,6 +452,8 @@ class PurdyShellCard extends PcBaseCard {
     this._query = "";
     this._schedEdit = null;   // index of the entry being edited, or "new"
     this._schedNote = null;
+    this._sel = null;         // room the user picked, overriding what is playing
+    this._pins = [];          // saved playlists
     }
   }
 
@@ -450,6 +535,8 @@ class PurdyShellCard extends PcBaseCard {
       });
       this._schedEdit = null;
       this._schedNote = null;
+    this._sel = null;         // room the user picked, overriding what is playing
+    this._pins = [];          // saved playlists
       await this._fetchSchedule();
     } catch (err) {
       this._schedNote = "Delete failed: " + ((err && err.message) || "unknown error");
@@ -762,6 +849,18 @@ class PurdyShellCard extends PcBaseCard {
     });
   }
 
+  /* Which room a preset, a search result or the transport acts on: whatever
+     the user last picked, else whatever is actually playing, else the default. */
+  _activePlayer() {
+    const sec = (this._config.sections || []).find((x) => x.type === "music");
+    if (!sec) return null;
+    const known = (sec.players || []).map((p) => p.entity);
+    if (this._sel && known.indexOf(this._sel) >= 0) return this._sel;
+    const np = this._nowPlaying();
+    if (np) return np.entity;
+    return sec.default_player || known[0] || null;
+  }
+
   /* The one player worth showing in the mini bar: prefer something actually
      playing, fall back to whatever is paused with a title. */
   _nowPlaying() {
@@ -836,6 +935,9 @@ class PurdyShellCard extends PcBaseCard {
         .map((p) => `${px(p.t).toFixed(1)},${py(p.v).toFixed(1)}`)
         .join(" ");
 
+    /* Keep what was plotted so the scrubber reads the same numbers the line
+       was drawn from, rather than re-deriving and drifting. */
+    this._waveData = { t0, t1, inside: inside.filter((p) => p.t >= t0), outside: outside.filter((p) => p.t >= t0) };
     const ip = line(inside), op = line(outside);
     const uid = "psw" + Math.random().toString(36).slice(2, 7);
     let out = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="ps-wave-svg" aria-hidden="true">
@@ -884,6 +986,7 @@ class PurdyShellCard extends PcBaseCard {
   _hypnoSvg(sec) {
     const span = this._sleepSpan(sec);
     if (!span || span.to - span.from < 60000) return "";
+    this._hypData = span;
     const LANE = { awake: 7, light_sleep: 22, deep_sleep: 37 };
     const COL = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" };
     const W = 400, H = 46;
@@ -909,7 +1012,10 @@ class PurdyShellCard extends PcBaseCard {
     const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="ps-hyp">
         <div class="ps-hypt"><span class="ps-lbl">Tonight</span><span>${rows.length} transitions</span></div>
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Sleep stages tonight">${out}</svg>
+        <div class="ps-hypplot" data-scrub="hyp">
+          <div class="ps-cross" hidden></div><div class="ps-tip" hidden></div>
+          <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Sleep stages tonight">${out}</svg>
+        </div>
         <div class="ps-hypt"><span>${fmt(span.from)}</span><span>${fmt(span.to)}</span></div>
       </div>`;
   }
@@ -1115,7 +1221,8 @@ class PurdyShellCard extends PcBaseCard {
         <div class="ps-rmlist">${rooms}</div>
         ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
       </div>
-      ${wave ? `<div class="ps-wave">
+      ${wave ? `<div class="ps-wave" data-scrub="wave">
+        <div class="ps-cross" hidden></div><div class="ps-tip" hidden></div>
         <div class="ps-wlg">
           <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "—" : inNow.toFixed(1) + "°"}</b></span>
           <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "—" : outNow.toFixed(1) + "°"}</b></span>
@@ -1191,10 +1298,12 @@ class PurdyShellCard extends PcBaseCard {
     const h = this._hass;
     const np = this._nowPlaying();
     const art = np && np.st.attributes.entity_picture_local;
+    const active = this._activePlayer();
     const players = (sec.players || []).map((p) => {
       const st = h.states[p.entity];
       const live = st && st.state === "playing" && psIsMusic(st);
-      return `<button class="ps-mr ${live ? "sel" : ""}" type="button" data-player="${psEsc(p.entity)}">
+      return `<button class="ps-mr ${p.entity === active ? "sel" : ""}" type="button"
+        data-pick="${psEsc(p.entity)}" aria-pressed="${p.entity === active}">
         ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>`;
     }).join("");
 
@@ -1215,6 +1324,7 @@ class PurdyShellCard extends PcBaseCard {
             ? psEsc([np.st.attributes.media_artist, np.name].filter(Boolean).join(" · "))
             : "Pick a room to start"}</div>
         </div>
+        ${this._pinBtn()}
         ${np ? `<button class="ps-tb" type="button" data-mp="playpause" data-entity="${psEsc(np.entity)}">
           <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
             ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>` : ""}
@@ -1226,8 +1336,38 @@ class PurdyShellCard extends PcBaseCard {
           Controls &amp; volume</button>
       </div>
       <div class="ps-xtra">
+        ${this._pinsHtml()}
         <div><span class="ps-lbl">Presets</span><div class="ps-pres">${presets}</div></div>
       </div>`;
+  }
+
+  /* A star on whatever is playing, so the playlist you just found by
+     searching can be found again without searching for it. */
+  _pinBtn() {
+    if (!this._pinStore()) return "";
+    const item = this._pinnable();
+    if (!item) return "";
+    const on = this._isPinned(item.uri);
+    return `<button class="ps-pin ${on ? "on" : ""}" type="button"
+        data-pin="${psEsc(item.uri)}" data-pinname="${psEsc(item.name)}" data-pinkind="${psEsc(item.kind)}"
+        aria-pressed="${on}" aria-label="${on ? "Remove from saved" : "Save"}">
+        <svg viewBox="0 0 24 24" class="ps-ico" ${on ? 'style="fill:currentColor"' : ""}>
+          <path d="m12 4 2.35 4.76 5.25.77-3.8 3.7.9 5.23L12 15.99l-4.7 2.47.9-5.23-3.8-3.7 5.25-.77Z"/></svg>
+      </button>`;
+  }
+
+  _pinsHtml() {
+    if (!this._pinStore() || !this._pins.length) return "";
+    return `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Saved</span>
+      <div class="ps-pres">${this._pins.map((p, i) => `
+        <span class="ps-pr">
+          <button class="ps-prplay" type="button" data-pinplay="${i}">
+            <ha-icon icon="mdi:playlist-star"></ha-icon>
+            <span class="ps-trunc">${psEsc(p.name)}</span></button>
+          <button class="ps-prx" type="button" data-pin="${psEsc(p.uri)}"
+            aria-label="Remove ${psEsc(p.name)} from saved">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </span>`).join("")}</div>`;
   }
 
   _secRooms(sec) {
@@ -1533,10 +1673,10 @@ class PurdyShellCard extends PcBaseCard {
       const rooms = (sec.players || []).map((p) => {
         const st = this._hass.states[p.entity];
         const live = st && st.state === "playing" && psIsMusic(st);
-        const active = target === p.entity;
+        const active = this._activePlayer() === p.entity;
         const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : 0;
         return `<div class="ps-vrow ${active ? "on" : ""}">
-            <button class="ps-vname" type="button" data-player="${psEsc(p.entity)}">
+            <button class="ps-vname" type="button" data-pick="${psEsc(p.entity)}">
               ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>
             <input class="ps-vol" type="range" min="0" max="100" step="1"
               value="${Math.round(pv * 100)}" data-vol="${psEsc(p.entity)}"
@@ -1583,6 +1723,7 @@ class PurdyShellCard extends PcBaseCard {
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
           ${rooms}
 
+          ${this._pinsHtml()}
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Search</span>
           <div class="ps-sbox">
             <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
@@ -1599,6 +1740,8 @@ class PurdyShellCard extends PcBaseCard {
               <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
               <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span>
               <span class="ps-kind">${psEsc(r.kind)}</span></button>`).join("")}</div>` : ""}
+          ${this._results && this._results.length && this._pinStore() ? `<div class="ps-note">
+            Hold a result to save it, or star what is playing.</div>` : ""}
           ${this._results && !this._results.length && !this._searching
             ? `<div class="ps-note">${sec.config_entry ? "No results." : "Search needs a Music Assistant config_entry."}</div>` : ""}
 
@@ -1702,6 +1845,8 @@ class PurdyShellCard extends PcBaseCard {
         const v = el.dataset.sedit;
         this._schedEdit = v === "new" ? "new" : parseInt(v, 10);
         this._schedNote = null;
+    this._sel = null;         // room the user picked, overriding what is playing
+    this._pins = [];          // saved playlists
         this._armed = null;
         this._render();
       });
@@ -1741,11 +1886,38 @@ class PurdyShellCard extends PcBaseCard {
     });
 
     root.querySelectorAll("[data-play]").forEach((el) => {
+      const item = () => {
+        const list = el.dataset.from === "recent" ? this._recent : (this._results || []);
+        return list[parseInt(el.dataset.play, 10)];
+      };
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        const list = el.dataset.from === "recent" ? this._recent : (this._results || []);
-        const item = list[parseInt(el.dataset.play, 10)];
-        if (item) this._playUri(item.uri, item.kind);
+        const it = item();
+        if (it) this._playUri(it.uri, it.kind);
+      });
+      /* Hold to save, so the row keeps its single obvious tap action. */
+      let hold;
+      const start = () => {
+        hold = setTimeout(() => {
+          const it = item();
+          if (it) this._togglePin(it.uri, it.name, it.kind);
+        }, 550);
+      };
+      const stop = () => clearTimeout(hold);
+      el.addEventListener("pointerdown", start);
+      ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => el.addEventListener(ev, stop));
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const it = item();
+        if (it) this._togglePin(it.uri, it.name, it.kind);
+      });
+    });
+
+    root.querySelectorAll("[data-pinplay]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const p = this._pins[parseInt(el.dataset.pinplay, 10)];
+        if (p) this._playUri(p.uri, "playlist");
       });
     });
 
@@ -1872,10 +2044,24 @@ class PurdyShellCard extends PcBaseCard {
       el.addEventListener("click", (e) => e.stopPropagation());
     });
 
-    root.querySelectorAll("[data-player]").forEach((el) => {
+    /* Tapping a room picks it as the target. It used to open the built-in
+       more-info dialog, which is not what "choose a speaker" means. */
+    root.querySelectorAll("[data-pick]").forEach((el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        pcMoreInfo(this, el.dataset.player);
+        this._sel = el.dataset.pick;
+        this._render();
+      });
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        pcMoreInfo(this, el.dataset.pick);
+      });
+    });
+
+    root.querySelectorAll("[data-pin]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._togglePin(el.dataset.pin, el.dataset.pinname, el.dataset.pinkind);
       });
     });
 
@@ -1926,6 +2112,71 @@ class PurdyShellCard extends PcBaseCard {
         if (!d.link || d.link.charAt(0) !== "#") psClosePopup();
         pcNavigate(this, d.link);
       });
+    });
+  }
+
+  /* Direct DOM updates, not a re-render: a repaint per pointermove would be
+     both wasteful and jumpy, and would drop the crosshair mid-drag. */
+  _bindScrub() {
+    const root = this.shadowRoot;
+    root.querySelectorAll("[data-scrub]").forEach((box) => {
+      const kind = box.dataset.scrub;
+      const cross = box.querySelector(".ps-cross");
+      const tip = box.querySelector(".ps-tip");
+      if (!cross || !tip) return;
+
+      const hide = () => { cross.hidden = true; tip.hidden = true; };
+
+      const move = (ev) => {
+        const r = box.getBoundingClientRect();
+        if (!r.width) return;
+        const x = Math.max(0, Math.min(r.width, ev.clientX - r.left));
+        const f = x / r.width;
+
+        let html = null;
+        if (kind === "wave") {
+          const d = this._waveData;
+          if (!d) return;
+          const t = d.t0 + f * (d.t1 - d.t0);
+          const at = (arr) => {
+            if (!arr || !arr.length) return null;
+            let best = arr[0];
+            for (const p of arr) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+            return best;
+          };
+          const i = at(d.inside), o = at(d.outside);
+          html = `<b>${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
+            (i ? `<span><i style="background:var(--ps-cool)"></i>In ${i.v.toFixed(1)}\u00B0</span>` : "") +
+            (o ? `<span><i style="background:var(--ps-heat)"></i>Out ${o.v.toFixed(1)}\u00B0</span>` : "");
+        } else {
+          const d = this._hypData;
+          if (!d) return;
+          const t = d.from + f * (d.to - d.from);
+          const rows = d.rows.filter((x) => x.t <= t);
+          const cur = rows.length ? rows[rows.length - 1] : d.rows[0];
+          if (!cur) return;
+          const label = { awake: "Awake", light_sleep: "Light sleep", deep_sleep: "Deep sleep" }[cur.s] || cur.s;
+          const col = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" }[cur.s];
+          html = `<b>${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
+            `<span><i style="background:${col}"></i>${label}</span>` +
+            `<span>since ${new Date(cur.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`;
+        }
+
+        cross.hidden = false;
+        tip.hidden = false;
+        cross.style.left = x.toFixed(1) + "px";
+        tip.innerHTML = html;
+        /* Keep the tooltip inside the card rather than letting it push the
+           page sideways — the whole point of the earlier overflow fix. */
+        const tw = tip.offsetWidth || 120;
+        tip.style.left = Math.max(2, Math.min(r.width - tw - 2, x - tw / 2)).toFixed(1) + "px";
+      };
+
+      box.addEventListener("pointermove", move);
+      box.addEventListener("pointerdown", move);
+      box.addEventListener("pointerleave", hide);
+      box.addEventListener("pointercancel", hide);
+      box.addEventListener("pointerup", hide);
     });
   }
 
@@ -2290,6 +2541,34 @@ class PurdyShellCard extends PcBaseCard {
       .ps-btn { display: inline-flex; align-items: center; gap: 7px; }
       .ps-sr { width: 100%; text-align: left; }
       .ps-sr[disabled] { cursor: default; }
+
+      /* graph scrubber */
+      .ps-hypplot { position: relative; touch-action: pan-y; }
+      .ps-cross { position: absolute; top: 0; bottom: 0; width: 1px; z-index: 2; pointer-events: none;
+                  background: rgba(255,255,255,.4); }
+      .ps-tip { position: absolute; top: 2px; z-index: 3; pointer-events: none; white-space: nowrap;
+                display: flex; flex-direction: column; gap: 2px;
+                background: rgba(10,13,20,.94); border: 1px solid var(--ps-hair);
+                border-radius: 9px; padding: 5px 8px; font-size: 11px;
+                font-variant-numeric: tabular-nums; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+      .ps-tip b { font-weight: 660; }
+      .ps-tip span { display: inline-flex; align-items: center; gap: 5px; color: var(--ps-muted); }
+      .ps-tip i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+      .ps-wave .ps-tip { top: 4px; }
+
+      /* saved playlists */
+      .ps-pin { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.08);
+                display: grid; place-items: center; color: var(--ps-muted); flex: 0 0 auto; }
+      .ps-pin.on { background: rgba(242,193,78,.17); color: var(--ps-warn); }
+      .ps-pin .ps-ico { width: 18px; height: 18px; }
+      .ps-pr { position: relative; }
+      .ps-prplay { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
+                   font-size: 11.5px; font-weight: 650; padding-right: 18px; }
+      .ps-prplay ha-icon { --mdc-icon-size: 16px; color: var(--ps-warn); }
+      .ps-prx { position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+                width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+                color: var(--ps-dim); }
+      .ps-prx .ps-ico { width: 11px; height: 11px; }
 
       /* search + lists */
       .ps-sbox { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,.06);
