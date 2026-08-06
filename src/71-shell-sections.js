@@ -58,7 +58,13 @@ Object.assign(PurdyShellCard.prototype, {
     const g = sec.graph || {};
     const inside = (this._history[g.inside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
     const outside = (this._history[g.outside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
-    if (inside.length < 2 && outside.length < 2) return "";
+    /* A graph that quietly disappears reads as "this card has no graph".
+       Say which it is: the recorder has nothing yet, or it did not answer. */
+    if (inside.length < 2 && outside.length < 2) {
+      return `<div class="ps-nohist">${this._histErr
+        ? "History unavailable — " + psEsc(this._histErr)
+        : "Not enough history yet"}</div>`;
+    }
 
     const hours = g.hours || 24;
     const t1 = Date.now();
@@ -128,7 +134,11 @@ Object.assign(PurdyShellCard.prototype, {
 
   _hypnoSvg(sec) {
     const span = this._sleepSpan(sec);
-    if (!span || span.to - span.from < 60000) return "";
+    if (!span || span.to - span.from < 60000) {
+      return `<div class="ps-nohist">${this._histErr
+        ? "History unavailable — " + psEsc(this._histErr)
+        : "No sleep session recorded"}</div>`;
+    }
     this._hypData = span;
     const LANE = { awake: 7, light_sleep: 22, deep_sleep: 37 };
     const COL = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" };
@@ -181,13 +191,24 @@ Object.assign(PurdyShellCard.prototype, {
   _secSleep(sec) {
     const h = this._hass;
     const state = pcState(h, sec.sleep_state);
-    const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state] || "Sock off";
-    const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || "";
     const active = state === "deep_sleep" || state === "light_sleep" || state === "awake";
 
+    /* "Sock off" and "the sensor is not there" are different facts. The first
+       is the normal daytime state; the second means nothing on this card can
+       be trusted, and it used to render as the first. */
+    const sockR = pcReading(h, sec.sleep_state);
+    const gone = !sockR.ok && (sockR.why === "missing" || sockR.why === "offline");
+    const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state]
+      || (gone ? "Sensor unavailable" : "Sock off");
+    const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || (gone ? "warn" : "");
+
     const r = sec.ring || {};
-    const deep = (active ? pcNum(h, r.deep) : pcNum(h, r.deep_last_night)) || 0;
-    const light = (active ? pcNum(h, r.light) : pcNum(h, r.light_last_night)) || 0;
+    /* Keep null distinct from zero all the way to the caption. */
+    const deepN = active ? pcNum(h, r.deep) : pcNum(h, r.deep_last_night);
+    const lightN = active ? pcNum(h, r.light) : pcNum(h, r.light_last_night);
+    const noData = deepN == null && lightN == null;
+    const deep = deepN || 0;
+    const light = lightN || 0;
     const max = r.max_hours || 12;
     const total = deep + light;
     const goalDeep = pcNum(h, (r.goal || {}).deep) || 0;
@@ -263,16 +284,19 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-jtop">
         <div class="ps-ring" style="width:98px;height:98px" data-info="${psEsc(sec.sleep_state)}">
           ${ring}
-          <div class="ps-rv"><b>${total.toFixed(1)}h</b><small>of ${max}h</small></div>
+          <div class="ps-rv">${noData
+            ? `<b class="ps-nodata">—</b><small>no data</small>`
+            : `<b>${total.toFixed(1)}h</b><small>of ${max}h</small>`}</div>
         </div>
         <div class="ps-grow">
           <div class="ps-jn">${psEsc(pcState(h, sec.age) || pcName(h, sec.person, sec.name))}</div>
           <div class="ps-js">${active
             ? `asleep ${elapsed || "—"}<br>since ${since}`
             : `last night<br>${since === "—" ? "no session" : "from " + since}`}</div>
-          <div class="ps-chips" style="margin-top:9px">
-            <span class="ps-chip deep">Deep ${deep.toFixed(1)}h</span>
-            <span class="ps-chip lt">Light ${light.toFixed(1)}h</span>
+          <div class="ps-chips" style="margin-top:9px">${noData
+            ? `<span class="ps-chip">${gone ? "Sensor not reporting" : "Nothing recorded yet"}</span>`
+            : `<span class="ps-chip deep">Deep ${deepN == null ? "—" : deep.toFixed(1) + "h"}</span>
+            <span class="ps-chip lt">Light ${lightN == null ? "—" : light.toFixed(1) + "h"}</span>`}
           </div>
         </div>
       </div>

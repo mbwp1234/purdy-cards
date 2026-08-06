@@ -19,22 +19,17 @@ Object.assign(PurdyShellCard.prototype, {
     const extra = sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
     try {
       this._sched = await this._hass.callWS({ type: "gttc/get_schedule", ...extra });
+      this._schedErr = null;
       this._last = null;
       this._render();
     } catch (e) {
+      /* A schedule that will not load must say so. Rendering an empty day
+         would read as "nothing is scheduled", which is the opposite of the
+         truth and the one reading that would make someone change the heat. */
       this._sched = null;
-    this._dragging = false;   // a volume drag must survive the state repaint
-    this._armed = null;       // key of a destructive control awaiting a second tap
-    this._logged = {};        // rule key -> firedAt already written to the log
-    this._results = null;     // music search results, null until a query runs
-    this._recent = [];
-    this._query = "";
-    this._schedEdit = null;   // index of the entry being edited, or "new"
-    this._schedNote = null;
-    this._schedScope = undefined; // preset key being viewed; null = base lists
-    this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
-    this._pins = [];          // saved playlists
+      this._schedErr = (e && e.message) || "GTTC did not answer";
+      this._last = null;
+      this._render();
     }
   },
 
@@ -184,12 +179,11 @@ Object.assign(PurdyShellCard.prototype, {
         type: "gttc/delete_entry", day: this._schedDayName(),
         time_start: orig.time_start, time_end: orig.time_end,
       });
+      /* Close the editor but stay on the preset and day being looked at —
+         a delete is not a reason to throw the user back to today. */
       this._schedEdit = null;
       this._schedNote = null;
-    this._schedScope = undefined; // preset key being viewed; null = base lists
-    this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
-    this._pins = [];          // saved playlists
+      this._armed = null;
       await this._fetchSchedule();
     } catch (err) {
       this._schedNote = "Delete failed: " + ((err && err.message) || "unknown error");
@@ -200,6 +194,17 @@ Object.assign(PurdyShellCard.prototype, {
   _scheduleHtml(sec) {
     const h = this._hass;
     const sd = this._sched;
+    /* An empty day and a schedule that would not load look identical, and the
+       difference is whether the heat is about to change on its own. */
+    if (!sd) {
+      return `<div class="ps-schedfail">
+          <div class="ps-lbl">Schedule</div>
+          <p>${this._schedErr
+            ? "Schedule unavailable — " + psEsc(this._schedErr)
+            : "Loading the schedule…"}</p>
+          ${this._schedErr ? `<button class="ps-sbtn" type="button" id="ps-sretry">Try again</button>` : ""}
+        </div>`;
+    }
     const th = h.states[sec.goal];
     const cur = th && th.attributes.current_schedule_entry;
     const scope = this._scope();

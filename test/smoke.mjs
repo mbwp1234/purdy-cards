@@ -874,8 +874,20 @@ check('schedule draws a now marker', schedHtml.includes('ps-nowline'));
 check('schedule shows the mode and an enable switch', /Weekday\/Weekend/.test(schedHtml) && /ps-knob on/.test(schedHtml));
 check('schedule times print as a clock, not raw minutes', /8:00 PM/.test(schedHtml));
 
+/* Not-loaded-yet and would-not-load used to look the same, and only one of
+   them is a reason to go and check the thermostat. */
 shsc._sched = null;
-check('schedule says so when GTTC will not answer', /Schedule unavailable/.test(shsc._scheduleHtml(shsc._config.sections[0])));
+shsc._schedErr = null;
+const schedLoading = shsc._scheduleHtml(shsc._config.sections[0]);
+check('a schedule still loading says it is loading', /Loading the schedule/.test(schedLoading));
+check('a schedule still loading offers no retry', !/ps-sretry/.test(schedLoading));
+shsc._schedErr = 'connection lost';
+const schedFail = shsc._scheduleHtml(shsc._config.sections[0]);
+check('schedule says so when GTTC will not answer', /Schedule unavailable/.test(schedFail));
+check('a failed schedule says why', /connection lost/.test(schedFail));
+check('a failed schedule offers a retry', /id="ps-sretry"/.test(schedFail));
+check('a failed schedule shows no windows at all', !/ps-timeline/.test(schedFail));
+shsc._schedErr = null;
 
 check('sections clip rather than hide, so they are not scroll containers',
   /\.ps-sect \{[^}]*overflow-x: clip/.test(shs) && !/\.ps-sect \{[^}]*overflow-x: hidden/.test(shs));
@@ -955,8 +967,80 @@ check('shell bind handlers read hass live rather than capturing it', (() => {
   return b.length > 500 && !/const hass = this\._hass;/.test(b) && !/\bhass\./.test(b);
 })());
 
+const { offline: pcOfflineFn, reading: pcReadingFn, esc: pcEscFn, numOf: pcNumOfFn, ringArc: pcRingArcFn, ringAngle: pcRingAngleFn, ringRotate: pcRingRotateFn } = SH.helpers;
+
+/* ------------------------------------------------------- failure states -- */
+/* A zero and a missing reading looked identical, which matters most on the
+   one section anybody would act on. */
+const shf = new SH();
+shf.setConfig({
+  weather: 'weather.w',
+  sections: [{
+    type: 'sleep', key: 'sleep', sleep_state: 'sensor.sock', name: 'Joel',
+    ring: { max_hours: 12, deep: 'sensor.d', light: 'sensor.l',
+      deep_last_night: 'input_number.dl', light_last_night: 'input_number.ll' },
+    vitals: [{ label: 'Heart', entity: 'sensor.hr', unit: 'bpm', digits: 0 }],
+    graph: { inside: 'sensor.in', outside: 'sensor.out' },
+  }],
+});
+const sockOff = { states: { 'sensor.sock': { state: 'unknown', attributes: {} } } };
+shf._hass = sockOff;
+let sleepHtml = shf._secSleep(shf._config.sections[0]);
+check('a sock that is off is not reported as zero hours slept',
+  /no data/.test(sleepHtml) && !/>0\.0h</.test(sleepHtml));
+check('a sock that is off still reads as sock off', /Sock off/.test(sleepHtml));
+
+shf._hass = { states: {} };
+sleepHtml = shf._secSleep(shf._config.sections[0]);
+check('a missing sensor is distinguished from a sock that is off',
+  /Sensor unavailable/.test(sleepHtml) && !/Sock off/.test(sleepHtml));
+
+shf._hass = {
+  states: {
+    'sensor.sock': { state: 'deep_sleep', attributes: {} },
+    'sensor.d': { state: '2.5', attributes: {} },
+    'sensor.l': { state: '3.5', attributes: {} },
+  },
+};
+sleepHtml = shf._secSleep(shf._config.sections[0]);
+check('a real reading still prints its total', /6\.0h/.test(sleepHtml) && !/no data/.test(sleepHtml));
+
+/* A graph that vanishes reads as a card that has no graph. */
+shf._history = {};
+shf._histErr = null;
+check('an empty graph says it is waiting for history',
+  /Not enough history yet/.test(shf._waveSvg(shf._config.sections[0])));
+shf._histErr = 'recorder did not answer';
+check('a graph says when the recorder failed, not just that it is empty',
+  /History unavailable/.test(shf._waveSvg(shf._config.sections[0])));
+check('the hypnogram reports a failed recorder too',
+  /History unavailable/.test(shf._hypnoSvg(shf._config.sections[0])));
+shf._histErr = null;
+check('an empty hypnogram says there was no session',
+  /No sleep session recorded/.test(shf._hypnoSvg(shf._config.sections[0])));
+
+check('a dropped connection is announced rather than shown as fresh data',
+  pcOfflineFn({ connected: false }) === true &&
+  pcOfflineFn({ connected: true }) === false &&
+  pcOfflineFn({}) === false);
+check('a reading reports why it is missing', (() => {
+  const h = { states: { a: { state: 'unavailable', attributes: {} }, b: { state: '3', attributes: {} } } };
+  return pcReadingFn(h, 'a').why === 'unavailable' &&
+    pcReadingFn(h, 'zzz').why === 'missing' &&
+    pcReadingFn(null, 'a').why === 'offline' &&
+    pcReadingFn(h, null).why === 'unset' &&
+    pcReadingFn(h, 'b').n === 3;
+})());
+
+/* Three copies of the constructor had been spliced into unrelated methods by
+   a failed string replace. The pins one was destructive: the next save would
+   have written the emptied list back over the helper. */
+check('no constructor block is spliced into another method', (() => {
+  const marks = (shellSrc.match(/rooms the user picked, overriding/g) || []).length;
+  return marks === 1;
+})());
+
 /* --------------------------------------------------- shared primitives -- */
-const { esc: pcEscFn, numOf: pcNumOfFn, ringArc: pcRingArcFn, ringAngle: pcRingAngleFn, ringRotate: pcRingRotateFn } = SH.helpers;
 /* These had two to four copies each. The point of the assertions is that
    exactly one implementation survives, and that folding them changed no
    numbers — the ring geometry is shared precisely so the pictures stay

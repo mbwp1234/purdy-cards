@@ -30,6 +30,25 @@ function pcNumOf(st, attr) {
   return Number.isFinite(n) ? n : null;
 }
 
+/* Why a reading is missing, so a card can say so rather than draw a zero.
+   `pcNum(...) || 0` is the shape that hides this: a sock that is off and a
+   baby who slept nothing produce the same empty ring. */
+function pcReading(hass, id) {
+  if (!id) return { ok: false, why: "unset" };
+  if (!hass || !hass.states) return { ok: false, why: "offline" };
+  const st = hass.states[id];
+  if (!st) return { ok: false, why: "missing" };
+  if (st.state === "unavailable") return { ok: false, why: "unavailable" };
+  if (st.state === "unknown") return { ok: false, why: "unknown" };
+  return { ok: true, st, n: pcNumOf(st) };
+}
+
+/* True once HA has told us the connection dropped. Everything on screen is
+   last-known-good from that moment on, and the header says so. */
+function pcOffline(hass) {
+  return !!hass && hass.connected === false;
+}
+
 /* Ring geometry. Every ring in this bundle is a 270° sweep starting at 135°,
    and every one of them had its own copy of the marker derivation — including
    three separate comments explaining the same +90.

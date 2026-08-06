@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.23.0";
+const PC_VERSION = "1.24.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -93,6 +93,25 @@ function pcNumOf(st, attr) {
   if (!st) return null;
   const n = parseFloat(attr ? st.attributes[attr] : st.state);
   return Number.isFinite(n) ? n : null;
+}
+
+/* Why a reading is missing, so a card can say so rather than draw a zero.
+   `pcNum(...) || 0` is the shape that hides this: a sock that is off and a
+   baby who slept nothing produce the same empty ring. */
+function pcReading(hass, id) {
+  if (!id) return { ok: false, why: "unset" };
+  if (!hass || !hass.states) return { ok: false, why: "offline" };
+  const st = hass.states[id];
+  if (!st) return { ok: false, why: "missing" };
+  if (st.state === "unavailable") return { ok: false, why: "unavailable" };
+  if (st.state === "unknown") return { ok: false, why: "unknown" };
+  return { ok: true, st, n: pcNumOf(st) };
+}
+
+/* True once HA has told us the connection dropped. Everything on screen is
+   last-known-good from that moment on, and the header says so. */
+function pcOffline(hass) {
+  return !!hass && hass.connected === false;
 }
 
 /* Ring geometry. Every ring in this bundle is a 270° sweep starting at 135°,
@@ -5242,10 +5261,16 @@ class PurdyShellCard extends PcBaseCard {
           .sort((a, b) => a.t - b.t);
       });
       this._history = hist;
+      this._histErr = null;
       this._last = null;
       this._render();
     } catch (e) {
-      /* History is decoration. Never break the view over it. */
+      /* History is decoration — never break the view over it — but the graphs
+         must be able to say the recorder did not answer, rather than looking
+         like a card that simply has no graph. */
+      this._histErr = (e && e.message) || "recorder did not answer";
+      this._last = null;
+      this._render();
     }
   }
 
@@ -5410,9 +5435,13 @@ class PurdyShellCard extends PcBaseCard {
         <div class="ps-rt">
           ${wTemp == null ? "" : `<div class="ps-wx" data-info="${psEsc(c.weather)}">
             <ha-icon icon="${wIcons[wState] || "mdi:weather-partly-cloudy"}"></ha-icon>${Math.round(wTemp)}°</div>`}
-          <button class="ps-chip ${worst}" type="button" id="ps-alert">
+          ${pcOffline(this._hass)
+            /* Everything below is last-known-good from here on. Saying so beats
+               a screen of confidently stale numbers. */
+            ? `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>`
+            : `<button class="ps-chip ${worst}" type="button" id="ps-alert">
             <span class="ps-dot"></span>${faults.length ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention` : "All clear"}
-          </button>
+          </button>`}
         </div>`);
 
     this._patchSections(sections);
@@ -5570,6 +5599,12 @@ class PurdyShellCard extends PcBaseCard {
         this._render();
       });
     });
+    this._one("ps-sretry", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._schedErr = null;
+      this._render();
+      this._fetchSchedule();
+    }));
     this._one("ps-ssave", (el) =>
       el.addEventListener("click", (e) => { e.stopPropagation(); this._schedSave(); }));
     this._one("ps-scancel", (el) => el.addEventListener("click", (e) => {
@@ -6005,7 +6040,7 @@ class PurdyShellCard extends PcBaseCard {
   static get helpers() {
     return {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
-      numOf: pcNumOf, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
+      numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
     };
   }
 
@@ -6074,7 +6109,13 @@ Object.assign(PurdyShellCard.prototype, {
     const g = sec.graph || {};
     const inside = (this._history[g.inside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
     const outside = (this._history[g.outside] || []).map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
-    if (inside.length < 2 && outside.length < 2) return "";
+    /* A graph that quietly disappears reads as "this card has no graph".
+       Say which it is: the recorder has nothing yet, or it did not answer. */
+    if (inside.length < 2 && outside.length < 2) {
+      return `<div class="ps-nohist">${this._histErr
+        ? "History unavailable — " + psEsc(this._histErr)
+        : "Not enough history yet"}</div>`;
+    }
 
     const hours = g.hours || 24;
     const t1 = Date.now();
@@ -6144,7 +6185,11 @@ Object.assign(PurdyShellCard.prototype, {
 
   _hypnoSvg(sec) {
     const span = this._sleepSpan(sec);
-    if (!span || span.to - span.from < 60000) return "";
+    if (!span || span.to - span.from < 60000) {
+      return `<div class="ps-nohist">${this._histErr
+        ? "History unavailable — " + psEsc(this._histErr)
+        : "No sleep session recorded"}</div>`;
+    }
     this._hypData = span;
     const LANE = { awake: 7, light_sleep: 22, deep_sleep: 37 };
     const COL = { awake: "var(--ps-awake)", light_sleep: "var(--ps-light)", deep_sleep: "var(--ps-deep)" };
@@ -6197,13 +6242,24 @@ Object.assign(PurdyShellCard.prototype, {
   _secSleep(sec) {
     const h = this._hass;
     const state = pcState(h, sec.sleep_state);
-    const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state] || "Sock off";
-    const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || "";
     const active = state === "deep_sleep" || state === "light_sleep" || state === "awake";
 
+    /* "Sock off" and "the sensor is not there" are different facts. The first
+       is the normal daytime state; the second means nothing on this card can
+       be trusted, and it used to render as the first. */
+    const sockR = pcReading(h, sec.sleep_state);
+    const gone = !sockR.ok && (sockR.why === "missing" || sockR.why === "offline");
+    const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state]
+      || (gone ? "Sensor unavailable" : "Sock off");
+    const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || (gone ? "warn" : "");
+
     const r = sec.ring || {};
-    const deep = (active ? pcNum(h, r.deep) : pcNum(h, r.deep_last_night)) || 0;
-    const light = (active ? pcNum(h, r.light) : pcNum(h, r.light_last_night)) || 0;
+    /* Keep null distinct from zero all the way to the caption. */
+    const deepN = active ? pcNum(h, r.deep) : pcNum(h, r.deep_last_night);
+    const lightN = active ? pcNum(h, r.light) : pcNum(h, r.light_last_night);
+    const noData = deepN == null && lightN == null;
+    const deep = deepN || 0;
+    const light = lightN || 0;
     const max = r.max_hours || 12;
     const total = deep + light;
     const goalDeep = pcNum(h, (r.goal || {}).deep) || 0;
@@ -6279,16 +6335,19 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-jtop">
         <div class="ps-ring" style="width:98px;height:98px" data-info="${psEsc(sec.sleep_state)}">
           ${ring}
-          <div class="ps-rv"><b>${total.toFixed(1)}h</b><small>of ${max}h</small></div>
+          <div class="ps-rv">${noData
+            ? `<b class="ps-nodata">—</b><small>no data</small>`
+            : `<b>${total.toFixed(1)}h</b><small>of ${max}h</small>`}</div>
         </div>
         <div class="ps-grow">
           <div class="ps-jn">${psEsc(pcState(h, sec.age) || pcName(h, sec.person, sec.name))}</div>
           <div class="ps-js">${active
             ? `asleep ${elapsed || "—"}<br>since ${since}`
             : `last night<br>${since === "—" ? "no session" : "from " + since}`}</div>
-          <div class="ps-chips" style="margin-top:9px">
-            <span class="ps-chip deep">Deep ${deep.toFixed(1)}h</span>
-            <span class="ps-chip lt">Light ${light.toFixed(1)}h</span>
+          <div class="ps-chips" style="margin-top:9px">${noData
+            ? `<span class="ps-chip">${gone ? "Sensor not reporting" : "Nothing recorded yet"}</span>`
+            : `<span class="ps-chip deep">Deep ${deepN == null ? "—" : deep.toFixed(1) + "h"}</span>
+            <span class="ps-chip lt">Light ${lightN == null ? "—" : light.toFixed(1) + "h"}</span>`}
           </div>
         </div>
       </div>
@@ -6767,22 +6826,17 @@ Object.assign(PurdyShellCard.prototype, {
     const extra = sec.schedule.entry_id ? { entry_id: sec.schedule.entry_id } : {};
     try {
       this._sched = await this._hass.callWS({ type: "gttc/get_schedule", ...extra });
+      this._schedErr = null;
       this._last = null;
       this._render();
     } catch (e) {
+      /* A schedule that will not load must say so. Rendering an empty day
+         would read as "nothing is scheduled", which is the opposite of the
+         truth and the one reading that would make someone change the heat. */
       this._sched = null;
-    this._dragging = false;   // a volume drag must survive the state repaint
-    this._armed = null;       // key of a destructive control awaiting a second tap
-    this._logged = {};        // rule key -> firedAt already written to the log
-    this._results = null;     // music search results, null until a query runs
-    this._recent = [];
-    this._query = "";
-    this._schedEdit = null;   // index of the entry being edited, or "new"
-    this._schedNote = null;
-    this._schedScope = undefined; // preset key being viewed; null = base lists
-    this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
-    this._pins = [];          // saved playlists
+      this._schedErr = (e && e.message) || "GTTC did not answer";
+      this._last = null;
+      this._render();
     }
   },
 
@@ -6932,12 +6986,11 @@ Object.assign(PurdyShellCard.prototype, {
         type: "gttc/delete_entry", day: this._schedDayName(),
         time_start: orig.time_start, time_end: orig.time_end,
       });
+      /* Close the editor but stay on the preset and day being looked at —
+         a delete is not a reason to throw the user back to today. */
       this._schedEdit = null;
       this._schedNote = null;
-    this._schedScope = undefined; // preset key being viewed; null = base lists
-    this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
-    this._pins = [];          // saved playlists
+      this._armed = null;
       await this._fetchSchedule();
     } catch (err) {
       this._schedNote = "Delete failed: " + ((err && err.message) || "unknown error");
@@ -6948,6 +7001,17 @@ Object.assign(PurdyShellCard.prototype, {
   _scheduleHtml(sec) {
     const h = this._hass;
     const sd = this._sched;
+    /* An empty day and a schedule that would not load look identical, and the
+       difference is whether the heat is about to change on its own. */
+    if (!sd) {
+      return `<div class="ps-schedfail">
+          <div class="ps-lbl">Schedule</div>
+          <p>${this._schedErr
+            ? "Schedule unavailable — " + psEsc(this._schedErr)
+            : "Loading the schedule…"}</p>
+          ${this._schedErr ? `<button class="ps-sbtn" type="button" id="ps-sretry">Try again</button>` : ""}
+        </div>`;
+    }
     const th = h.states[sec.goal];
     const cur = th && th.attributes.current_schedule_entry;
     const scope = this._scope();
@@ -8192,6 +8256,15 @@ const PS_STYLES = `
       .ps-db span { font-size: 8.5px; letter-spacing: .03em; font-weight: 650; }
       .ps-db.on { color: var(--ps-cool); background: rgba(77,208,225,.13); }
       .ps-db.alert { color: var(--ps-bad); }
+
+      /* missing data — deliberately quiet, but never mistakable for a value */
+      .ps-nodata { color: var(--ps-dim); font-weight: 500; }
+      .ps-nohist {
+        padding: 14px 2px; text-align: center; font-size: 11.5px;
+        color: var(--ps-dim); font-style: italic;
+      }
+      .ps-schedfail { padding: 4px 2px 8px; }
+      .ps-schedfail p { margin: 8px 0 10px; font-size: 12.5px; color: var(--ps-dim); }
 
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
     `;

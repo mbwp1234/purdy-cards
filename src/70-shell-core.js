@@ -254,10 +254,16 @@ class PurdyShellCard extends PcBaseCard {
           .sort((a, b) => a.t - b.t);
       });
       this._history = hist;
+      this._histErr = null;
       this._last = null;
       this._render();
     } catch (e) {
-      /* History is decoration. Never break the view over it. */
+      /* History is decoration — never break the view over it — but the graphs
+         must be able to say the recorder did not answer, rather than looking
+         like a card that simply has no graph. */
+      this._histErr = (e && e.message) || "recorder did not answer";
+      this._last = null;
+      this._render();
     }
   }
 
@@ -422,9 +428,13 @@ class PurdyShellCard extends PcBaseCard {
         <div class="ps-rt">
           ${wTemp == null ? "" : `<div class="ps-wx" data-info="${psEsc(c.weather)}">
             <ha-icon icon="${wIcons[wState] || "mdi:weather-partly-cloudy"}"></ha-icon>${Math.round(wTemp)}°</div>`}
-          <button class="ps-chip ${worst}" type="button" id="ps-alert">
+          ${pcOffline(this._hass)
+            /* Everything below is last-known-good from here on. Saying so beats
+               a screen of confidently stale numbers. */
+            ? `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>`
+            : `<button class="ps-chip ${worst}" type="button" id="ps-alert">
             <span class="ps-dot"></span>${faults.length ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention` : "All clear"}
-          </button>
+          </button>`}
         </div>`);
 
     this._patchSections(sections);
@@ -582,6 +592,12 @@ class PurdyShellCard extends PcBaseCard {
         this._render();
       });
     });
+    this._one("ps-sretry", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._schedErr = null;
+      this._render();
+      this._fetchSchedule();
+    }));
     this._one("ps-ssave", (el) =>
       el.addEventListener("click", (e) => { e.stopPropagation(); this._schedSave(); }));
     this._one("ps-scancel", (el) => el.addEventListener("click", (e) => {
@@ -1017,7 +1033,7 @@ class PurdyShellCard extends PcBaseCard {
   static get helpers() {
     return {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
-      numOf: pcNumOf, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
+      numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
     };
   }
 

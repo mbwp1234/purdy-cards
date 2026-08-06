@@ -509,6 +509,15 @@ const PS_STYLES = `
       .ps-db.on { color: var(--ps-cool); background: rgba(77,208,225,.13); }
       .ps-db.alert { color: var(--ps-bad); }
 
+      /* missing data — deliberately quiet, but never mistakable for a value */
+      .ps-nodata { color: var(--ps-dim); font-weight: 500; }
+      .ps-nohist {
+        padding: 14px 2px; text-align: center; font-size: 11.5px;
+        color: var(--ps-dim); font-style: italic;
+      }
+      .ps-schedfail { padding: 4px 2px 8px; }
+      .ps-schedfail p { margin: 8px 0 10px; font-size: 12.5px; color: var(--ps-dim); }
+
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
     `;
 
