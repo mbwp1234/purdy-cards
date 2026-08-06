@@ -98,7 +98,7 @@ class PurdyShellCard extends PcBaseCard {
     this._query = "";
     this._schedEdit = null;   // index of the entry being edited, or "new"
     this._schedNote = null;
-    this._sel = null;         // room the user picked, overriding what is playing
+    this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
     this._pending = false;
   }
@@ -346,10 +346,10 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   _playUri(uri, kind) {
-    const target = this._activePlayer();
-    if (!uri || !target) return;
+    const targets = this._targets();
+    if (!uri || !targets.length) return;
     this._hass.callService("music_assistant", "play_media", {
-      entity_id: target, media_id: uri, media_type: kind || "track", enqueue: "replace",
+      entity_id: targets, media_id: uri, media_type: kind || "track", enqueue: "replace",
     });
   }
 
@@ -452,30 +452,43 @@ class PurdyShellCard extends PcBaseCard {
     this._query = "";
     this._schedEdit = null;   // index of the entry being edited, or "new"
     this._schedNote = null;
-    this._sel = null;         // room the user picked, overriding what is playing
+    this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
     }
   }
 
-  /* Today's entries, following GTTC's own per_day / weekday-weekend split. */
-  _schedToday() {
+  /* When a preset is active, GTTC reads AND edits that preset's per-day
+     schedule — update_entry/delete_entry default to active_preset. Reading the
+     base weekday/weekend lists instead shows a schedule that is not in use. */
+  _activePreset() {
     const s = this._sched;
-    if (!s) return [];
-    const dow = new Date().getDay();
-    if (s.mode === "per_day") {
-      const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-      return (s.per_day && s.per_day[names[dow]]) || [];
+    if (s && s.active_preset && s.presets && s.presets[s.active_preset]) {
+      return s.presets[s.active_preset];
     }
-    return s[dow === 0 || dow === 6 ? "weekend" : "weekday"] || [];
+    return null;
+  }
+
+  _perDay() {
+    return !!this._activePreset() || (this._sched && this._sched.mode === "per_day");
   }
 
   _schedDayName() {
-    const s = this._sched;
     const dow = new Date().getDay();
-    if (s && s.mode === "per_day") {
+    if (this._perDay()) {
       return ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][dow];
     }
     return dow === 0 || dow === 6 ? "weekend" : "weekday";
+  }
+
+  /* Today's entries, from the preset when one is active. */
+  _schedToday() {
+    const s = this._sched;
+    if (!s) return [];
+    const day = this._schedDayName();
+    const preset = this._activePreset();
+    if (preset) return (preset.schedule && preset.schedule[day]) || [];
+    if (s.mode === "per_day") return (s.per_day && s.per_day[day]) || [];
+    return s[day] || [];
   }
 
   _schedWs(msg) {
@@ -535,7 +548,7 @@ class PurdyShellCard extends PcBaseCard {
       });
       this._schedEdit = null;
       this._schedNote = null;
-    this._sel = null;         // room the user picked, overriding what is playing
+    this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
       await this._fetchSchedule();
     } catch (err) {
@@ -607,7 +620,9 @@ class PurdyShellCard extends PcBaseCard {
 
     return `<div class="ps-sched">
         <div class="ps-schedh">
-          <span class="ps-lbl">Schedule</span>
+          <span class="ps-lbl">${psEsc(this._activePreset()
+            ? (this._sched.active_preset + " preset")
+            : (this._perDay() ? this._schedDayName() : this._schedDayName() + "s"))}</span>
           ${modeId ? `<span class="ps-chip">${psEsc(pcState(h, modeId))}</span>` : ""}
           ${onId ? `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(onId)}"
             role="switch" aria-checked="${on}" aria-label="Schedule enabled"><i></i></button>` : ""}
@@ -851,14 +866,33 @@ class PurdyShellCard extends PcBaseCard {
 
   /* Which room a preset, a search result or the transport acts on: whatever
      the user last picked, else whatever is actually playing, else the default. */
-  _activePlayer() {
+  _targets() {
     const sec = (this._config.sections || []).find((x) => x.type === "music");
-    if (!sec) return null;
+    if (!sec) return [];
     const known = (sec.players || []).map((p) => p.entity);
-    if (this._sel && known.indexOf(this._sel) >= 0) return this._sel;
+    const picked = (this._sel || []).filter((e) => known.indexOf(e) >= 0);
+    if (picked.length) return picked;
     const np = this._nowPlaying();
-    if (np) return np.entity;
-    return sec.default_player || known[0] || null;
+    if (np) return [np.entity];
+    const fallback = sec.default_player || known[0];
+    return fallback ? [fallback] : [];
+  }
+
+  /* The room the transport and the main volume act on: the first selected. */
+  _activePlayer() {
+    return this._targets()[0] || null;
+  }
+
+  _isPicked(entity) {
+    return (this._sel || []).indexOf(entity) >= 0;
+  }
+
+  /* Tapping toggles, so two taps play to two rooms and tapping again drops
+     one. Emptying the selection falls back to whatever is playing. */
+  _togglePick(entity) {
+    const cur = this._sel || [];
+    this._sel = cur.indexOf(entity) >= 0 ? cur.filter((e) => e !== entity) : cur.concat([entity]);
+    this._render();
   }
 
   /* The one player worth showing in the mini bar: prefer something actually
@@ -1302,8 +1336,9 @@ class PurdyShellCard extends PcBaseCard {
     const players = (sec.players || []).map((p) => {
       const st = h.states[p.entity];
       const live = st && st.state === "playing" && psIsMusic(st);
-      return `<button class="ps-mr ${p.entity === active ? "sel" : ""}" type="button"
-        data-pick="${psEsc(p.entity)}" aria-pressed="${p.entity === active}">
+      const on = this._isPicked(p.entity) || (!(this._sel || []).length && p.entity === active);
+      return `<button class="ps-mr ${on ? "sel" : ""}" type="button"
+        data-pick="${psEsc(p.entity)}" aria-pressed="${on}">
         ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>`;
     }).join("");
 
@@ -1313,7 +1348,9 @@ class PurdyShellCard extends PcBaseCard {
         <span class="ps-trunc">${psEsc(p.name)}</span></button>`).join("");
 
     return `
-      ${this._head(sec, `<span class="ps-chip">${np ? (np.playing ? "Playing" : "Paused") : "Idle"}</span>`)}
+      ${this._head(sec, (this._sel || []).length > 1
+        ? `<span class="ps-chip cool">${this._sel.length} rooms</span>`
+        : `<span class="ps-chip">${np ? (np.playing ? "Playing" : "Paused") : "Idle"}</span>`)}
       <div class="ps-now">
         <div class="ps-art">${art
           ? `<img src="${psEsc(art)}" alt="" />`
@@ -1336,6 +1373,7 @@ class PurdyShellCard extends PcBaseCard {
           Controls &amp; volume</button>
       </div>
       <div class="ps-xtra">
+        ${this._recentHtml()}
         ${this._pinsHtml()}
         <div><span class="ps-lbl">Presets</span><div class="ps-pres">${presets}</div></div>
       </div>`;
@@ -1354,6 +1392,17 @@ class PurdyShellCard extends PcBaseCard {
         <svg viewBox="0 0 24 24" class="ps-ico" ${on ? 'style="fill:currentColor"' : ""}>
           <path d="m12 4 2.35 4.76 5.25.77-3.8 3.7.9 5.23L12 15.99l-4.7 2.47.9-5.23-3.8-3.7 5.25-.77Z"/></svg>
       </button>`;
+  }
+
+  /* What you actually reach for is what you just played, so it leads. */
+  _recentHtml() {
+    if (!this._recent.length) return "";
+    return `<div><span class="ps-lbl">Recently played</span>
+      <div class="ps-mlist" style="margin-top:6px">${this._recent.map((r, i) => `
+        <button class="ps-mi" type="button" data-play="${i}" data-from="recent">
+          <span class="ps-th"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg></span>
+          <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
+          <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span></button>`).join("")}</div></div>`;
   }
 
   _pinsHtml() {
@@ -1673,7 +1722,8 @@ class PurdyShellCard extends PcBaseCard {
       const rooms = (sec.players || []).map((p) => {
         const st = this._hass.states[p.entity];
         const live = st && st.state === "playing" && psIsMusic(st);
-        const active = this._activePlayer() === p.entity;
+        const active = this._isPicked(p.entity) ||
+          (!(this._sel || []).length && this._activePlayer() === p.entity);
         const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : 0;
         return `<div class="ps-vrow ${active ? "on" : ""}">
             <button class="ps-vname" type="button" data-pick="${psEsc(p.entity)}">
@@ -1700,14 +1750,14 @@ class PurdyShellCard extends PcBaseCard {
             </div>
           </div>
           <div class="ps-transport">
-            <button class="ps-tb" type="button" data-mpc="media_previous_track" data-entity="${psEsc(target || "")}" aria-label="Previous">
+            <button class="ps-tb" type="button" data-mpc="media_previous_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Previous">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M18 5v14L8 12zM6 5v14"/></svg></button>
             <button class="ps-tb big" type="button" data-mp="playpause" data-entity="${psEsc(target || "")}" aria-label="Play or pause">
               <svg viewBox="0 0 24 24" class="ps-ico">${np && np.playing
                 ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
-            <button class="ps-tb" type="button" data-mpc="media_next_track" data-entity="${psEsc(target || "")}" aria-label="Next">
+            <button class="ps-tb" type="button" data-mpc="media_next_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Next">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 5v14l10-7zM18 5v14"/></svg></button>
-            <button class="ps-tb" type="button" data-mpc="media_stop" data-entity="${psEsc(target || "")}" aria-label="Stop">
+            <button class="ps-tb" type="button" data-mpc="media_stop" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Stop">
               <svg viewBox="0 0 24 24" class="ps-ico"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg></button>
           </div>
           <div class="ps-volmain">
@@ -1745,12 +1795,7 @@ class PurdyShellCard extends PcBaseCard {
           ${this._results && !this._results.length && !this._searching
             ? `<div class="ps-note">${sec.config_entry ? "No results." : "Search needs a Music Assistant config_entry."}</div>` : ""}
 
-          ${this._recent.length ? `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Recently listened</span>
-            <div class="ps-mlist">${this._recent.map((r, i) => `
-              <button class="ps-mi" type="button" data-play="${i}" data-from="recent">
-                <span class="ps-th"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg></span>
-                <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
-                <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span></button>`).join("")}</div>` : ""}
+          <div style="margin-top:14px">${this._recentHtml()}</div>
         </div>`;
     }
 
@@ -1845,7 +1890,7 @@ class PurdyShellCard extends PcBaseCard {
         const v = el.dataset.sedit;
         this._schedEdit = v === "new" ? "new" : parseInt(v, 10);
         this._schedNote = null;
-    this._sel = null;         // room the user picked, overriding what is playing
+    this._sel = [];           // rooms the user picked, overriding what is playing
     this._pins = [];          // saved playlists
         this._armed = null;
         this._render();
@@ -2009,8 +2054,9 @@ class PurdyShellCard extends PcBaseCard {
     root.querySelectorAll("[data-mpc]").forEach((el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (!el.dataset.entity) return;
-        hass.callService("media_player", el.dataset.mpc, { entity_id: el.dataset.entity });
+        const ids = el.dataset.all === "1" ? this._targets() : [el.dataset.entity].filter(Boolean);
+        if (!ids.length) return;
+        hass.callService("media_player", el.dataset.mpc, { entity_id: ids });
       });
     });
 
@@ -2049,8 +2095,7 @@ class PurdyShellCard extends PcBaseCard {
     root.querySelectorAll("[data-pick]").forEach((el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
-        this._sel = el.dataset.pick;
-        this._render();
+        this._togglePick(el.dataset.pick);
       });
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
@@ -2271,14 +2316,14 @@ class PurdyShellCard extends PcBaseCard {
 
       /* one glass column */
       .ps-col {
-        border-radius: 26px; overflow: hidden;
+        border-radius: 26px; overflow: clip;
         background: linear-gradient(180deg, rgba(255,255,255,.062), rgba(255,255,255,.026));
         border: 1px solid rgba(255,255,255,.085);
         box-shadow: 0 24px 60px -18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.075);
         backdrop-filter: blur(26px) saturate(1.25);
         -webkit-backdrop-filter: blur(26px) saturate(1.25);
       }
-      .ps-sect { padding: 13px 15px 15px; overflow-x: hidden; }
+      .ps-sect { padding: 13px 15px 15px; overflow-x: clip; }
       .ps-sect + .ps-sect { border-top: 1px solid var(--ps-hair); }
       .ps-sh { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0 0 11px; }
       .ps-nm { font-size: 12.5px; font-weight: 680; letter-spacing: -.004em; }
@@ -2381,7 +2426,8 @@ class PurdyShellCard extends PcBaseCard {
       .ps-mr { flex: 0 0 auto; padding: 7px 12px; border-radius: 12px; background: var(--ps-fill);
                color: var(--ps-muted); font-size: 11px; font-weight: 650;
                display: inline-flex; align-items: center; gap: 6px; }
-      .ps-mr.sel { background: rgba(255,255,255,.11); color: var(--ps-text); }
+      .ps-mr.sel { background: rgba(77,208,225,.16); color: var(--ps-cool);
+                   box-shadow: inset 0 0 0 1px rgba(77,208,225,.4); }
       .ps-live { width: 6px; height: 6px; border-radius: 50%; background: var(--ps-good); }
       .ps-pres { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-top: 7px; }
       .ps-pr { padding: 10px 11px; border-radius: 14px; background: var(--ps-fill); font-size: 11.5px;

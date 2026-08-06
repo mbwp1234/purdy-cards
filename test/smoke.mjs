@@ -871,6 +871,9 @@ check('schedule times print as a clock, not raw minutes', /8:00 PM/.test(schedHt
 shsc._sched = null;
 check('schedule says so when GTTC will not answer', /Schedule unavailable/.test(shsc._scheduleHtml(shsc._config.sections[0])));
 
+check('sections clip rather than hide, so they are not scroll containers',
+  /\.ps-sect \{[^}]*overflow-x: clip/.test(shs) && !/\.ps-sect \{[^}]*overflow-x: hidden/.test(shs));
+check('the column clips rather than hides', /\.ps-col \{[^}]*overflow: clip/.test(shs));
 check('shell never widens past the view', shs.includes('max-width: 100%') && shs.includes('overflow-x: clip'));
 check('graphs claim the vertical gesture', /\.ps-wave \{[^}]*touch-action: pan-y/.test(shs));
 check('hypnogram claims the vertical gesture', /\.ps-hyp \{[^}]*touch-action: pan-y/.test(shs));
@@ -1015,7 +1018,9 @@ let played = null;
 shq._hass.callService = (d, sv, data) => { played = { d, sv, data }; };
 shq._playUri('u:p', 'playlist');
 check('playing a result uses music_assistant.play_media', played.d === 'music_assistant' && played.sv === 'play_media');
-check('play_media replaces the queue on the default player', played.data.enqueue === 'replace' && played.data.entity_id === 'media_player.a');
+check('play_media replaces the queue on the default player',
+  played.data.enqueue === 'replace' &&
+  JSON.stringify(played.data.entity_id) === JSON.stringify(['media_player.a']));
 
 // schedule editing addresses the right day and carries the old times
 const shs2 = new SH();
@@ -1025,6 +1030,28 @@ shs2._sched = { weekday: [{ time_start: '06:00', time_end: '20:00', target_temp:
                 weekend: [{ time_start: '08:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }] };
 const isWknd = new Date().getDay() === 0 || new Date().getDay() === 6;
 check('schedule edits address today’s day bucket', shs2._schedDayName() === (isWknd ? 'weekend' : 'weekday'));
+
+// An active preset overrides the base weekday/weekend lists entirely — reading
+// the base lists shows a schedule the house is not actually running.
+const dayNow = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][new Date().getDay()];
+shs2._sched = {
+  weekday: [{ time_start: '06:00', time_end: '20:00', target_temp: 68 }],
+  weekend: [{ time_start: '09:00', time_end: '20:00', target_temp: 66 }],
+  active_preset: 'Summer',
+  presets: { Summer: { schedule: { [dayNow]: [{ time_start: '05:30', time_end: '21:00', target_temp: 70, cooling_temp: 74 }] } } },
+};
+check('an active preset is detected', !!shs2._activePreset());
+check('an active preset switches to per-day naming', shs2._schedDayName() === dayNow);
+check('an active preset supplies the entries', shs2._schedToday().length === 1 && shs2._schedToday()[0].time_start === '05:30');
+check('the base weekday list is ignored while a preset is active',
+  shs2._schedToday()[0].time_start !== '06:00' && shs2._schedToday()[0].time_start !== '09:00');
+check('the header names the preset being shown', /Summer preset/.test(shs2._scheduleHtml(shs2._config.sections[0])));
+shs2._sched = { mode: 'per_day', per_day: { [dayNow]: [{ time_start: '07:15', time_end: '22:00', target_temp: 69 }] } };
+check('per_day mode reads today by name', shs2._schedToday()[0].time_start === '07:15');
+check('per_day mode names the day', shs2._schedDayName() === dayNow);
+// the preset tests above left _sched in per_day mode; restore the split lists
+shs2._sched = { weekday: [{ time_start: '06:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }],
+                weekend: [{ time_start: '08:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }] };
 // _schedDelete refetches afterwards, so capture every message, not the last
 const wsMsgs = [];
 const schedFixture = { weekday: [{ time_start: '06:00', time_end: '20:00', target_temp: 68, cooling_temp: 72 }],
@@ -1057,15 +1084,35 @@ shx._hass = { states: {
   'input_text.pins': { state: '', attributes: {} } } };
 
 check('the playing room is the default target', shx._activePlayer() === 'media_player.a');
-shx._sel = 'media_player.b';
+shx._togglePick('media_player.b');
 check('picking a room overrides what is playing', shx._activePlayer() === 'media_player.b');
-shx._sel = 'media_player.zzz';
+shx._togglePick('media_player.a');
+check('a second tap arms both rooms', JSON.stringify(shx._targets()) === JSON.stringify(['media_player.b', 'media_player.a']));
+shx._togglePick('media_player.b');
+check('tapping a selected room drops it', JSON.stringify(shx._targets()) === JSON.stringify(['media_player.a']));
+shx._togglePick('media_player.a');
+check('emptying the selection falls back to what is playing', shx._activePlayer() === 'media_player.a' && shx._sel.length === 0);
+shx._sel = ['media_player.zzz'];
 check('a stale pick falls back rather than targeting a dead entity', shx._activePlayer() === 'media_player.a');
-shx._sel = null;
+shx._sel = [];
+
+shx._sel = ['media_player.a', 'media_player.b'];
+let playedMulti = null;
+shx._hass.callService = (d, sv, data) => { playedMulti = data; };
+shx._playUri('u:x', 'playlist');
+check('playing to two rooms sends both entity ids',
+  JSON.stringify(playedMulti.entity_id) === JSON.stringify(['media_player.a', 'media_player.b']));
+shx._sel = [];
+shx._hass.callService = undefined;
 
 const mus = shx._secMusic(shx._config.sections[0]);
 check('rooms select rather than opening more-info', /data-pick="media_player.b"/.test(mus) && !/data-player=/.test(mus));
 check('the active room is marked pressed', /data-pick="media_player.a" aria-pressed="true"/.test(mus));
+check('the music section leads with recently played', (() => {
+  shx._recent = [{ uri: 'u:1', name: 'Dance Mode', sub: 'Bluey', kind: 'track' }];
+  const html = shx._secMusic(shx._config.sections[0]);
+  return html.indexOf('Recently played') > 0 && html.indexOf('Recently played') < html.indexOf('Presets');
+})());
 
 // pinning prefers the playlist a track came from, not the track
 const pin = shx._pinnable();
