@@ -26,7 +26,7 @@ Object.assign(PurdyShellCard.prototype, {
   },
 
   /* A 270° arc. `segs` are [fraction, colour] laid end to end. */
-  _ringSvg(size, stroke, segs, goalFrac) {
+  _ringSvg(size, stroke, segs, goalFrac, goalCol) {
     const r = size / 2 - stroke / 2 - 2;
     const c = 2 * Math.PI * r;
     const arc = pcRingArc(r);
@@ -48,7 +48,7 @@ Object.assign(PurdyShellCard.prototype, {
     if (goalFrac != null && goalFrac > 0 && goalFrac <= 1) {
       const deg = pcRingRotate(goalFrac);
       out += `<line x1="${cx}" y1="${(cx - r - stroke / 2 - 1).toFixed(2)}" x2="${cx}" y2="${(cx - r + stroke / 2 + 1).toFixed(2)}"
-        stroke="var(--ps-warn)" stroke-width="2.2" stroke-linecap="round"
+        stroke="${goalCol || "var(--ps-warn)"}" stroke-width="2.2" stroke-linecap="round"
         transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;
     }
     return out + "</svg>";
@@ -189,15 +189,29 @@ Object.assign(PurdyShellCard.prototype, {
     return `<span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>`;
   },
 
+  /* snake_case out of an integration is not a label. `manual_override` was
+     rendering verbatim as the only such string on the screen. */
+  _humanize(s) {
+    const t = String(s == null ? "" : s).replace(/[_-]+/g, " ").trim();
+    return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+  },
+
+  /* One header treatment for every section.
+   *
+   * A fixed section used to render as a 9px uppercase caption while an
+   * expandable one rendered as a 12.5px title — so scrolling the column, two
+   * sections read as headings and five read as labels of the block above them.
+   * And the early return DROPPED chipHtml: Systems computed its
+   * `Healthy` / `N faults` summary, passed it in, and it was never displayed.
+   * The chip is the whole reason to leave a section collapsed.
+   */
   _head(sec, chipHtml) {
-    if (sec.expandable === false) {
-      return `<span class="ps-lbl ps-solo">${psEsc(sec.title || "")}</span>`;
-    }
-    return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">
-        <span class="ps-nm">${psEsc(sec.title || "")}</span>
+    const fixed = sec.expandable === false;
+    const inner = `<span class="ps-nm">${psEsc(sec.title || "")}</span>
         ${chipHtml || ""}
-        ${this._chev()}
-      </button>`;
+        ${fixed ? "" : this._chev()}`;
+    if (fixed) return `<div class="ps-sh">${inner}</div>`;
+    return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">${inner}</button>`;
   },
 
   _secSleep(sec) {
@@ -213,6 +227,13 @@ Object.assign(PurdyShellCard.prototype, {
     const label = { deep_sleep: "Deep sleep", light_sleep: "Light sleep", awake: "Awake" }[state]
       || (gone ? "Sensor unavailable" : "Sock off");
     const cls = { deep_sleep: "deep", light_sleep: "lt", awake: "warn" }[state] || (gone ? "warn" : "");
+
+    /* Between sessions this section is the tallest thing on the screen and
+       every number in it is eighteen hours old. Collapsed, it keeps the ring,
+       the caption and the split — the vitals and the hypnogram move behind the
+       expand, one tap away, rather than holding 140px all day. While the sock
+       is on nothing is hidden: that is when it is worth the room. */
+    const idle = !active && sec.idle_compact !== false;
 
     const r = sec.ring || {};
     /* Keep null distinct from zero all the way to the caption. */
@@ -260,7 +281,12 @@ Object.assign(PurdyShellCard.prototype, {
 
     /* Expanded: the recap rows and chips that used to live behind #joel. */
     const w = sec.wakeups || {};
-    const wLive = pcNum(h, w.live);
+    /* Everything else in this section switches to the persisted value when the
+       sock is off; this row alone always read the live counter, so the night
+       the counter resets before the card is looked at it would show 0 wakeups
+       beside a full ring of last night's sleep. */
+    const wLast = pcNum(h, w.last_night);
+    const wLive = active || wLast == null ? pcNum(h, w.live) : wLast;
     const wBase = pcNum(h, w.baseline);
     const bed = pcNum(h, (sec.bedtime || {}).entity);
     const bedBase = pcNum(h, (sec.bedtime || {}).baseline);
@@ -312,9 +338,8 @@ Object.assign(PurdyShellCard.prototype, {
           </div>
         </div>
       </div>
-      <div class="ps-vits">${vitals}</div>
-      ${this._hypnoSvg(sec)}
-      <div class="ps-xtra">${rows}</div>`;
+      ${idle ? "" : `<div class="ps-vits">${vitals}</div>${this._hypnoSvg(sec)}`}
+      <div class="ps-xtra">${idle ? `<div class="ps-vits" style="margin-top:0">${vitals}</div>${this._hypnoSvg(sec)}` : ""}${rows}</div>`;
   },
 
   _secClimate(sec) {
@@ -326,6 +351,11 @@ Object.assign(PurdyShellCard.prototype, {
     const reason = th && th.attributes.hvac_action_reason;
     const rng = sec.ring || { min: 60, max: 80 };
     const frac = cur == null ? 0 : Math.max(0, Math.min(1, (cur - rng.min) / (rng.max - rng.min)));
+    /* The ring drew an absolute 60–80 position and nothing else, which answers
+       a question nobody asks. With the goal marked, the same arc says at a
+       glance whether the house is above or below where it is meant to be. */
+    const goalFrac = goal == null ? null
+      : Math.max(0, Math.min(1, (goal - rng.min) / (rng.max - rng.min)));
     const heating = action === "heating";
     const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
 
@@ -351,6 +381,18 @@ Object.assign(PurdyShellCard.prototype, {
     }).join("");
 
     const chips = (sec.chips || []).map((ch) => {
+      /* `select.gttc_schedule_mode` names the BASE weekday/weekend lists, not
+         the plan in force — GTTC runs a preset situationally and leaves
+         active_preset null. A chip reading "Weekday/Weekend" while the `home`
+         preset drives the house is worse than no chip. This one asks the
+         schedule which scope actually owns the live window. */
+      if (ch.source === "schedule_preset") {
+        const scope = this._detectScope();
+        const labels = (this._sched && this._sched.preset_labels) || {};
+        if (!this._sched) return "";
+        const txt = scope ? (labels[scope] || scope) : "Base";
+        return `<span class="ps-chip">${psEsc(ch.name || "Running:")} ${psEsc(this._humanize(txt))}</span>`;
+      }
       const vis = ch.visible;
       if (vis) {
         const list = Array.isArray(vis) ? vis : [vis];
@@ -370,10 +412,10 @@ Object.assign(PurdyShellCard.prototype, {
 
     return `
       ${this._head(sec, `<span class="ps-chip ${heating ? "warn" : "cool"}"><span class="ps-dot"></span>${psEsc(
-        action.charAt(0).toUpperCase() + action.slice(1))}</span>`)}
+        this._humanize(action))}</span>`)}
       <div class="ps-chero">
         <div class="ps-ring" style="width:92px;height:92px" data-info="${psEsc(sec.goal || sec.thermostat)}">
-          ${this._ringSvg(92, 7.5, [[frac, col]], null)}
+          ${this._ringSvg(92, 7.5, [[frac, col]], goalFrac, "var(--ps-text)")}
           <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>now</small></div>
         </div>
         <div class="ps-grow">
@@ -384,7 +426,7 @@ Object.assign(PurdyShellCard.prototype, {
             <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
-          ${reason ? `<div class="ps-reason">${psEsc(reason)}</div>` : ""}
+          ${reason ? `<div class="ps-reason">${psEsc(this._humanize(reason))}</div>` : ""}
         </div>
       </div>
       <div class="ps-zpair">${zones}${outside}</div>
@@ -596,14 +638,22 @@ Object.assign(PurdyShellCard.prototype, {
     return `${this._head(sec)}<div class="ps-qgrid">${tiles}</div>`;
   },
 
+  /* Only days that have something on them get a row.
+   *
+   * Five fixed days meant five "Nothing scheduled" lines on a quiet week —
+   * a hundred pixels of the column saying nothing. Today always renders,
+   * because "today is clear" is itself worth knowing; every later empty day is
+   * counted into one quiet line at the end instead. */
   _secCalendar(sec) {
     const days = sec.days || 5;
     const today = new Date(); today.setHours(0, 0, 0, 0);
     let out = "";
+    let skipped = 0;
     for (let d = 0; d < days; d++) {
       const day = new Date(today.getTime() + d * 86400000);
       const next = day.getTime() + 86400000;
       const evs = this._events.filter((e) => e.t >= day.getTime() && e.t < next);
+      if (!evs.length && d > 0) { skipped++; continue; }
       out += `<div class="ps-cday">
         <div class="ps-cdt ${d === 0 ? "today" : ""}">
           <div class="ps-dw">${day.toLocaleDateString([], { weekday: "short" })}</div>
@@ -617,7 +667,12 @@ Object.assign(PurdyShellCard.prototype, {
           : `<div class="ps-ev none">Nothing scheduled</div>`}</div>
       </div>`;
     }
-    return `${this._head(sec)}${out}`;
+    const tail = skipped
+      ? `<div class="ps-cskip">${skipped === days - 1
+          ? `Nothing else in the next ${days} days`
+          : `${skipped} clear day${skipped > 1 ? "s" : ""} not shown`}</div>`
+      : "";
+    return `${this._head(sec)}${out}${tail}`;
   },
 
   _fired(list) {

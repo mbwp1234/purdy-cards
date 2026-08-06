@@ -909,7 +909,17 @@ const schedHtml = shsc._scheduleHtml(shsc._config.sections[0]);
 check('schedule renders the active window', /Holding <b>70/.test(schedHtml));
 check('schedule marks the live entry', /ps-seg live/.test(schedHtml) && /ps-sr live/.test(schedHtml));
 check('schedule draws a now marker', schedHtml.includes('ps-nowline'));
-check('schedule shows the mode and an enable switch', /Weekday\/Weekend/.test(schedHtml) && /ps-knob on/.test(schedHtml));
+/* The chip used to echo select.gttc_schedule_mode, which names the BASE lists
+   and not the plan running the house. It now names the scope that actually
+   owns the live window. */
+check('schedule names the plan in force, not the mode entity',
+  /Running: Base/.test(schedHtml) && !/Weekday\/Weekend/.test(schedHtml));
+check('schedule still offers an enable switch', /ps-knob on/.test(schedHtml));
+check('a schedule that will not load offers a styled retry',
+  (() => { const s = new SH(); s.setConfig({ sections: [{ type: 'climate', key: 'c', goal: 'climate.g',
+      schedule: { api: 'gttc' } }] }); s._hass = { states: {} }; s._sched = null; s._schedErr = 'nope';
+    const h = s._scheduleHtml(s._config.sections[0]);
+    return /class="ps-btn"[^>]*id="ps-sretry"/.test(h); })());
 check('schedule times print as a clock, not raw minutes', /8:00 PM/.test(schedHtml));
 
 /* Not-loaded-yet and would-not-load used to look the same, and only one of
@@ -1458,7 +1468,70 @@ check('alert sheet stays empty with no faults', shsh._sheetHtml([]) === '');
 check('alert sheet renders faults', /ps-ar/.test(shsh._sheetHtml([{ severity: 'warn', title: 'T', detail: 'd', entity: 'x.y' }])));
 
 check('volume slider styles present', shs.includes('.ps-vol::-webkit-slider-thumb'));
-check('mini bar is tappable', shs.includes('.ps-mini { cursor: pointer'));
+check('mini bar is tappable', /\.ps-mini \{[^}]*cursor: pointer/.test(shs));
+
+/* --------------------------------------------------- design system, v1.28 --
+ * Seventeen font sizes, fifteen radii and thirteen white-alpha fills had
+ * accumulated, most within half a pixel or two percent of a neighbour. Those
+ * differences do not read as hierarchy, only as inconsistency — so the scales
+ * live in PC_TOKENS and rules pick a step rather than inventing one. */
+check('the type and radius scales are published as tokens',
+  /--pc-fs-micro:/.test(src) && /--pc-fs-2xl:/.test(src) &&
+  /--pc-r-sm:/.test(src) && /--pc-r-pill:/.test(src) && /--pc-fill-2:/.test(src));
+check('the shell sizes itself from the scale, not from loose pixels', (() => {
+  const loose = (shs.match(/font-size: *[0-9.]+px/g) || [])
+    .filter((d) => !/: *16px/.test(d));   // 16px on fields is deliberate, see below
+  return loose.length === 0;
+})());
+check('form fields stay at 16px so iOS does not zoom the view',
+  /\.ps-sform input \{[^}]*font-size: 16px/.test(shs) &&
+  /\.ps-sbox input \{[^}]*font-size: 16px/.test(shs));
+check('no selector is declared twice', (() => {
+  const seen = {}; const dupes = [];
+  (shs.match(/^ *\.[a-z0-9-]+ \{/gm) || []).forEach((m) => {
+    const k = m.trim();
+    if (seen[k]) dupes.push(k); else seen[k] = 1;
+  });
+  return dupes.length === 0;
+})());
+
+/* The smallest text was also the faintest: #606b79 measures 3.6:1 on the
+   ground, below the 4.5:1 floor, and it coloured every 9px uppercase label. */
+check('the dimmest text colour clears the contrast floor', (() => {
+  const hex = (/--ps-dim: *#([0-9a-f]{6})/i.exec(shs) || [])[1];
+  if (!hex) return false;
+  const lin = (c) => { const s = parseInt(c, 16) / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+  const L = 0.2126 * lin(hex.slice(0, 2)) + 0.7152 * lin(hex.slice(2, 4)) + 0.0722 * lin(hex.slice(4, 6));
+  return (L + 0.05) / (0.00417 + 0.05) >= 4.5;      // 0.00417 = the #0B0D16 ground
+})());
+
+/* Every round control drew at 19–36px. The target grows behind the paint so
+   nothing on screen moves. */
+check('small round controls carry a hit expander',
+  /\.ps-step::after[^{]*\{[^}]*inset: -11px/.test(shs.replace(/\n/g, ' ')) ||
+  /\.ps-step::after/.test(shs) && /inset: -11px -4px/.test(shs));
+['ps-step', 'ps-knob', 'ps-x', 'ps-link', 'ps-prx', 'ps-npb'].forEach((c) => {
+  check(`  .${c} is in the hit-expansion list`, new RegExp('\\.' + c + '::after').test(shs));
+});
+
+/* The dock is 65px alone and ~124px with a now-playing bar, before the safe
+   area. A fixed reservation hid the tail of the column under it, and put every
+   sheet's bottom edge behind the mini bar. */
+check('the dock measures itself', /_reserve\(\)/.test(shellSrc) && /offsetHeight/.test(shellSrc));
+check('_render calls _reserve, it is not merely defined',
+  /this\._reserve\(\);/.test(shellSrc));
+check('host padding, the fade and the sheet all derive from the measured dock',
+  /padding: 6px 6px calc\(var\(--ps-dockh\)/.test(shs) &&
+  /\.ps-fade \{[^}]*calc\(var\(--ps-dockh\)/.test(shs.replace(/\n/g, ' ')) &&
+  /bottom: calc\(var\(--ps-dockh\)/.test(shs));
+check('the reserved height survives a DOM with no layout', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  s.shadowRoot = { getElementById: () => ({}) };      // no offsetHeight
+  s._reserve();
+  return true;                                        // must not throw
+})());
 const shm = new SH();
 shm.setConfig({ now_playing: { players: [{ entity: 'media_player.a', name: 'Kitchen' }] },
   sections: [{ type: 'music', key: 'music', default_player: 'media_player.a',
@@ -1824,6 +1897,120 @@ check('the section header totals faults across devices', /1 fault</.test(devHtml
 
 shd._openGroups['sys|dev|nas'] = true;
 check('opening a device reveals its body', /ps-dev open/.test(shd._secSystems(shd._config.sections[0])));
+
+/* ================================================ section behaviour, v1.28 ==
+ * Everything below was a defect found by reading the live screen rather than
+ * the config, so each check states the wrong behaviour it replaces. */
+
+/* A fixed section rendered as a 9px uppercase caption while an expandable one
+   rendered as a title — and the early return dropped chipHtml entirely, so the
+   Systems health summary was computed, passed in and never shown. */
+const shh = new SH();
+shh.setConfig({ sections: [{ type: 'quick', key: 'q', title: 'Quick', expandable: false, tiles: [] }] });
+shh._hass = { states: {} };
+const fixedHead = shh._head(shh._config.sections[0], '<span class="ps-chip good">Healthy</span>');
+check('a fixed section keeps its status chip', /ps-chip good/.test(fixedHead));
+check('a fixed section uses the same title treatment', /class="ps-nm"/.test(fixedHead));
+check('a fixed section has no chevron and no toggle',
+  !/ps-cv/.test(fixedHead) && !/data-open/.test(fixedHead));
+check('an expandable section is still a button with a chevron', (() => {
+  const h = shh._head({ key: 'k', title: 'T' }, '');
+  return /data-open="k"/.test(h) && /ps-cv/.test(h);
+})());
+check('the caption-styled header is gone for good',
+  !/ps-solo/.test(shs) && !/ps-solo/.test(shellSrc));
+
+/* Systems is expandable:false in the live config — the regression this guards. */
+const shhs = new SH();
+shhs.setConfig({ sections: [{ type: 'systems', key: 'sys', title: 'Systems', expandable: false,
+  devices: [{ name: 'NAS', key: 'nas', faults: [{ entity: 'binary_sensor.p', state: 'on', label: 'Parity' }] }] }] });
+shhs._hass = { states: { 'binary_sensor.p': { state: 'off', attributes: {} } } };
+check('a fixed Systems section still reports Healthy',
+  /Healthy/.test(shhs._secSystems(shhs._config.sections[0])));
+shhs._hass.states['binary_sensor.p'] = { state: 'on', attributes: {} };
+check('a fixed Systems section still reports its faults',
+  /1 fault/.test(shhs._secSystems(shhs._config.sections[0])));
+
+/* snake_case straight out of an integration was the only such string on screen. */
+check('integration strings are humanised', shh._humanize('manual_override') === 'Manual override');
+check('humanising an empty value yields nothing, not "Undefined"', shh._humanize(null) === '');
+
+/* The climate ring drew an absolute 60-80 position and no target. */
+const shcr = new SH();
+shcr.setConfig({ sections: [{ type: 'climate', key: 'c', goal: 'climate.g', ring: { min: 60, max: 80 } }] });
+shcr._hass = { states: { 'climate.g': { state: 'cool',
+  attributes: { current_temperature: 73, temperature: 72, hvac_action: 'cooling',
+    hvac_action_reason: 'manual_override' } } } };
+const climHtml = shcr._secClimate(shcr._config.sections[0]);
+check('the climate ring marks the goal', /<line[^>]*stroke="var\(--ps-text\)"/.test(climHtml));
+check('the climate reason reads as a sentence',
+  /Manual override/.test(climHtml) && !/manual_override/.test(climHtml));
+check('the hvac action chip is humanised too', /Cooling/.test(climHtml));
+
+/* Wakeups alone always read the live counter, so a reset before the card was
+   looked at would show 0 beside a full ring of last night's sleep. */
+const shw = new SH();
+shw.setConfig({ sections: [{ type: 'sleep', key: 's', sleep_state: 'sensor.sock', name: 'J',
+  ring: { deep_last_night: 'input_number.d', light_last_night: 'input_number.l' },
+  wakeups: { live: 'counter.w', last_night: 'input_number.w' } }] });
+shw._hass = { states: {
+  'sensor.sock': { state: 'unavailable', attributes: {} },
+  'counter.w': { state: '0', attributes: {} },
+  'input_number.w': { state: '3', attributes: {} },
+  'input_number.d': { state: '0.6', attributes: {} },
+  'input_number.l': { state: '11.3', attributes: {} } } };
+check('an idle session shows last night\'s wakeups, not a reset counter',
+  /Wakeups<\/span>\s*<span class="ps-v">3</.test(shw._secSleep(shw._config.sections[0])));
+shw._hass.states['sensor.sock'] = { state: 'light_sleep', attributes: {} };
+check('a live session shows the live counter',
+  /Wakeups<\/span>\s*<span class="ps-v">0</.test(shw._secSleep(shw._config.sections[0])));
+
+/* Between sessions the section held ~250px of eighteen-hour-old numbers. */
+shw._hass.states['sensor.sock'] = { state: 'unavailable', attributes: {} };
+const idleSleep = shw._secSleep(shw._config.sections[0]);
+check('an idle sleep section moves the detail behind the expand',
+  idleSleep.indexOf('ps-vits') > idleSleep.indexOf('ps-xtra'));
+check('an idle sleep section still shows the ring and the split',
+  /ps-ring/.test(idleSleep) && /ps-chip deep/.test(idleSleep));
+shw._hass.states['sensor.sock'] = { state: 'deep_sleep', attributes: {} };
+const liveSleep = shw._secSleep(shw._config.sections[0]);
+check('a live sleep section hides nothing',
+  liveSleep.indexOf('ps-vits') < liveSleep.indexOf('ps-xtra'));
+check('idle compaction can be turned off', (() => {
+  shw._config.sections[0].idle_compact = false;
+  shw._hass.states['sensor.sock'] = { state: 'unavailable', attributes: {} };
+  const h = shw._secSleep(shw._config.sections[0]);
+  delete shw._config.sections[0].idle_compact;
+  return h.indexOf('ps-vits') < h.indexOf('ps-xtra');
+})());
+
+/* Five fixed days meant five "Nothing scheduled" rows on a quiet week. */
+const shcal = new SH();
+shcal.setConfig({ sections: [{ type: 'calendar', key: 'cal', title: 'Ahead', days: 5, entities: [] }] });
+shcal._hass = { states: {} };
+shcal._events = [];
+const emptyCal = shcal._secCalendar(shcal._config.sections[0]);
+check('an empty week draws one day, not five',
+  (emptyCal.match(/ps-cday/g) || []).length === 1);
+check('the days that were dropped are still accounted for',
+  /Nothing else in the next 5 days/.test(emptyCal));
+shcal._events = [{ name: 'Dentist', color: '#fff', allDay: false,
+  t: new Date(new Date().setHours(0, 0, 0, 0) + 2 * 86400000 + 36000000).getTime() }];
+const someCal = shcal._secCalendar(shcal._config.sections[0]);
+check('a day with an event is drawn', /Dentist/.test(someCal));
+check('today is drawn even when it is clear',
+  (someCal.match(/ps-cday/g) || []).length === 2 && /Nothing scheduled/.test(someCal));
+check('the remaining clear days are counted', /3 clear days not shown/.test(someCal));
+
+/* An MA player mirrors its source device: a Twitch stream came back as
+   media_content_type "music", and only a missing title kept it off the screen. */
+const isMusic = SH.helpers.isMusic;
+check('a Music Assistant player is music', isMusic({ attributes: { app_id: 'music_assistant' } }));
+check('a Twitch stream reporting content type music is not',
+  !isMusic({ attributes: { app_id: 'twitch', media_content_type: 'music' } }));
+check('a player with no app id is still judged on content type',
+  isMusic({ attributes: { media_content_type: 'playlist' } }) &&
+  !isMusic({ attributes: { media_content_type: 'tvshow' } }));
 
 // double-define guard: a second load must warn, not throw
 let warned = '';

@@ -129,6 +129,18 @@ Runs the bundle against DOM stubs and asserts both elements register, the shared
 | `--pc-good` / `--pc-warn` / `--pc-bad` | `#81c995` / `#f2c14e` / `#ef6a6a` |
 | `--pc-radius` | `24px` |
 
+### Scales
+
+Sizes, radii and surface tints come from three scales rather than being written inline. Pick a step; do not invent one.
+
+| Scale | Steps |
+|-------|-------|
+| `--pc-fs-*` | `micro` 10 · `xs` 11 · `sm` 12 · `md` 13 · `lg` 15 · `xl` 18 · `2xl` 22 |
+| `--pc-r-*` | `hair` 2 · `xs` 9 · `sm` 11 · `md` 14 · `lg` 17 · `xl` 20 · `2xl` 26 · `pill` 999 |
+| `--pc-fill-*` / `--pc-edge` | `1` .055 · `2` .08 · `3` .11 · edge .10 |
+
+Form fields are the one deliberate exception at `16px` — anything smaller makes iOS Safari zoom the page on focus and never zoom back.
+
 Per-card overrides still work (`--cpc-heat-override`, `--spc-deep-override`, and so on) and take precedence over the shared value.
 
 ## Home-screen cards

@@ -202,7 +202,7 @@ Object.assign(PurdyShellCard.prototype, {
           <p>${this._schedErr
             ? "Schedule unavailable — " + psEsc(this._schedErr)
             : "Loading the schedule…"}</p>
-          ${this._schedErr ? `<button class="ps-sbtn" type="button" id="ps-sretry">Try again</button>` : ""}
+          ${this._schedErr ? `<button class="ps-btn" type="button" id="ps-sretry">Try again</button>` : ""}
         </div>`;
     }
     const th = h.states[sec.goal];
@@ -283,14 +283,21 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }
 
-    const modeId = (sec.schedule || {}).mode_entity;
     const onId = (sec.schedule || {}).switch_entity;
     const on = onId ? pcState(h, onId) === "on" : null;
+
+    /* The chip used to show select.gttc_schedule_mode, which names the base
+       weekday/weekend lists — not the plan running the house. Say which of the
+       four is in force, and whether you are currently looking at it. */
+    const running = this._detectScope();
+    const runLabel = running ? (labels[running] || running) : "Base";
+    const viewing = scope === running;
 
     return `<div class="ps-sched">
         <div class="ps-schedh">
           <span class="ps-lbl">Schedule</span>
-          ${modeId ? `<span class="ps-chip">${psEsc(pcState(h, modeId))}</span>` : ""}
+          <span class="ps-chip ${viewing ? "cool" : ""}">Running: ${
+            psEsc(this._humanize(runLabel))}</span>
           ${onId ? `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(onId)}"
             role="switch" aria-checked="${on}" aria-label="Schedule enabled"><i></i></button>` : ""}
         </div>

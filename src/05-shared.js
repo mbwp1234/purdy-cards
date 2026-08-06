@@ -80,6 +80,12 @@ function pcIsMusicState(st) {
   if (!st) return false;
   const a = st.attributes || {};
   if (a.app_id === "music_assistant") return true;
+  /* The content type alone is not enough. A Twitch stream on the living room
+     television comes back through its MA mirror as media_content_type "music"
+     with app_id "twitch" — only the missing media_title kept it from raising a
+     phantom now-playing row beside the real one. A foreign app_id is the source
+     device saying outright that this is not the music queue. */
+  if (a.app_id) return false;
   return PC_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
 }
 

@@ -550,6 +550,27 @@ class PurdyShellCard extends PcBaseCard {
 
     this._bind();
     this._bindScrub();
+    this._reserve();
+  }
+
+  /* Reserve exactly as much room as the dock actually occupies.
+   *
+   * `:host` reserved a fixed 132px while the dock wrap is the dock (~65px) plus,
+   * whenever anything is playing, a now-playing bar and its gap (~59px more) —
+   * before env(safe-area-inset-bottom) adds another ~34 on a phone. So the tail
+   * of the last section sat underneath the dock, and .ps-sheet's fixed 96px
+   * bottom put every sheet's lower edge behind the mini bar. Measure the real
+   * thing and let the padding, the fade and the sheet all derive from it.
+   */
+  _reserve() {
+    const wrap = this.shadowRoot.getElementById("ps-dockwrap");
+    if (!wrap || typeof wrap.offsetHeight !== "number") return;   // no layout in tests
+    const h = wrap.offsetHeight;
+    if (!h || h === this._dockH) return;
+    this._dockH = h;
+    if (this.style && typeof this.style.setProperty === "function") {
+      this.style.setProperty("--ps-dockh", h + "px");
+    }
   }
 
   /* Bind exactly once per element. _bind runs after every patch, but a patch

@@ -12,10 +12,16 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.27.1";
+const PC_VERSION = "1.28.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
-   these, so a colour or radius changes in exactly one place. */
+   these, so a colour or radius changes in exactly one place.
+ *
+ * The three SCALES below exist because the shell had grown 17 distinct font
+ * sizes, 15 radii and 13 near-identical surface tints — differences of half a
+ * pixel or two percent of alpha that nobody reads as hierarchy, only as slight
+ * inconsistency. Anything new picks a step; it does not invent one.
+ */
 const PC_TOKENS = `
         --pc-panel: var(--ha-card-background, var(--card-background-color, #181f26));
         --pc-panel-2: rgba(var(--rgb-primary-text-color, 230, 236, 242), 0.07);
@@ -33,6 +39,32 @@ const PC_TOKENS = `
         /* The cool wash across the top of a panel, lifted from the climate
            card's weather strip so every panel opens the same way. */
         --pc-tint: rgba(77, 208, 225, 0.10);
+
+        /* type — seven steps. micro is the floor: 8.5px uppercase was below
+           what a phone at arm's length in daylight can resolve. */
+        --pc-fs-micro: 10px;
+        --pc-fs-xs: 11px;
+        --pc-fs-sm: 12px;
+        --pc-fs-md: 13px;
+        --pc-fs-lg: 15px;
+        --pc-fs-xl: 18px;
+        --pc-fs-2xl: 22px;
+
+        /* radius */
+        --pc-r-hair: 2px;
+        --pc-r-xs: 9px;
+        --pc-r-sm: 11px;
+        --pc-r-md: 14px;
+        --pc-r-lg: 17px;
+        --pc-r-xl: 20px;
+        --pc-r-2xl: 26px;
+        --pc-r-pill: 999px;
+
+        /* surfaces, on a dark ground — three fills and one hairline */
+        --pc-fill-1: rgba(255, 255, 255, 0.055);
+        --pc-fill-2: rgba(255, 255, 255, 0.08);
+        --pc-fill-3: rgba(255, 255, 255, 0.11);
+        --pc-edge: rgba(255, 255, 255, 0.10);
 `;
 
 /* Define an element only once. If a standalone build of the same card is still
