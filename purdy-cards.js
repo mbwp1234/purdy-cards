@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.22.0";
+const PC_VERSION = "1.23.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place. */
@@ -5145,6 +5145,13 @@ class PurdyShellCard extends PcBaseCard {
         push(s.subtitle_entity);
         (s.faults || []).forEach((f) => push(f.entity));
         (s.meters || []).forEach((m) => push(m.entity));
+        (s.devices || []).forEach((d) => {
+          push(d.subtitle_entity); push(d.chip);
+          (d.faults || []).forEach((f) => push(f.entity));
+          (d.meters || []).forEach((m) => push(m.entity));
+          (d.stats || []).forEach((x) => push(x.entity));
+          (d.groups || []).forEach((g) => (g.items || []).forEach((x) => push(x.entity)));
+        });
         (s.groups || []).forEach((g) => {
           (g.stats || []).forEach((x) => push(x.entity));
           (g.items || []).forEach((x) => push(x.entity));
@@ -6518,11 +6525,135 @@ class PurdyShellCard extends PcBaseCard {
     return `${this._head(sec)}${out}`;
   }
 
+  _fired(list) {
+    const h = this._hass;
+    return (list || []).filter((f) => {
+      const st = pcState(h, f.entity);
+      if (f.state !== undefined) return st === f.state;
+      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable" && st !== "unknown";
+      return false;
+    });
+  }
+
+  _meterHtml(m) {
+    const v = pcNum(this._hass, m.entity);
+    const p = v == null ? 0 : Math.max(0, Math.min(100, v));
+    const warn = m.warn_above == null ? 80 : m.warn_above;
+    const crit = m.critical_above == null ? 95 : m.critical_above;
+    const c = p >= crit ? "var(--ps-bad)" : p >= warn ? "var(--ps-warn)" : "var(--ps-good)";
+    return `<div class="ps-sysrow" data-info="${psEsc(m.entity)}">
+        <span class="ps-sn">${psEsc(m.label)}</span>
+        <span class="ps-sv">${m.text ? psEsc(pcState(this._hass, m.entity))
+          : (v == null ? "\u2014" : v.toFixed(1) + "%")}</span>
+        <span class="ps-meter"><i style="width:${p.toFixed(0)}%;background:${c}"></i></span>
+      </div>`;
+  }
+
+  _statsHtml(list) {
+    const h = this._hass;
+    return (list || []).map((x) => {
+      const st = h.states[x.entity];
+      const raw = st ? st.state : "";
+      const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+      const txt = x.map && x.map[raw] ? x.map[raw] : raw + (unit ? " " + unit : "");
+      const good = x.good_when && x.good_when.indexOf(raw) >= 0;
+      const bad = x.bad_when && x.bad_when.indexOf(raw) >= 0;
+      return `<div class="ps-st" data-info="${psEsc(x.entity)}">
+          <span class="ps-stk">${psEsc(x.label)}</span>
+          <span class="ps-stv ${bad ? "ps-warnc" : good ? "ps-good" : ""}">${psEsc(txt || "\u2014")}</span>
+        </div>`;
+    }).join("");
+  }
+
+  _switchesHtml(items) {
+    return (items || []).map((it) => {
+      const on = pcState(this._hass, it.entity) === "on";
+      const missing = !this._hass.states[it.entity];
+      return `<div class="ps-sw ${missing ? "gone" : ""}">
+          <ha-icon icon="${psEsc(it.icon || "mdi:application")}"></ha-icon>
+          <span class="ps-trunc">${psEsc(it.name)}</span>
+          ${it.url ? `<button class="ps-link" type="button" data-url="${psEsc(it.url)}"
+            aria-label="Open ${psEsc(it.name)}">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+          </button>` : ""}
+          ${missing ? `<span class="ps-chip">missing</span>`
+            : `<button class="ps-knob ${on ? "on" : ""}" type="button" data-toggle="${psEsc(it.entity)}"
+               role="switch" aria-checked="${on}" aria-label="${psEsc(it.name)}"><i></i></button>`}
+        </div>`;
+    }).join("");
+  }
+
+  /* A NAS, a floor robot and a litter box are three devices, not six peer
+     groups — the robots were sitting at the same level as a Docker category,
+     which made them read like a subsystem of the server. Each device owns its
+     own header, health and meters, and only the NAS has groups inside it. */
+  _devicesHtml(sec) {
+    return (sec.devices || []).map((d, di) => {
+      const key = sec.key + "|dev|" + (d.key || d.name);
+      const open = !!this._openGroups[key];
+      const faults = this._fired(d.faults);
+      const sub = d.subtitle_entity ? pcState(this._hass, d.subtitle_entity) : (d.subtitle || "");
+      const chip = d.chip ? pcState(this._hass, d.chip) : "";
+
+      const groups = (d.groups || []).map((g) => {
+        const gkey = key + "|" + g.name;
+        const gopen = !!this._openGroups[gkey];
+        const items = g.items || [];
+        const on = items.filter((it) => pcState(this._hass, it.entity) === "on").length;
+        return `<div class="ps-grp ${gopen ? "open" : ""}">
+            <button class="ps-grph" type="button" data-group="${psEsc(gkey)}" aria-expanded="${gopen}">
+              <ha-icon icon="${psEsc(g.icon || "mdi:folder-outline")}"></ha-icon>
+              <span class="ps-gn">${psEsc(g.name)}</span>
+              <span class="ps-chip ${on ? "good" : ""}">${on} of ${items.length}</span>
+              <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+            </button>
+            <div class="ps-grpb"><div class="ps-swrap">${this._switchesHtml(items)}</div></div>
+          </div>`;
+      }).join("");
+
+      const buttons = (d.buttons || []).map((b, i) =>
+        `<button class="ps-btn" type="button" data-dbtn="${di}|${i}">${psEsc(b.name)}</button>`).join("");
+
+      return `<div class="ps-dev ${open ? "open" : ""}">
+          <button class="ps-devh" type="button" data-group="${psEsc(key)}" aria-expanded="${open}">
+            <span class="ps-devi ${faults.length ? "bad" : ""}"><ha-icon icon="${psEsc(d.icon || "mdi:devices")}"></ha-icon></span>
+            <span class="ps-grow">
+              <span class="ps-devn">${psEsc(d.name)}</span>
+              <span class="ps-devs">${psEsc(sub)}</span>
+            </span>
+            ${faults.length
+              ? `<span class="ps-chip bad"><span class="ps-dot"></span>${faults.length}</span>`
+              : chip ? `<span class="ps-chip">${psEsc(chip)}</span>`
+              : `<span class="ps-chip good"><span class="ps-dot"></span>OK</span>`}
+            <span class="ps-gcv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+          </button>
+
+          ${faults.length ? `<div class="ps-faults">${faults.map((f) =>
+            `<div class="ps-fault" data-info="${psEsc(f.entity)}"><span class="ps-dotc bad"></span>
+              <span class="ps-grow"><b>${psEsc(f.label)}</b> ${psEsc(f.detail || "")}</span></div>`).join("")}</div>` : ""}
+          ${(d.meters || []).map((m) => this._meterHtml(m)).join("")}
+
+          <div class="ps-devb">
+            ${d.stats ? `<div class="ps-stats">${this._statsHtml(d.stats)}</div>` : ""}
+            ${groups}
+            ${buttons ? `<div class="ps-btns">${buttons}</div>` : ""}
+          </div>
+        </div>`;
+    }).join("");
+  }
+
   /* The section that got the most attention: collapsed shows meters, expanded
      shows every group's stats, every container switch and the robot controls
      that used to need the #devices popup. */
   _secSystems(sec) {
     const h = this._hass;
+    if (sec.devices) {
+      const all = (sec.devices || []).reduce((n, d) => n + this._fired(d.faults).length, 0);
+      return `${this._head(sec, all
+        ? `<span class="ps-chip bad"><span class="ps-dot"></span>${all} fault${all > 1 ? "s" : ""}</span>`
+        : `<span class="ps-chip good"><span class="ps-dot"></span>Healthy</span>`)}
+        ${this._devicesHtml(sec)}`;
+    }
 
     const faults = (sec.faults || []).filter((f) => {
       const st = pcState(h, f.entity);
@@ -7179,6 +7310,16 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
+    root.querySelectorAll("[data-dbtn]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const [di, bi] = el.dataset.dbtn.split("|").map((x) => parseInt(x, 10));
+        const sec = c.sections.find((x) => x.type === "systems");
+        const b = sec && ((sec.devices || [])[di] || {}).buttons;
+        if (b && b[bi]) pcAction(this, hass, b[bi].tap_action, null);
+      });
+    });
+
     root.querySelectorAll("[data-gbtn]").forEach((el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -7713,6 +7854,24 @@ class PurdyShellCard extends PcBaseCard {
                  padding: 8px 11px; font-size: 11.5px; font-weight: 650; }
       .ps-hold.armed { background: var(--ps-warn); color: #1a1a1a; }
       .ps-holdx { font-size: 12px; font-weight: 700; }
+
+      /* devices */
+      .ps-dev { border-top: 1px solid var(--ps-hair-soft); padding-top: 10px; margin-top: 10px; }
+      .ps-dev:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+      .ps-devh { display: flex; align-items: center; gap: 10px; width: 100%; }
+      .ps-devi { width: 30px; height: 30px; border-radius: 10px; background: rgba(255,255,255,.07);
+                 display: grid; place-items: center; color: var(--ps-muted); flex: 0 0 auto; }
+      .ps-devi ha-icon { --mdc-icon-size: 17px; }
+      .ps-devi.bad { background: rgba(239,106,106,.16); color: var(--ps-bad); }
+      .ps-devn { display: block; font-size: 13px; font-weight: 660; }
+      .ps-devs { display: block; font-size: 10.5px; color: var(--ps-dim);
+                 font-variant-numeric: tabular-nums; }
+      .ps-devb { display: none; flex-direction: column; gap: 9px; margin-top: 9px; }
+      .ps-dev.open .ps-devb { display: flex; }
+      .ps-dev.open .ps-devh .ps-gcv { transform: rotate(90deg); color: var(--ps-cool); }
+      .ps-dev .ps-sysrow { padding: 4px 0 0; }
+      .ps-dev .ps-grp { padding-top: 0; border-top: 0; }
+      .ps-sw.gone { opacity: .45; }
 
       /* schedule tabs */
       .ps-tabs { display: flex; flex-wrap: wrap; gap: 3px; background: var(--ps-fill);

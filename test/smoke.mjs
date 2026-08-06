@@ -1243,6 +1243,59 @@ check('a card with no pin store shows no star', (() => {
   return n._pinBtn() === '' && n._pinsHtml() === '';
 })());
 
+// ---- systems as devices, not peer groups ----
+const shd = new SH();
+shd.setConfig({ sections: [{ type: 'systems', key: 'sys', title: 'Systems', devices: [
+  { name: 'PurdyNAS', key: 'nas', icon: 'mdi:server', subtitle_entity: 'sensor.up', chip: 'sensor.running',
+    faults: [{ entity: 'binary_sensor.parity', state: 'on', label: 'Parity', detail: 'invalid' }],
+    meters: [{ label: 'Array', entity: 'sensor.array', warn_above: 80 }],
+    stats: [{ label: 'CPU', entity: 'sensor.cpu' }],
+    groups: [{ name: 'Media', items: [
+      { entity: 'switch.a', name: 'Jellyfin' },
+      { entity: 'switch.b', name: 'MeTube' },
+      { entity: 'switch.missing', name: 'Ghost' }] }],
+    buttons: [{ name: 'Dashboard', tap_action: { action: 'url', url_path: 'http://x' } }] },
+  { name: 'Jeeves', key: 'floor', icon: 'mdi:robot-vacuum',
+    meters: [{ label: 'Dirty water', entity: 'sensor.water', warn_above: 80 }],
+    stats: [{ label: 'State', entity: 'vacuum.j' }] },
+] }] });
+check('devices are watched down to their switches',
+  shd._watched.includes('switch.a') && shd._watched.includes('sensor.array') && shd._watched.includes('sensor.up'));
+
+shd._hass = { states: {
+  'sensor.up': { state: '10d 15h', attributes: {} },
+  'sensor.running': { state: '4 of 14', attributes: {} },
+  'binary_sensor.parity': { state: 'off', attributes: {} },
+  'sensor.array': { state: '85.6', attributes: {} },
+  'sensor.cpu': { state: '3.1', attributes: { unit_of_measurement: '%' } },
+  'switch.a': { state: 'on', attributes: {} },
+  'switch.b': { state: 'off', attributes: {} },
+  'sensor.water': { state: '0', attributes: {} },
+  'vacuum.j': { state: 'docked', attributes: {} },
+} };
+const devHtml = shd._secSystems(shd._config.sections[0]);
+check('each device gets its own header', (devHtml.match(/ps-devh/g) || []).length === 2);
+check('the robot is a device, not a group', /ps-devn">Jeeves/.test(devHtml) && !/ps-gn">Jeeves/.test(devHtml));
+check('docker categories sit inside the NAS, not beside it',
+  devHtml.indexOf('ps-devn">PurdyNAS') < devHtml.indexOf('ps-gn">Media') &&
+  devHtml.indexOf('ps-gn">Media') < devHtml.indexOf('ps-devn">Jeeves'));
+check('a healthy device says so', /ps-chip good"><span class="ps-dot"><\/span>OK/.test(devHtml));
+check('a device meter is visible while collapsed', /ps-meter/.test(devHtml) && !/ps-dev open/.test(devHtml));
+check('the array meter warns past its threshold', /background:var\(--ps-warn\)/.test(devHtml));
+check('a group counts its switches', /1 of 3/.test(devHtml));
+
+/* A switch that no longer exists must be visible as missing rather than
+   silently rendering as an off toggle. */
+check('a container that no longer exists is flagged', /ps-sw gone/.test(devHtml) && /missing<\/span>/.test(devHtml));
+
+shd._hass.states['binary_sensor.parity'] = { state: 'on', attributes: {} };
+const devHtml2 = shd._secSystems(shd._config.sections[0]);
+check('a faulted device shows its count and reason', /ps-chip bad/.test(devHtml2) && /Parity/.test(devHtml2));
+check('the section header totals faults across devices', /1 fault</.test(devHtml2));
+
+shd._openGroups['sys|dev|nas'] = true;
+check('opening a device reveals its body', /ps-dev open/.test(shd._secSystems(shd._config.sections[0])));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
