@@ -619,6 +619,105 @@ mHass.states['media_player.kitchen'].attributes.media_title = 'Next Track';
 mt.hass = mHass;
 check('music re-renders on a track change', mt._last!==sig1 && mt.shadowRoot.innerHTML.includes('Next Track'));
 
+// ---- music card: artwork, room toggle, search, recently listened ----
+
+// MA publishes entity_picture as http://<host>:8095/... which HTTPS pages block
+// as mixed content and which is unreachable off the LAN. entity_picture_local
+// is HA's same-origin proxy and must win.
+const mimg = new M(); mimg.setConfig({ compact:true, players });
+const artHass = { states:{ 'media_player.kitchen': { state:'playing', attributes:{
+  friendly_name:'Kitchen Speaker', app_id:'music_assistant', media_title:'T',
+  entity_picture:'http://<music-assistant-host>:8095/imageproxy/abc',
+  entity_picture_local:'/api/media_player_proxy/media_player.kitchen?token=xyz' } } } };
+mimg._hass = artHass;
+const artHtml = mimg._art(artHass.states['media_player.kitchen']);
+check('artwork prefers entity_picture_local', artHtml.includes('/api/media_player_proxy/'));
+check('artwork does not use the add-on http URL', !artHtml.includes('8095'));
+delete artHass.states['media_player.kitchen'].attributes.entity_picture_local;
+check('artwork falls back to entity_picture', mimg._art(artHass.states['media_player.kitchen']).includes('8095'));
+delete artHass.states['media_player.kitchen'].attributes.entity_picture;
+check('artwork falls back to a placeholder', mimg._art(artHass.states['media_player.kitchen']).includes('mdi:music-note'));
+
+// tapping the selected room turns it off; players without TURN_OFF get paused
+// Real supported_features from this house: the Cast speakers (8320575) do NOT
+// carry the TURN_OFF bit — 8320575 & 256 === 0 — while the Whole House group
+// player (7796671) does. A blind turn_off would be a silent no-op per room.
+const calls = [];
+const svcHass = { states:{
+  'media_player.kitchen': { state:'playing', attributes:{ friendly_name:'Kitchen', app_id:'music_assistant', media_title:'T', supported_features:8320575 } },
+  'media_player.living':  { state:'idle', attributes:{ friendly_name:'Living', supported_features:7796671 } },
+  'media_player.bedroom': { state:'idle', attributes:{ friendly_name:'Bedroom', supported_features:63 } },
+}, callService:(d,s,data)=>{ calls.push([d,s,data]); } };
+check('a Cast speaker really does lack TURN_OFF', (8320575 & 256)===0 && (8320575 & 4096)!==0);
+check('the group player really does have TURN_OFF', (7796671 & 256)!==0);
+
+const mo = new M(); mo.setConfig({ players }); mo._hass = svcHass;
+mo._sel = 'media_player.kitchen';
+mo._off('media_player.kitchen');
+check('a room without TURN_OFF is stopped, not paused', calls[0][1]==='media_stop' && calls[0][2].entity_id==='media_player.kitchen');
+check('stopping a room clears the pin', mo._sel===null);
+mo._off('media_player.living');
+check('the group player uses turn_off', calls[1][1]==='turn_off');
+mo._off('media_player.bedroom');
+check('a player with neither falls back to pause', calls[2][1]==='media_pause');
+
+// third-party names land in innerHTML — escape them
+check('escapes ampersands', mo._esc('Rock & Roll')==='Rock &amp; Roll');
+check('escapes angle brackets and quotes', mo._esc('<b>"x"</b>')==='&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
+
+// search is only offered when a config entry is configured
+const mns = new M(); mns.setConfig({ players }); mns.hass = svcHass;
+check('no search box without config_entry', !mns.shadowRoot.innerHTML.includes('id="q"'));
+const ms = new M(); ms.setConfig({ players, config_entry:'01ABC' }); ms.hass = svcHass;
+check('search box appears with config_entry', ms.shadowRoot.innerHTML.includes('id="q"'));
+check('recently listened section always renders', ms.shadowRoot.innerHTML.includes('Recently listened'));
+check('empty recent explains the window', ms.shadowRoot.innerHTML.includes('Nothing in the last 48 hours'));
+
+// search results render as playable rows
+ms._results = [
+  { uri:'spotify://track/1', name:'Dance Mode', sub:'Bluey', kind:'track', image:'https://i.scdn.co/x.jpg' },
+  { uri:'spotify://playlist/2', name:'This Is Bluey', sub:'playlist', kind:'playlist', image:null },
+];
+ms._render();
+const msh = ms.shadowRoot.innerHTML;
+check('search rows render names', msh.includes('Dance Mode') && msh.includes('This Is Bluey'));
+check('search rows are tappable', msh.includes('data-res="0"') && msh.includes('data-res="1"'));
+check('search rows carry a type chip', msh.includes('>track</span>'));
+check('a row without art gets a kind icon', msh.includes('mdi:playlist-music'));
+ms._results = [];
+ms._query = 'zzz';
+ms._render();
+check('empty results say so', ms.shadowRoot.innerHTML.includes('No results for'));
+
+// playing a result targets the active room via music_assistant, not media_player
+calls.length = 0;
+ms._playItem({ uri:'spotify://track/1', name:'x', kind:'track' });
+check('playing a result uses music_assistant.play_media', calls[0][0]==='music_assistant' && calls[0][1]==='play_media');
+check('play_media targets the active room', calls[0][2].entity_id==='media_player.kitchen');
+check('play_media replaces the queue', calls[0][2].enqueue==='replace' && calls[0][2].media_id==='spotify://track/1');
+
+// recently listened is derived from recorder history, deduped by URI, newest first
+const mr = new M();
+mr.setConfig({ players, recent_max:3 });
+mr._hass = { ...svcHass, callApi: async () => [[
+  { last_changed:'2026-08-05T20:00:00-04:00', attributes:{ app_id:'music_assistant', media_title:'Old', media_artist:'A', media_content_id:'uri:1' } },
+  { last_changed:'2026-08-05T21:00:00-04:00', attributes:{ app_id:'music_assistant', media_title:'Newer', media_artist:'B', media_content_id:'uri:2' } },
+  { last_changed:'2026-08-05T21:30:00-04:00', attributes:{ app_id:'music_assistant', media_title:'Newer', media_artist:'B', media_content_id:'uri:2' } },
+  { last_changed:'2026-08-05T21:45:00-04:00', attributes:{ app_id:'peacock_tv', media_title:'Episode 14', media_content_id:'uri:tv' } },
+  { last_changed:'2026-08-05T19:00:00-04:00', attributes:{ app_id:'music_assistant', media_title:'No URI', media_artist:'C' } },
+]] };
+await mr._fetchRecent();
+check('recent is newest first', mr._recent[0].name==='Newer' && mr._recent[1].name==='Old');
+check('recent dedupes repeats of one track', mr._recent.length===2);
+check('recent drops a TV app', !mr._recent.some(r => r.name==='Episode 14'));
+check('recent drops rows with no playable uri', !mr._recent.some(r => r.name==='No URI'));
+check('recent rows are playable tracks', mr._recent[0].kind==='track' && mr._recent[0].uri==='uri:2');
+
+const mrh = new M(); mrh.setConfig({ players, compact:true });
+mrh._hass = { ...svcHass, callApi: async () => { throw new Error('should not be called'); } };
+await mrh._fetchRecent();
+check('compact mode never fetches history', mrh._recent.length===0);
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

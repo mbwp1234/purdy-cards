@@ -341,6 +341,42 @@ presets:
 
 Room selection is automatic: whatever is playing wins over whatever is paused. Tapping a room in the picker pins it until the card is rebuilt, which is also how you choose where a preset lands.
 
+**Tapping the selected room again stops it.** Worth knowing why it is not always `turn_off`: the Cast speakers report `supported_features: 8320575`, whose low bits are `63` — pause, seek, volume, prev, next and nothing else. **They do not advertise `TURN_OFF` at all**, so a blind `turn_off` is a silent no-op. Only a group player (`7796671`) carries the bit. The card walks `turn_off` → `media_stop` → `media_pause` and uses the first one the player actually supports.
+
+### Artwork
+
+The card reads **`entity_picture_local`** before `entity_picture`, deliberately. Music Assistant publishes `entity_picture` as an absolute plain-HTTP URL to its own add-on port:
+
+```
+http://<music-assistant-host>:8095/imageproxy/64d02e...?size=512
+```
+
+That fails twice on a phone — an HTTPS dashboard blocks it as mixed content, and off the LAN the host is unreachable. `entity_picture_local` is HA's same-origin authenticated proxy and works in both places.
+
+### Search
+
+Set `config_entry` to your Music Assistant config entry id to get a search box. It calls `music_assistant.search` and renders tracks, playlists, albums and artists as tappable rows; a tap plays the result on the currently selected room.
+
+```yaml
+config_entry: <ma-config-entry-id>
+search_types: [track, playlist, album, artist]   # optional, this is the default
+```
+
+Typing is debounced 450ms, and Enter searches immediately. The card keeps the caret and the half-typed query across re-renders — without that, a queue advancing to the next track would wipe the search box mid-word.
+
+### Recently listened
+
+```yaml
+recent_hours: 48   # default
+recent_max: 8      # default
+```
+
+**This does not come from Music Assistant, because Music Assistant does not have it.** Its `last_played` and `play_count` columns are empty, so `order_by: last_played_desc` silently returns the library in id order — it looks like it worked and means nothing. Its built-in *Recently played tracks* smart playlist browses to zero children.
+
+HA's own recorder does have the history: every MA player logs `media_title`, `media_artist` and a playable `media_content_id` on each state change. The card reads `history/period`, filters to music (same `app_id` / `media_content_type` test as the live card, so a TV show never files itself as a track), dedupes by URI and shows the newest first. Rows are playable.
+
+The window is bounded by recorder retention — roughly 10 days by default, and `recent_hours` should stay well inside it.
+
 `presets` call `music_assistant.play_media` with `enqueue: replace` against the selected room. `uri` takes anything that service accepts — `library://playlist/7`, `spotify://playlist/…`, a radio stream. `media_type` defaults to `playlist`; set it for tracks, albums or radio. Pull real URIs with:
 
 ```yaml

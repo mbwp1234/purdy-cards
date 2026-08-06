@@ -47,10 +47,29 @@ class PurdyMusicCard extends PcBaseCard {
     if (!config || !Array.isArray(config.players) || !config.players.length) {
       throw new Error("purdy-music-card: 'players' (a list) is required");
     }
-    this._config = { title: "Music", compact: false, presets: [], ...config };
+    this._config = {
+      title: "Music", compact: false, presets: [],
+      recent_hours: 48, recent_max: 8,
+      search_types: ["track", "playlist", "album", "artist"],
+      ...config,
+    };
     this._watched = config.players.map((p) => p.entity).filter(Boolean);
     this._last = null;
     this._sel = null;      /* entity_id the user picked, or null for auto */
+    this._recent = [];
+    this._results = null;  /* null = no search run yet, [] = ran and found nothing */
+    this._query = "";
+    this._searching = false;
+    this._focus = false;   /* keep the caret in the search box across re-renders */
+    if (this._recentTimer) clearInterval(this._recentTimer);
+    if (!this._config.compact) {
+      this._recentTimer = setInterval(() => this._fetchRecent(), 5 * 60 * 1000);
+    }
+  }
+
+  disconnectedCallback() {
+    if (this._recentTimer) clearInterval(this._recentTimer);
+    if (this._debounce) clearTimeout(this._debounce);
   }
 
   /* PcBaseCard signs on state alone, which never changes as a queue moves from
@@ -67,9 +86,118 @@ class PurdyMusicCard extends PcBaseCard {
                 a.is_volume_muted, a.app_id].join(",");
       })
       .join("|");
+    if (!this._config.compact && !this._recentInit) {
+      this._recentInit = true;
+      this._fetchRecent();
+    }
     if (sig === this._last) return;
     this._last = sig;
     this._render();
+  }
+
+  /* ---- recently listened --------------------------------------------------
+     Not from Music Assistant. Its last_played / play_count columns are empty
+     in this install and the built-in "Recently played tracks" smart playlist
+     browses to zero children, so `order_by: last_played_desc` just returns the
+     library in id order — it looks like it worked and is silently meaningless.
+     HA's own recorder does have the history: every MA player logs media_title,
+     media_artist and a playable media_content_id on each state change. So read
+     it from there, newest first, deduped by URI. */
+  async _fetchRecent() {
+    if (!this._hass || !this._hass.callApi || this._config.compact) return;
+    const ids = this._watched;
+    if (!ids.length) return;
+    const start = new Date(Date.now() - this._config.recent_hours * 3600 * 1000).toISOString();
+    try {
+      const res = await this._hass.callApi(
+        "GET",
+        `history/period/${start}?filter_entity_id=${ids.join(",")}`
+      );
+      const rows = [];
+      (res || []).forEach((series) => (series || []).forEach((e) => {
+        const a = e.attributes || {};
+        if (!a.media_title || !a.media_content_id) return;
+        /* Same music-vs-TV test the live card uses, so a Peacock episode does
+           not end up filed as a recently-played track. */
+        if (a.app_id !== "music_assistant" &&
+            PC_MUSIC_TYPES.indexOf(a.media_content_type) < 0) return;
+        rows.push({
+          t: new Date(e.last_changed || e.last_updated).getTime(),
+          uri: a.media_content_id,
+          name: a.media_title,
+          sub: a.media_artist || a.media_album_name || "",
+          image: null,
+          kind: "track",
+        });
+      }));
+      rows.sort((x, y) => y.t - x.t);
+      const seen = {};
+      const out = [];
+      rows.forEach((r) => {
+        if (seen[r.uri] || !Number.isFinite(r.t)) return;
+        seen[r.uri] = 1;
+        out.push(r);
+      });
+      this._recent = out.slice(0, this._config.recent_max);
+      this._render();
+    } catch (err) {
+      /* Recorder may be purged or unavailable; the section just stays empty. */
+      console.warn("purdy-music-card: history fetch failed", err);
+    }
+  }
+
+  /* ---- search ------------------------------------------------------------- */
+
+  async _runSearch() {
+    const q = (this._query || "").trim();
+    const entry = this._config.config_entry;
+    if (!q || !entry) {
+      this._results = q && !entry ? [] : null;
+      this._render();
+      return;
+    }
+    this._searching = true;
+    this._render();
+    try {
+      const r = await this._hass.callService(
+        "music_assistant", "search",
+        { config_entry_id: entry, name: q, media_type: this._config.search_types },
+        undefined, false, true
+      );
+      const d = (r && r.response) || {};
+      const rows = [];
+      const take = (arr, kind, n) => (arr || []).slice(0, n).forEach((x) => rows.push({
+        uri: x.uri,
+        name: x.name,
+        kind,
+        sub: kind === "track" && x.artists && x.artists.length
+          ? x.artists.map((a) => a.name).join(", ")
+          : kind,
+        image: x.image,
+      }));
+      take(d.tracks, "track", 4);
+      take(d.playlists, "playlist", 3);
+      take(d.albums, "album", 2);
+      take(d.artists, "artist", 2);
+      this._results = rows;
+    } catch (err) {
+      console.warn("purdy-music-card: search failed", err);
+      this._results = [];
+    }
+    this._searching = false;
+    this._render();
+  }
+
+  _playItem(item) {
+    const t = this._active();
+    if (!t) return;
+    this._hass.callService("music_assistant", "play_media", {
+      entity_id: t.entity,
+      media_id: item.uri,
+      media_type: item.kind || "track",
+      enqueue: "replace",
+    });
+    this._sel = t.entity;
   }
 
   _players() {
@@ -100,6 +228,25 @@ class PurdyMusicCard extends PcBaseCard {
     this._hass.callService("media_player", service, { entity_id: a.entity, ...(data || {}) });
   }
 
+  /* Tapping a room selects it; tapping the room that is already selected stops
+     it.
+
+     Most of these players do NOT advertise TURN_OFF: the Cast speakers report
+     supported_features 8320575, whose low bits are 63 — pause/seek/volume/prev/
+     next and nothing else. Only the Whole House group player (7796671) carries
+     the TURN_OFF bit. Calling turn_off blindly would be a silent no-op on every
+     individual room, so fall back to media_stop, which ends the queue rather
+     than merely pausing it, and only then to media_pause. */
+  _off(entity) {
+    const st = this._hass.states[entity];
+    const feat = (st && st.attributes.supported_features) || 0;
+    const svc = (feat & 256) ? "turn_off"        /* TURN_OFF  */
+              : (feat & 4096) ? "media_stop"     /* STOP      */
+              : "media_pause";                   /* PAUSE     */
+    this._hass.callService("media_player", svc, { entity_id: entity });
+    this._sel = null;
+  }
+
   _play(preset, entity) {
     this._hass.callService("music_assistant", "play_media", {
       entity_id: entity,
@@ -110,12 +257,42 @@ class PurdyMusicCard extends PcBaseCard {
     this._sel = entity;
   }
 
+  /* entity_picture_local first, deliberately.
+     Music Assistant publishes entity_picture as an absolute plain-HTTP URL to
+     its own add-on port (http://<host>:8095/imageproxy/...). That fails twice
+     on a phone: HTTPS pages block it as mixed content, and it is unreachable
+     off the LAN. entity_picture_local is HA's same-origin authenticated proxy,
+     which works in both places. */
   _art(st) {
-    const pic = st.attributes.entity_picture;
+    const a = st.attributes;
+    const pic = a.entity_picture_local || a.entity_picture;
     if (!pic) return `<div class="art ph"><ha-icon icon="mdi:music-note"></ha-icon></div>`;
-    /* entity_picture is usually a relative HA path; MA hands back an absolute
-       imageproxy URL. Both work as-is in an <img>. */
     return `<div class="art"><img src="${pic}" alt="" loading="lazy"></div>`;
+  }
+
+  /* Track and playlist names are third-party strings that land in innerHTML —
+     "Rock & Roll", a title with a quote, or worse. Escape them. */
+  _esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  _itemHtml(r, group, i) {
+    const thumb = r.image
+      ? `<div class="thumb"><img src="${this._esc(r.image)}" alt="" loading="lazy"></div>`
+      : `<div class="thumb"><ha-icon icon="${r.kind === "playlist" ? "mdi:playlist-music"
+          : r.kind === "artist" ? "mdi:account-music"
+          : r.kind === "album" ? "mdi:album" : "mdi:music-note"}"></ha-icon></div>`;
+    return `
+      <button class="item" type="button" data-${group}="${i}">
+        ${thumb}
+        <span class="grow">
+          <span class="n trunc" style="display:block">${this._esc(r.name)}</span>
+          <span class="s trunc" style="display:block">${this._esc(r.sub)}</span>
+        </span>
+        ${group === "res" ? `<span class="kind">${this._esc(r.kind)}</span>` : ""}
+      </button>`;
   }
 
   _renderEmpty() {
@@ -220,6 +397,9 @@ class PurdyMusicCard extends PcBaseCard {
         .room.sel { background: var(--pc-chip); color: var(--pc-text); }
         .room .live { width: 6px; height: 6px; border-radius: 50%; background: var(--pc-good); }
         .room[disabled] { opacity: 0.4; cursor: default; }
+        /* The selected room doubles as its own power button — say so. */
+        .room .off { --mdc-icon-size: 15px; color: var(--pc-muted); margin-left: 1px; }
+        .room.sel:active .off { color: var(--pc-bad); }
 
         .presets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
         .preset {
@@ -231,6 +411,38 @@ class PurdyMusicCard extends PcBaseCard {
         .preset:active { background: var(--pc-chip); }
         .preset ha-icon { --mdc-icon-size: 19px; color: var(--pc-cool); }
         button:focus-visible, input:focus-visible { outline: 2px solid var(--pc-cool); outline-offset: 2px; }
+
+        .sbox { display: flex; align-items: center; gap: 9px; background: var(--pc-panel-2);
+                border-radius: 14px; padding: 0 12px; height: 44px; }
+        .sbox ha-icon { --mdc-icon-size: 19px; color: var(--pc-muted); }
+        .sbox input {
+          flex: 1; min-width: 0; border: 0; background: none; outline: none;
+          font-family: inherit; font-size: 14px; color: var(--pc-text); height: 100%;
+        }
+        .sbox input::placeholder { color: var(--pc-muted); }
+        .sclear { border: 0; background: none; cursor: pointer; padding: 0; display: flex; }
+
+        .list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+        .item {
+          display: flex; align-items: center; gap: 10px; width: 100%;
+          border: 0; background: none; cursor: pointer; font-family: inherit;
+          padding: 7px 6px; border-radius: 12px; text-align: left; color: var(--pc-text);
+        }
+        .item:active { background: var(--pc-panel-2); }
+        .thumb {
+          width: 38px; height: 38px; border-radius: 9px; flex: 0 0 auto; overflow: hidden;
+          background: var(--pc-panel-2); display: flex; align-items: center;
+          justify-content: center; color: var(--pc-muted);
+        }
+        .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .thumb ha-icon { --mdc-icon-size: 18px; }
+        .item .n { font-size: 13.5px; font-weight: 600; }
+        .item .s { font-size: 11.5px; color: var(--pc-muted); }
+        .kind {
+          flex: 0 0 auto; font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase;
+          color: var(--pc-muted); background: var(--pc-chip); padding: 3px 7px; border-radius: 999px;
+        }
+        .note { font-size: 12px; color: var(--pc-muted); padding: 10px 6px; }
       </style>
 
       <div class="card tint ${compact && this._config.navigate ? "tap" : ""}" id="card">
@@ -244,8 +456,8 @@ class PurdyMusicCard extends PcBaseCard {
         <div class="now">
           ${st ? this._art(st) : `<div class="art ph"><ha-icon icon="mdi:music-note-off"></ha-icon></div>`}
           <div class="grow">
-            <div class="t trunc">${title}</div>
-            <div class="sub trunc">${sub}</div>
+            <div class="t trunc">${this._esc(title)}</div>
+            <div class="sub trunc">${this._esc(sub)}</div>
           </div>
           ${compact ? `
             <div class="tr">
@@ -285,8 +497,10 @@ class PurdyMusicCard extends PcBaseCard {
             <div class="rooms">
               ${this._players().map((p) => `
                 <button class="room ${a && p.entity === a.entity ? "sel" : ""}" type="button"
-                        data-room="${p.entity}">
+                        data-room="${p.entity}"
+                        title="${a && p.entity === a.entity ? "Tap again to turn off" : "Select " + this._label(p)}">
                   ${pcIsMusic(this._hass, p.entity) ? '<span class="live"></span>' : ""}${this._label(p)}
+                  ${a && p.entity === a.entity ? '<ha-icon class="off" icon="mdi:power"></ha-icon>' : ""}
                 </button>`).join("")}
             </div>
           </div>
@@ -302,6 +516,31 @@ class PurdyMusicCard extends PcBaseCard {
                   </button>`).join("")}
               </div>
             </div>`}
+
+          ${!this._config.config_entry ? "" : `
+            <div class="sec">
+              <span class="lbl">Search</span>
+              <div class="sbox">
+                <ha-icon icon="mdi:magnify"></ha-icon>
+                <input type="search" id="q" placeholder="Songs, playlists, artists"
+                       autocomplete="off" autocorrect="off" spellcheck="false"
+                       value="${this._esc(this._query)}">
+                ${this._query ? `<button class="sclear" type="button" id="qclear" aria-label="Clear search">
+                  <ha-icon icon="mdi:close-circle"></ha-icon></button>` : ""}
+              </div>
+              ${this._searching ? '<div class="note">Searching…</div>' : ""}
+              ${!this._searching && this._results && !this._results.length
+                ? `<div class="note">No results for "${this._esc(this._query)}".</div>` : ""}
+              ${!this._searching && this._results && this._results.length
+                ? `<div class="list">${this._results.map((r, i) => this._itemHtml(r, "res", i)).join("")}</div>` : ""}
+            </div>`}
+
+          <div class="sec">
+            <span class="lbl">Recently listened</span>
+            ${this._recent.length
+              ? `<div class="list">${this._recent.map((r, i) => this._itemHtml(r, "rec", i)).join("")}</div>`
+              : `<div class="note">Nothing in the last ${this._config.recent_hours} hours.</div>`}
+          </div>
         `}
       </div>
     `;
@@ -320,7 +559,12 @@ class PurdyMusicCard extends PcBaseCard {
         this._call("volume_set", { volume_level: parseInt(vr.value, 10) / 100 }));
     }
     this.shadowRoot.querySelectorAll("[data-room]").forEach((el) => {
-      el.addEventListener("click", () => { this._sel = el.dataset.room; this._render(); });
+      el.addEventListener("click", () => {
+        const room = el.dataset.room;
+        if (a && room === a.entity) this._off(room);
+        else this._sel = room;
+        this._render();
+      });
     });
     this.shadowRoot.querySelectorAll("[data-preset]").forEach((el) => {
       el.addEventListener("click", () => {
@@ -329,6 +573,44 @@ class PurdyMusicCard extends PcBaseCard {
         this._play(this._config.presets[parseInt(el.dataset.preset, 10)], target.entity);
       });
     });
+    this.shadowRoot.querySelectorAll("[data-res]").forEach((el) => {
+      el.addEventListener("click", () => this._playItem(this._results[parseInt(el.dataset.res, 10)]));
+    });
+    this.shadowRoot.querySelectorAll("[data-rec]").forEach((el) => {
+      el.addEventListener("click", () => this._playItem(this._recent[parseInt(el.dataset.rec, 10)]));
+    });
+
+    const q = this.shadowRoot.getElementById("q");
+    if (q) {
+      /* A queue moving to the next track re-renders the whole card, which would
+         otherwise blow away a half-typed query mid-search. Keep the value and
+         the caret, and only re-render on a debounce rather than per keystroke. */
+      q.addEventListener("focus", () => { this._focus = true; });
+      q.addEventListener("blur", () => { this._focus = false; });
+      q.addEventListener("input", () => {
+        this._query = q.value;
+        clearTimeout(this._debounce);
+        this._debounce = setTimeout(() => this._runSearch(), 450);
+      });
+      q.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        clearTimeout(this._debounce);
+        this._runSearch();
+      });
+      if (this._focus) {
+        q.focus();
+        const n = q.value.length;
+        if (q.setSelectionRange) q.setSelectionRange(n, n);
+      }
+    }
+    const qc = this.shadowRoot.getElementById("qclear");
+    if (qc) {
+      qc.addEventListener("click", () => {
+        this._query = "";
+        this._results = null;
+        this._render();
+      });
+    }
 
     /* Whole-card tap is compact-only, and the transport buttons above already
        stop propagation so a play tap does not also open the popup. */
