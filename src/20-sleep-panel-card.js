@@ -286,7 +286,11 @@ class SleepPanelCard extends HTMLElement {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}&minimal_response&no_attributes`
+        /* end_time is not optional — see pcNowIso. This window is a whole
+           sleep session, so it routinely exceeds 24h and lost its newest
+           hours entirely. */
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}&minimal_response&no_attributes`
       );
       const hist = {};
       (res || []).forEach((series) => {

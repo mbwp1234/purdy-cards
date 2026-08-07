@@ -105,7 +105,10 @@ class PurdyMusicCard extends PcBaseCard {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}`
+        /* end_time is not optional — see pcNowIso. recent_hours is 48 here,
+           so the window used to stop 24h short and today never appeared. */
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}`
       );
       const rows = [];
       (res || []).forEach((series) => (series || []).forEach((e) => {

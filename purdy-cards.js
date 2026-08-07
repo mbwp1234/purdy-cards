@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.30.1";
+const PC_VERSION = "1.30.2";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -116,6 +116,25 @@ function pcNavigate(node, path) {
 const PC_ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 function pcEsc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => PC_ESC[c]);
+}
+
+/* The end of a history window, and it is NEVER optional.
+ *
+ * `/api/history/period/<start>` does not default end_time to "now" — it
+ * defaults to **start + 1 day**. So a window that reaches back further than
+ * 24 hours silently stops short of the present by exactly the overshoot, and
+ * the caller gets a plausible-looking series with the newest data missing:
+ *
+ *   26h window  ->  ends 2h ago   (the hypnogram, the temperature graph)
+ *   48h window  ->  ends 24h ago  (recently played)
+ *
+ * The failure has no error and no gap in the data — the last sample simply
+ * gets stretched to the right-hand edge. That is how a hypnogram came to be
+ * one flat orange "awake" bar all evening: the only row inside the window was
+ * a stale 8:04 PM reading, painted across to now.
+ */
+function pcNowIso() {
+  return new Date().toISOString();
 }
 
 /* Read a state or one of its attributes as a number, or null. Anything
@@ -438,7 +457,9 @@ class ClimatePanelCard extends HTMLElement {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}&minimal_response&no_attributes`
+        /* end_time is not optional — see pcNowIso. */
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}&minimal_response&no_attributes`
       );
       const hist = {};
       (res || []).forEach((series) => {
@@ -1946,7 +1967,11 @@ class SleepPanelCard extends HTMLElement {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}&minimal_response&no_attributes`
+        /* end_time is not optional — see pcNowIso. This window is a whole
+           sleep session, so it routinely exceeds 24h and lost its newest
+           hours entirely. */
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}&minimal_response&no_attributes`
       );
       const hist = {};
       (res || []).forEach((series) => {
@@ -4134,7 +4159,9 @@ class PurdyDevicesCard extends PcBaseCard {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}&minimal_response&no_attributes`
+        /* end_time is not optional — see pcNowIso. */
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}&minimal_response&no_attributes`
       );
       const out = {};
       (res || []).forEach((series) => {
@@ -4565,7 +4592,10 @@ class PurdyMusicCard extends PcBaseCard {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}`
+        /* end_time is not optional — see pcNowIso. recent_hours is 48 here,
+           so the window used to stop 24h short and today never appeared. */
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}`
       );
       const rows = [];
       (res || []).forEach((series) => (series || []).forEach((e) => {
@@ -5363,7 +5393,8 @@ class PurdyShellCard extends PcBaseCard {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}&minimal_response&no_attributes`
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}&minimal_response&no_attributes`
       );
       const hist = {};
       (res || []).forEach((series) => {
@@ -7668,7 +7699,11 @@ Object.assign(PurdyShellCard.prototype, {
     if (!ids.length) return;
     const start = new Date(Date.now() - (sec.recent_hours || 48) * 3600 * 1000).toISOString();
     try {
-      const res = await this._hass.callApi("GET", `history/period/${start}?filter_entity_id=${ids.join(",")}`);
+      /* end_time is not optional — see pcNowIso. Without it a 48h window
+         stopped 24h short, so "recently played" never showed today. */
+      const res = await this._hass.callApi("GET",
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}`);
       const rows = [];
       (res || []).forEach((series) => (series || []).forEach((e) => {
         const a = e.attributes || {};

@@ -21,6 +21,25 @@ function pcEsc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => PC_ESC[c]);
 }
 
+/* The end of a history window, and it is NEVER optional.
+ *
+ * `/api/history/period/<start>` does not default end_time to "now" — it
+ * defaults to **start + 1 day**. So a window that reaches back further than
+ * 24 hours silently stops short of the present by exactly the overshoot, and
+ * the caller gets a plausible-looking series with the newest data missing:
+ *
+ *   26h window  ->  ends 2h ago   (the hypnogram, the temperature graph)
+ *   48h window  ->  ends 24h ago  (recently played)
+ *
+ * The failure has no error and no gap in the data — the last sample simply
+ * gets stretched to the right-hand edge. That is how a hypnogram came to be
+ * one flat orange "awake" bar all evening: the only row inside the window was
+ * a stale 8:04 PM reading, painted across to now.
+ */
+function pcNowIso() {
+  return new Date().toISOString();
+}
+
 /* Read a state or one of its attributes as a number, or null. Anything
    non-finite is null so a caller can tell "no reading" from "zero" — the
    distinction the whole failure-state pass depends on. */

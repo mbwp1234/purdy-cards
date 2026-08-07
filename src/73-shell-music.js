@@ -46,7 +46,11 @@ Object.assign(PurdyShellCard.prototype, {
     if (!ids.length) return;
     const start = new Date(Date.now() - (sec.recent_hours || 48) * 3600 * 1000).toISOString();
     try {
-      const res = await this._hass.callApi("GET", `history/period/${start}?filter_entity_id=${ids.join(",")}`);
+      /* end_time is not optional — see pcNowIso. Without it a 48h window
+         stopped 24h short, so "recently played" never showed today. */
+      const res = await this._hass.callApi("GET",
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}`);
       const rows = [];
       (res || []).forEach((series) => (series || []).forEach((e) => {
         const a = e.attributes || {};

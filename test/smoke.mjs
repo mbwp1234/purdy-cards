@@ -751,6 +751,41 @@ mr._hass = { ...svcHass, callApi: async () => [[
 ]] };
 await mr._fetchRecent();
 check('recent is newest first', mr._recent[0].name==='Newer' && mr._recent[1].name==='Old');
+
+/* /api/history/period/<start> defaults end_time to start + 1 DAY, not to now.
+   Every window longer than 24h therefore stopped short of the present with no
+   error and no visible gap — the last sample just got stretched to the right
+   edge. That is how the hypnogram spent an evening as one flat "awake" bar.
+   Every caller must send end_time; assert it at the URL, which is the only
+   place the mistake can be made. */
+check('every history fetch sends an explicit end_time', (() => {
+  const files = ['70-shell-core.js', '73-shell-music.js', '10-climate-panel-card.js',
+                 '20-sleep-panel-card.js', '50-devices-card.js', '60-music-card.js'];
+  return files.every((f) => {
+    const body = fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
+    const calls = body.split('history/period/').slice(1);
+    return calls.length > 0 && calls.every((c) => c.slice(0, 400).includes('end_time='));
+  });
+})());
+check('the end_time helper exists once and is shared',
+  (src.match(/function pcNowIso\(/g) || []).length === 1);
+check('a history fetch actually reaches the present', await (async () => {
+  let url = null;
+  const probe = new M();
+  probe.setConfig({ players, recent_hours: 48 });
+  probe._hass = { ...svcHass, callApi: async (m, u) => { url = u; return []; } };
+  await probe._fetchRecent();
+  const end = /end_time=([^&]+)/.exec(url || '');
+  if (!end) return false;
+  /* Decoded, it must parse and land within a minute of now — a literal "now"
+     string or a start-relative value would both fail here. */
+  const t = Date.parse(decodeURIComponent(end[1]));
+  if (!Number.isFinite(t) || Math.abs(Date.now() - t) > 60000) return false;
+  /* And the window must still open 48h back, not collapse to a point. */
+  const startIso = /history\/period\/([^?]+)/.exec(url)[1];
+  const hours = (t - Date.parse(decodeURIComponent(startIso))) / 3600000;
+  return hours > 47 && hours < 49;
+})());
 check('recent dedupes repeats of one track', mr._recent.length===2);
 check('recent drops a TV app', !mr._recent.some(r => r.name==='Episode 14'));
 check('recent drops rows with no playable uri', !mr._recent.some(r => r.name==='No URI'));

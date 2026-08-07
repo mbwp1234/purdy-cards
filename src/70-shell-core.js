@@ -285,7 +285,8 @@ class PurdyShellCard extends PcBaseCard {
     try {
       const res = await this._hass.callApi(
         "GET",
-        `history/period/${start}?filter_entity_id=${ids.join(",")}&minimal_response&no_attributes`
+        `history/period/${start}?filter_entity_id=${ids.join(",")}` +
+        `&end_time=${encodeURIComponent(pcNowIso())}&minimal_response&no_attributes`
       );
       const hist = {};
       (res || []).forEach((series) => {
