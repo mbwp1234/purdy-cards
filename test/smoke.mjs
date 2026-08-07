@@ -1975,6 +1975,23 @@ check('the sheet offers to move playback here', /id="ps-move"/.test(msheet) && /
 check('a room that is not the target gets a join button', /data-join="media_player\.a"/.test(msheet));
 check('the target room gets no join button of its own', !/data-join="media_player\.b"/.test(msheet));
 shsheet._pick = null;
+/* The star has to save what the header above it names. It followed the
+   globally-playing room while the header showed the target's track. */
+check('the star saves the target room’s music, not another room’s', (() => {
+  shsheet._pick = 'media_player.b';
+  shsheet._hass.states['media_player.b'] = { state: 'playing', attributes: {
+    app_id: 'music_assistant', media_title: 'Living track', volume_level: 0.7,
+    media_playlist: 'Living mix', media_playlist_content_id: 'library://playlist/9' } };
+  const p = shsheet._pinnable();
+  return p && p.uri === 'library://playlist/9';
+})());
+check('with the target silent the star falls back to what is playing anywhere', (() => {
+  shsheet._hass.states['media_player.b'] = { state: 'idle', attributes: { app_id: 'music_assistant', volume_level: 0.7 } };
+  shsheet._hass.states['media_player.a'].attributes.media_content_id = 'u:kitchen';
+  const p = shsheet._pinnable();
+  shsheet._pick = null;
+  return p && p.uri === 'u:kitchen';
+})());
 check('with nothing picked the sheet drives what is playing and offers no move', (() => {
   const h = shsheet._sheetHtml([]);
   return /data-mp="playpause" data-entity="media_player\.a"/.test(h) && !/id="ps-move"/.test(h);

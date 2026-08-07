@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.30.0";
+const PC_VERSION = "1.30.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -7928,11 +7928,18 @@ Object.assign(PurdyShellCard.prototype, {
   },
 
   /* What is playing right now, as something that can be pinned. MA reports the
-     queue item, so prefer the playlist it came from when there is one. */
+     queue item, so prefer the playlist it came from when there is one.
+     It follows the TARGET room, because that is whose track the sheet header
+     shows — a star that saved a different room's music than the one named
+     above it would be saving something you cannot see. Falls back to whatever
+     is playing anywhere, which is what the column section shows. */
   _pinnable() {
-    const np = this._nowPlaying();
-    if (!np) return null;
-    const a = np.st.attributes;
+    const target = this._activePlayer();
+    const tst = target && this._hass.states[target];
+    const src = tst && psIsMusic(tst) && tst.attributes.media_title
+      ? { st: tst } : this._nowPlaying();
+    if (!src) return null;
+    const a = src.st.attributes;
     const uri = a.media_playlist_content_id || a.media_content_id;
     if (!uri) return null;
     const name = a.media_playlist || a.media_album_name || a.media_title;
