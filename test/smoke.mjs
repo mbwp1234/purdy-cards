@@ -2501,14 +2501,47 @@ check('a twenty-minute nap can still report an intervention', (() => {
     && s[0].hadExit === true && s[0].interventions === 1;
 })());
 
-check('the nap exit window is far shorter than the night one', (() => {
-  const nap = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 40), s: 'idle' }],
-    [{ t: NT(13, 10), s: 'on' }, { t: NT(13, 11), s: 'off' }], { now: NT(14, 0) });
+check('the nap settling window is tighter than the night one', (() => {
+  /* Same twenty-minute offset with no prior door activity: past the nap
+     backstop, still inside the night one. */
+  const nap = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 50), s: 'idle' }],
+    [{ t: NT(13, 20), s: 'on' }, { t: NT(13, 21), s: 'off' }], { now: NT(14, 0) });
   const night = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
-    [{ t: NT(20, 10), s: 'on' }, { t: NT(20, 11), s: 'off' }], { now: NT(23, 0) });
-  /* Same ten-minute offset: a real visit during a nap, the put-down at night. */
+    [{ t: NT(20, 20), s: 'on' }, { t: NT(20, 21), s: 'off' }], { now: NT(23, 0) });
   return nap[0].interventions === 1 && nap[0].hadExit === false
     && night[0].interventions === 0 && night[0].hadExit === true;
+})());
+
+/* The live settle that disproved "the first door-open is them leaving": the
+   door was already open when the Hatch went on, closed with her INSIDE, and
+   she left minutes later. Taking the first open banked her arrival as the exit
+   and would have counted her departure as intervention #1. */
+check('a settle where the door closes with her still inside', (() => {
+  const s = nsess([{ t: NT(10, 6, 40), s: 'playing' }, { t: NT(10, 50), s: 'idle' }], [
+    { t: NT(9, 56, 27), s: 'on' }, { t: NT(10, 7, 31), s: 'off' },
+    { t: NT(10, 7, 32), s: 'on' }, { t: NT(10, 8, 4), s: 'off' },
+    { t: NT(10, 12, 0), s: 'on' }, { t: NT(10, 12, 30), s: 'off' },
+  ], { now: NT(10, 50) });
+  /* Settled when she actually left, not when she shut the door behind her. */
+  return s[0].interventions === 0 && s[0].hadExit === true
+    && s[0].settledAt === NT(10, 12, 30);
+})());
+
+check('a visit well after the quiet gap still counts', (() => {
+  const s = nsess([{ t: NT(10, 6, 40), s: 'playing' }, { t: NT(10, 50), s: 'idle' }], [
+    { t: NT(10, 7, 32), s: 'on' }, { t: NT(10, 8, 4), s: 'off' },
+    { t: NT(10, 12, 0), s: 'on' }, { t: NT(10, 12, 30), s: 'off' },
+    { t: NT(10, 31, 0), s: 'on' }, { t: NT(10, 32, 0), s: 'off' },
+  ], { now: NT(10, 50) });
+  return s[0].interventions === 1;
+})());
+
+check('ducking back in before the quiet gap is still settling', (() => {
+  const s = nsess([{ t: NT(10, 6, 40), s: 'playing' }, { t: NT(10, 50), s: 'idle' }], [
+    { t: NT(10, 12, 0), s: 'on' }, { t: NT(10, 12, 30), s: 'off' },
+    { t: NT(10, 14, 0), s: 'on' }, { t: NT(10, 14, 40), s: 'off' },
+  ], { now: NT(10, 50) });
+  return s[0].interventions === 0 && s[0].settledAt === NT(10, 14, 40);
 })());
 
 /* Judging the gap by time alone fused a nap, twelve minutes awake and the next

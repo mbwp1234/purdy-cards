@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.33.0";
+const PC_VERSION = "1.34.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8727,8 +8727,8 @@ function psNurserySessions(hatch, door, opts) {
      45-minute exit window was longer than the whole nap: every door open would
      have been swallowed as the put-down and a short nap could never report an
      intervention at all. One set of thresholds cannot serve both. */
-  const NAP = { min_session_min: 8, exit_window_min: 6, merge_gap_min: 5 };
-  const NIGHT = { min_session_min: 20, exit_window_min: 20, merge_gap_min: 20 };
+  const NAP = { min_session_min: 8, exit_window_min: 15, merge_gap_min: 5, settled_quiet_min: 5 };
+  const NIGHT = { min_session_min: 20, exit_window_min: 30, merge_gap_min: 20, settled_quiet_min: 8 };
   const isNight = (t) => {
     const hr = new Date(t).getHours();
     return hr >= nightAfter || hr < morning;
@@ -8803,17 +8803,38 @@ function psNurserySessions(hatch, door, opts) {
        before deciding which of them is the exit. */
     const inside = realOpens.filter((op) => op.from >= s.from && op.from <= s.to);
 
-    /* The put-down exit: the first one, if it lands inside the window. Later
-       than that and nobody was settling him — it is a real intervention. */
-    const exit = inside.length && inside[0].from - s.from <= exitWindow ? inside[0] : null;
-    const settledAt = exit ? Math.min(exit.to, s.to) : s.from;
+    /* The put-down.
+     *
+     * "The first door-open of the session is them leaving" is wrong, and a
+     * live settle proved it: the door was already open when the Hatch went on,
+     * closed at 10:07:31 with her INSIDE, and she left minutes later. Taking
+     * the first open banked her arrival as the exit and would have counted her
+     * actual departure as intervention #1 — the same off-by-one as before,
+     * pointing the other way.
+     *
+     * The discriminator is not which one is first, it is the door closing and
+     * STAYING closed. Coming in is followed by a few minutes of her being in
+     * there; leaving is followed by the rest of the nap. So walk the events
+     * from the start of the session and keep treating them as settling while
+     * each next one arrives before the quiet threshold. The window is only a
+     * backstop now — the quiet gap does the real work. */
+    const quiet = rule(s.from, "settled_quiet_min");
+    let settledAt = s.from;
+    let hadExit = false;
+    let i = 0;
+    while (i < inside.length && inside[i].from - s.from <= exitWindow) {
+      settledAt = Math.min(inside[i].to, s.to);
+      hadExit = true;
+      i += 1;
+      const next = inside[i];
+      if (!next || next.from - settledAt >= quiet) break;
+    }
 
     const events = [];
-    /* Seeded from the exit so a straight-back-in within the merge window is
-       part of leaving, not a first intervention. */
-    let lastCounted = exit ? exit.from : -Infinity;
-    inside.forEach((op) => {
-      if (exit && op === exit) return;
+    /* Seeded from the last settling event so a straight-back-in within the
+       merge window is part of leaving, not a first intervention. */
+    let lastCounted = hadExit ? inside[i - 1].from : -Infinity;
+    inside.slice(i).forEach((op) => {
       if (op.from - lastCounted < doorMerge) return;
       lastCounted = op.from;
       events.push(op.from);
@@ -8843,7 +8864,7 @@ function psNurserySessions(hatch, door, opts) {
          every night already recorded. */
       settledAt,
       settleMinutes: Math.max(0, Math.round((settledAt - s.from) / 60000)),
-      hadExit: !!exit,
+      hadExit,
     };
   });
 }
