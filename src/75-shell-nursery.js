@@ -172,8 +172,19 @@ function psNurserySessions(hatch, door, opts) {
   return kept.map((s) => {
     const exitWindow = rule(s.from, "exit_window_min");
     /* Every door event inside the session that survives the chatter filter,
-       before deciding which of them is the exit. */
-    const inside = realOpens.filter((op) => op.from >= s.from && op.from <= s.to);
+       before deciding which of them is the exit.
+     *
+     * An open that STRADDLES the start counts, clamped to it. The door is
+     * often already cracked when the sound machine goes on, so that open
+     * begins before the session and `from >= s.from` dropped it — and if the
+     * parent simply pulls the cracked door shut on the way out, that close is
+     * the only settling signal there is. Observed 2026-08-07: the door had
+     * been open since before 12:30 and the Hatch started at 14:18:41.
+     * The chatter filter still judges the door's REAL duration, not the
+     * clamped one, so a straddling open can never look like a flicker. */
+    const inside = realOpens
+      .filter((op) => op.to > s.from && op.from <= s.to)
+      .map((op) => (op.from < s.from ? { from: s.from, to: op.to, held: op.held } : op));
 
     /* The put-down: everything up to the LAST door event within the window is
      * settling, and its close is when he was left alone.

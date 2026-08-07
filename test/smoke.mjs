@@ -2730,6 +2730,43 @@ check('no night recorded reads as no data, not as a zero-length night', (() => {
 })());
 
 
+
+/* The door is often already cracked when the sound machine goes on, so the
+   open that matters STRADDLES the session start. Requiring from >= start
+   dropped it, and if the parent simply pulls the cracked door shut on the way
+   out that close is the only settling signal there is. Observed 2026-08-07:
+   door open since before 12:30, Hatch on at 14:18:41. */
+check('a door cracked before the session still marks the settle', (() => {
+  const s = nsess([{ t: NT(14, 18, 41), s: 'playing' }],
+    [{ t: NT(12, 30), s: 'on' }, { t: NT(14, 23, 40), s: 'off' }],
+    { now: NT(14, 28) })[0];
+  return s.hadExit === true && s.settledAt === NT(14, 23, 40) && s.settleMinutes === 5;
+})());
+
+check('a cracked door still open means settling is still going', (() => {
+  const s = nsess([{ t: NT(14, 18, 41), s: 'playing' }],
+    [{ t: NT(12, 30), s: 'on' }], { now: NT(14, 28) })[0];
+  /* He has not been left alone yet, so the settle point tracks now. */
+  return s.hadExit === true && s.settledAt === NT(14, 28);
+})());
+
+check('the real cracked-door settle reads 5m and zero interventions', (() => {
+  const s = nsess([{ t: NT(12, 30), s: 'idle' }, { t: NT(14, 18, 41), s: 'playing' }],
+    [{ t: NT(12, 30), s: 'on' }, { t: NT(14, 18, 46), s: 'off' },
+     { t: NT(14, 21, 13), s: 'on' }, { t: NT(14, 23, 40), s: 'off' }],
+    { now: NT(14, 28) })[0];
+  return s.settledAt === NT(14, 23, 40) && s.settleMinutes === 5 && s.interventions === 0;
+})());
+
+check('clamping judges the door by its real duration, not the clamped one', (() => {
+  /* Open for hours, closing 1s after the session starts: a flicker by the
+     clamped span, obviously not one by the real span. */
+  const s = nsess([{ t: NT(14, 0, 0), s: 'playing' }],
+    [{ t: NT(12, 0), s: 'on' }, { t: NT(14, 0, 1), s: 'off' }],
+    { now: NT(15, 0) })[0];
+  return s.hadExit === true && s.settledAt === NT(14, 0, 1);
+})());
+
 check('no history at all yields no sessions rather than throwing',
   nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
 
