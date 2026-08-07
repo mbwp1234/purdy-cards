@@ -426,6 +426,14 @@ const PS_STYLES = `
       .ps-btn.armed { background: var(--ps-warn); color: #1a1a1a; }
 
       /* graph scrubber */
+      /* nursery: nap rings and the one line of live status */
+      .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
+      .ps-napr { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+      .ps-napr > span { font-size: var(--pc-fs-micro); font-variant-numeric: tabular-nums; }
+      .ps-jstat { display: flex; justify-content: space-between; gap: 10px;
+                  font-size: var(--pc-fs-xs); color: var(--ps-muted);
+                  font-variant-numeric: tabular-nums; padding: 0 2px; }
+      .ps-rail svg { width: 100%; height: 18px; display: block; }
       .ps-hypplot { position: relative; }
       /* Default to letting the browser scroll; claim the gesture only once a
          long press has deliberately entered scrub mode. */

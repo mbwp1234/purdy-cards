@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.38.0";
+const PC_VERSION = "1.39.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -6293,6 +6293,23 @@ class PurdyShellCard extends PcBaseCard {
           html = `<b>${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
             (i ? `<span><i style="background:var(--ps-cool)"></i>In<b>${i.v.toFixed(1)}\u00B0</b></span>` : "") +
             (o ? `<span><i style="background:var(--ps-heat)"></i>Out<b>${o.v.toFixed(1)}\u00B0</b></span>` : "");
+        } else if (kind === "night") {
+          /* The nursery rail. Unlike the hypnogram there is no state series to
+             sample — just two phases and a set of point events — so the
+             readout answers "what was happening here, and how far into the
+             night is it". */
+          const d = this._nightData;
+          if (!d) return;
+          const t = d.from + f * (d.to - d.from);
+          const tol = (d.to - d.from) / 90;
+          const near = (d.events || []).find((e) => Math.abs(e - t) <= tol);
+          const into = Math.max(0, Math.round((t - d.from) / 60000));
+          const phase = near
+            ? ["var(--ps-warn)", "went in"]
+            : t < d.settledAt ? ["var(--ps-light)", "settling"] : ["var(--ps-deep)", "asleep"];
+          html = `<b>${new Date(near || t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
+            `<span><i style="background:${phase[0]}"></i>${phase[1]}</span>` +
+            `<span>${psDur(into)} in</span>`;
         } else {
           const d = this._hypData;
           if (!d) return;
@@ -6392,7 +6409,7 @@ class PurdyShellCard extends PcBaseCard {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
-      nurserySessions: psNurserySessions, dayKey: psDayKey, hm: psHM,
+      nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
     };
   }
 
@@ -8869,8 +8886,72 @@ function psNurserySessions(hatch, door, opts) {
       settleMinutes: Math.max(0, Math.round((settledAt - s.from) / 60000)),
       asleepMinutes: Math.max(0, Math.round((s.to - settledAt) / 60000)),
       hadExit,
+      /* The longest run nobody had to go in. For a night this is the number
+         that says whether anyone else slept, and it is not derivable from the
+         count — three wake-ups spread evenly is a very different night from
+         three in the last hour. */
+      longestStretch: (() => {
+        const marks = [settledAt, ...events, s.to];
+        let best = 0;
+        for (let k = 1; k < marks.length; k += 1) {
+          best = Math.max(best, marks[k] - marks[k - 1]);
+        }
+        return Math.max(0, Math.round(best / 60000));
+      })(),
     };
   });
+}
+
+/* Cross-session numbers: the ones worth having whether or not this card is
+   what displays them.
+ *
+ *   wakeWindow      how long he has been up. For a baby this is what predicts
+ *                   the next nap, and it is the difference between reporting
+ *                   history and saying what happens next.
+ *   longestStretch  per session above — surfaced here as the night's headline.
+ *   bedtimeSpread   how consistent bedtime is across the window, as a ± in
+ *                   minutes. Consistency is the thing sleep advice is actually
+ *                   about, and a mean alone hides it.
+ *
+ * Bedtimes are shifted past midnight before averaging: a 00:20 bedtime is a
+ * late night, not an early one, and treating it as minute 20 would drag the
+ * mean back by eleven hours and report a wild spread on a settled week. */
+function psNurseryStats(sessions, opts) {
+  const o = opts || {};
+  const now = o.now == null ? Date.now() : o.now;
+  const all = sessions || [];
+
+  const nights = all.filter((s) => s.night && !s.active).slice(-(o.days || 7));
+  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  const avgNightMin = nights.length ? Math.round(mean(nights.map((s) => s.asleepMinutes))) : null;
+  const avgIns = nights.length ? mean(nights.map((s) => s.interventions)) : null;
+  const avgStretch = nights.length ? Math.round(mean(nights.map((s) => s.longestStretch))) : null;
+
+  const beds = nights.map((s) => {
+    const d = new Date(s.from);
+    const m = d.getHours() * 60 + d.getMinutes();
+    return m < 720 ? m + 1440 : m;      /* after midnight is late, not early */
+  });
+  const bedMean = beds.length ? Math.round(mean(beds)) % 1440 : null;
+  const bedSpread = beds.length > 1
+    ? Math.round(Math.sqrt(mean(beds.map((b) => (b - mean(beds)) ** 2))))
+    : null;
+
+  /* Awake since the last session ended — null while he is actually asleep,
+     because "awake 0m" during a nap is a lie rather than a zero. */
+  const live = all.find((s) => s.active);
+  const ended = all.filter((s) => !s.active);
+  const last = ended.length ? ended[ended.length - 1] : null;
+  const wakeSince = live || !last ? null : last.to;
+  const wakeWindowMin = wakeSince == null ? null : Math.max(0, Math.round((now - wakeSince) / 60000));
+
+  return {
+    nights: nights.length,
+    avgNightMin, avgIns, avgStretch,
+    bedMean, bedSpread,
+    wakeSince, wakeWindowMin,
+  };
 }
 
 Object.assign(PurdyShellCard.prototype, {
@@ -8935,20 +9016,25 @@ Object.assign(PurdyShellCard.prototype, {
     return psNurserySessions(h[sec.hatch], h[sec.door], sec);
   },
 
-  /* The hypnogram's counterpart. The sock drew sleep stages; there are none
-     here, so this draws the shape of the day instead — where the sessions sat,
-     which were nights and which naps, and where someone went in.
+  /* The night, scrubbable.
    *
-     Deliberately NOT folded together with `_hypnoSvg`: they are the same size
-     and both are bars on a time axis, but that one samples a state series and
-     this one plots intervals with point events on top. Merging them would mean
-     picking one model and changing how the other view reads — the same reason
-     the hypnogram and the sleep card's graph were left apart. */
-  _nurseryTimeline(night, loaded, err) {
-    const PAD = 3;
-    /* The night only. Naps are two twenty-minute bars in a 24-hour axis —
-       slivers carrying no shape, and their numbers are already in the rows
-       below. The old sock card drew one night for the same reason. */
+   * The sock card drew sleep stages; there are none here, so this draws the
+   * shape of the night — settling at the head, the sleep itself, and a tick
+   * wherever someone went in. Dragging it names the time under your finger,
+   * which is the whole point: "what time was that 2am wake-up" becomes a swipe
+   * rather than a memory test.
+   *
+   * It rides the shell's existing scrub (data-scrub / .ps-cross / data-readout),
+   * so it inherits the parts that were hard to get right: a ~340ms press before
+   * touch is claimed, so a vertical swipe still scrolls the page, and a readout
+   * written straight to the DOM instead of through a repaint.
+   *
+   * Deliberately NOT folded into `_hypnoSvg`. Same size, both bars on a time
+   * axis — but that one samples a state series and this one plots intervals
+   * with point events over them. Merging would mean picking one model and
+   * changing how the other view reads.
+   */
+  _nurseryRail(night, loaded, err) {
     if (!loaded || err || !night) {
       const msg = err ? "Recorder did not answer"
         : !loaded ? "Loading…" : "No night recorded yet";
@@ -8958,48 +9044,90 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }
 
+    const PAD = 3;
     const from = night.from;
     const to = night.to;
     const span = Math.max(60000, to - from);
     const x = (t) => PAD + ((t - from) / span) * (100 - PAD * 2);
+    this._nightData = { from, to, settledAt: night.settledAt, events: night.events };
 
-    /* Two segments, because they mean different things: the settling phase
-       before he was left alone, then the night proper. */
     const sx = x(night.settledAt);
-    let bars = `<rect x="${PAD}" y="12" width="${Math.max(0.4, sx - PAD).toFixed(2)}"
-        height="22" rx="2" fill="var(--ps-light)" opacity="0.55"/>
-      <rect x="${sx.toFixed(2)}" y="8" width="${Math.max(0.4, (100 - PAD) - sx).toFixed(2)}"
-        height="30" rx="2" fill="var(--ps-deep)" opacity="${night.active ? 0.95 : 0.8}"/>`;
+    let bars = `<rect x="${PAD}" y="14" width="${Math.max(0.4, sx - PAD).toFixed(2)}"
+        height="18" rx="2" fill="var(--ps-light)" opacity="0.5"/>
+      <rect x="${sx.toFixed(2)}" y="10" width="${Math.max(0.4, (100 - PAD) - sx).toFixed(2)}"
+        height="26" rx="2" fill="var(--ps-deep)" opacity="${night.active ? 0.95 : 0.8}"/>`;
 
     let ticks = "";
     night.events.forEach((t) => {
-      ticks += `<rect x="${(x(t) - 0.35).toFixed(2)}" y="4" width="0.7" height="38"
+      ticks += `<rect x="${(x(t) - 0.32).toFixed(2)}" y="5" width="0.64" height="36"
         rx="0.3" fill="var(--ps-warn)"/>`;
     });
 
-    /* An hourly gridline, so the eye can place a tick without an axis. */
     let grid = "";
     const hours = span / 3600000;
-    if (hours >= 2) {
-      const step = hours > 8 ? 2 : 1;
-      for (let h = step; h < hours; h += step) {
-        const gx = x(from + h * 3600000);
-        grid += `<line x1="${gx.toFixed(2)}" y1="2" x2="${gx.toFixed(2)}" y2="44"
-          stroke="var(--ps-line)" stroke-width="0.25"/>`;
-      }
+    const step = hours > 8 ? 2 : 1;
+    for (let h = step; h < hours; h += step) {
+      const gx = x(from + h * 3600000);
+      grid += `<line x1="${gx.toFixed(2)}" y1="4" x2="${gx.toFixed(2)}" y2="42"
+        stroke="var(--ps-edge)" stroke-width="0.25"/>`;
     }
 
     const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="ps-hyp">
-        <div class="ps-hypt">
+        <div class="ps-hypt" data-readout="night">
           <span class="ps-lbl">${night.active ? "Tonight" : "Last night"}</span>
-          <span><i style="background:var(--ps-light);opacity:.55"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep</span>
+          <span><i style="background:var(--ps-light);opacity:.5"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep</span>
           <b>${night.interventions} in</b>
         </div>
-        <svg viewBox="0 0 100 46" preserveAspectRatio="none" aria-hidden="true">
-          ${grid}${bars}${ticks}
-        </svg>
+        <div class="ps-hypplot" data-scrub="night">
+          <svg viewBox="0 0 100 46" preserveAspectRatio="none" aria-hidden="true">
+            ${grid}${bars}${ticks}
+          </svg>
+          <div class="ps-cross" hidden></div>
+        </div>
         <div class="ps-hypt"><span>${psEsc(fmt(from))}</span><span>${psEsc(night.active ? "now" : fmt(to))}</span></div>
+      </div>`;
+  },
+
+  /* Today at a glance: the tail of last night, each nap where it fell, now,
+     and tonight's expected bedtime as a ghost. Answers "are we on schedule"
+     without a single number. */
+  _nurseryDayRail(sessions, todayKey, bedMean) {
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const t0 = start.getTime();
+    const t1 = t0 + 86400000;
+    const PAD = 0;
+    const x = (t) => ((t - t0) / (t1 - t0)) * 100;
+
+    let bars = "";
+    (sessions || []).forEach((s) => {
+      if (s.to < t0 || s.from > t1) return;
+      const a = Math.max(x(s.from), 0);
+      const b = Math.min(x(s.to), 100);
+      const short = !s.night && s.asleepMinutes < 30;
+      bars += `<rect x="${a.toFixed(2)}" y="6" width="${Math.max(0.5, b - a).toFixed(2)}"
+        height="6" rx="2" fill="${s.night ? "var(--ps-deep)" : short ? "var(--ps-warn)" : "var(--ps-light)"}"
+        opacity="${s.night ? 0.75 : 1}"/>`;
+    });
+
+    const ghost = bedMean == null ? "" : (() => {
+      const gx = (bedMean / 1440) * 100;
+      return `<rect x="${gx.toFixed(2)}" y="3.5" width="6" height="11" rx="1.6" fill="none"
+        stroke="var(--ps-deep)" stroke-width="0.6" stroke-dasharray="1.6 1.4"/>`;
+    })();
+
+    const nx = x(Date.now());
+    return `<div class="ps-hyp">
+        <div class="ps-hypt"><span class="ps-lbl">Today</span></div>
+        <div class="ps-rail">
+          <svg viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true">
+            <rect x="0" y="6" width="100" height="6" rx="2" fill="rgba(255,255,255,.05)"/>
+            ${bars}${ghost}
+            <line x1="${nx.toFixed(2)}" y1="1.5" x2="${nx.toFixed(2)}" y2="16.5"
+              stroke="var(--ps-text)" stroke-width="0.8"/>
+          </svg>
+        </div>
+        <div class="ps-hypt"><span>6 AM</span><span>noon</span><span>6 PM</span></div>
       </div>`;
   },
 
@@ -9008,158 +9136,135 @@ Object.assign(PurdyShellCard.prototype, {
     const playing = pcState(h, sec.hatch) === "playing";
     const doorOpen = pcState(h, sec.door) === "on";
 
-    /* "The recorder has not answered yet" and "he has never slept" are
-       different facts and must not render the same. */
     const loaded = !!this._nursery;
-    const sessions = loaded ? this._nurserySessions(sec) : [];
     const err = this._nurseryErr;
+    const sessions = loaded ? this._nurserySessions(sec) : [];
+    const stats = psNurseryStats(sessions, { now: Date.now(), days: sec.days || 7 });
 
     const live = sessions.find((s) => s.active);
     const past = sessions.filter((s) => !s.active);
     const lastNight = [...past].reverse().find((s) => s.night) || null;
+    const nightSession = live && live.night ? live : lastNight;
 
     const todayKey = psDayKey(new Date());
     const todayNaps = sessions.filter((s) => !s.night && s.day === todayKey);
-    /* Sleep totals exclude settling everywhere — the ring, the chips, the day
-   rows and the averages all mean the same thing as a result. */
     const napMins = todayNaps.reduce((a, s) => a + s.asleepMinutes, 0);
-
-    /* Chip: what is true right now, not what the history says. */
-    let chipCls = "";
-    let chipTxt = "Hatch off";
-    if (playing) {
-      chipCls = "deep";
-      chipTxt = live
-        ? (live.hadExit ? `Asleep ${psHM(live.asleepMinutes)}` : `Settling ${psHM(live.minutes)}`)
-        : "Asleep";
-    } else if (doorOpen) {
-      chipCls = "warn";
-      chipTxt = "Door open";
-    }
-
-    /* Hero — the run in progress if there is one, otherwise last night. */
-    const hero = live || lastNight;
-    const heroLabel = live ? (live.night ? "Tonight" : "Nap") : "Last night";
-    const heroSub = hero
-      ? `${psClock(hero.from)} → ${hero.active ? "now" : psClock(hero.to)}`
-      : (err ? "recorder did not answer" : loaded ? "no session recorded" : "loading…");
+    const catnapUnder = sec.catnap_under_min == null ? 30 : sec.catnap_under_min;
+    const napTarget = (sec.nap_target_min == null ? 60 : sec.nap_target_min) * 1;
 
     const wifiOk = !sec.hatch_wifi || pcState(h, sec.hatch_wifi) === "on";
+    const clock = (m) => (m == null ? "—"
+      : `${((Math.floor(m / 60) % 12) || 12)}:${String(m % 60).padStart(2, "0")} ${m < 720 ? "AM" : "PM"}`);
 
-    /* Naps are their own list, because the questions asked of them are
-       different from the ones asked of a night: how long, when did it start,
-       when did it end, and how many were there. No settling column — for a
-       fifty-minute nap that is noise beside the number that matters. */
-    const napRows = todayNaps.length
-      ? todayNaps.slice().reverse().map((s) => `
-          <div class="ps-jr">
-            <span class="ps-l">${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
-            <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " …" : ""}</span>
-            <span class="ps-flat">${s.interventions ? `${s.interventions} in` : ""}</span>
-          </div>`).join("")
-      : `<div class="ps-jr"><span class="ps-l">No naps yet today</span></div>`;
+    /* Chip — what is true right now, never what the history says. */
+    let chipCls = "";
+    let chipTxt = "Awake";
+    if (playing && live) {
+      chipCls = live.hadExit ? "deep" : "lt";
+      chipTxt = live.hadExit ? `Asleep ${psHM(live.asleepMinutes)}` : `Settling ${psHM(live.minutes)}`;
+    } else if (playing) {
+      chipCls = "deep"; chipTxt = "Asleep";
+    } else if (doorOpen) {
+      chipCls = "warn"; chipTxt = "Door open";
+    } else if (stats.wakeWindowMin != null) {
+      chipTxt = `Awake ${psHM(stats.wakeWindowMin)}`;
+    }
 
-    /* Recent days. A day with no night recorded still gets a row — an absent
-       night is information, and skipping it would silently shorten the list. */
-    const byDay = new Map();
-    sessions.forEach((s) => {
-      if (!byDay.has(s.day)) byDay.set(s.day, { night: null, naps: 0, napMins: 0, ins: 0 });
-      const d = byDay.get(s.day);
-      if (s.night) d.night = s;
-      else { d.naps += 1; d.napMins += s.asleepMinutes; }
-      d.ins += s.interventions;
-    });
-    const dayKeys = [...byDay.keys()].sort().reverse().slice(0, sec.days || 7);
-    const dayRows = dayKeys.map((k) => {
-      const d = byDay.get(k);
-      const when = new Date(k + "T12:00:00");
-      const label = k === todayKey
-        ? "Today"
-        : when.toLocaleDateString([], { weekday: "short", day: "numeric" });
-      return `
-        <div class="ps-jr">
-          <span class="ps-l">${psEsc(label)}</span>
-          <span class="ps-v">${d.night ? psHM(d.night.asleepMinutes) : "—"}</span>
-          <span class="ps-flat">${d.naps ? `${d.naps} nap${d.naps > 1 ? "s" : ""} ${psHM(d.napMins)}` : "no naps"} · ${d.ins} in</span>
+    /* The horseshoe is scaled to HIS OWN seven-day average, not a made-up
+       twelve hours: the marker sits at his normal and the reading is
+       above/below it, which keeps meaning as he grows. The 1.25 headroom is so
+       a better-than-usual night has somewhere to go. */
+    const avg = stats.avgNightMin;
+    const maxMins = avg ? Math.round(avg * 1.25) : ((sec.ring || {}).max_hours || 12) * 60;
+    const nightMins = nightSession ? nightSession.asleepMinutes : 0;
+    const noData = !loaded || (!nightSession && !todayNaps.length);
+    const ring = this._ringSvg(120, 9,
+      [[nightMins / maxMins, "var(--ps-deep)"]],
+      avg ? Math.min(1, avg / maxMins) : null);
+
+    /* Nap rings. No slot is drawn for a nap that has not happened — two short
+       naps make a third possible, but only going down a third time makes it
+       real, and the card has no business claiming more than it can see. */
+    const ringPx = todayNaps.length > 2 ? 44 : 52;
+    const stroke = todayNaps.length > 2 ? 4.5 : 5.5;
+    const napRings = todayNaps.map((s) => {
+      const short = !s.active && s.asleepMinutes < catnapUnder;
+      const col = short ? "var(--ps-warn)" : "var(--ps-light)";
+      const sub = s.active ? "now" : psClock(s.from);
+      const subCol = s.active ? "var(--ps-light)" : short ? "var(--ps-warn)" : "var(--ps-dim)";
+      return `<div class="ps-napr">
+          <div class="ps-ring" style="width:${ringPx}px;height:${ringPx}px" data-info="${psEsc(sec.hatch)}">
+            ${this._ringSvg(ringPx, stroke, [[s.asleepMinutes / napTarget, col]], null)}
+            <div class="ps-rv sm"><b>${psHM(s.asleepMinutes).replace(" ", "")}</b></div>
+          </div>
+          <span style="color:${subCol}">${psEsc(sub)}</span>
         </div>`;
     }).join("");
 
-    const nightsWithData = dayKeys.map((k) => byDay.get(k)).filter((d) => d.night);
-    const avgNight = nightsWithData.length
-      ? Math.round(nightsWithData.reduce((a, d) => a + d.night.asleepMinutes, 0) / nightsWithData.length)
-      : null;
-    const avgIns = nightsWithData.length
-      ? (nightsWithData.reduce((a, d) => a + d.night.interventions, 0) / nightsWithData.length)
-      : null;
-
-    /* The horseshoe, carrying the same meaning the sock card's did: one ring,
-       two arcs, a total in the middle. Deep/light became night/naps — there
-       are no sleep stages here, but "how much has he slept today, and how
-       much of it was the night" is the question that ring was answering. */
-    const nightSession = live && live.night ? live : lastNight;
-    const nightMins = nightSession ? nightSession.asleepMinutes : 0;
-    const totalMins = nightMins + napMins;
-    const maxH = (sec.ring || {}).max_hours || 14;
-    const maxMins = maxH * 60;
-    /* No data and a genuine zero must not look the same. */
-    const noData = !loaded || (!lastNight && !live && !todayNaps.length);
-    const ring = this._ringSvg(98, 8, [
-      [nightMins / maxMins, "var(--ps-deep)"],
-      [napMins / maxMins, "var(--ps-light)"],
-    ], avgNight != null ? Math.min(1, avgNight / maxMins) : null);
+    /* One line of live status, and nothing else. Predicted bedtime comes from
+       his own average rather than a configured time. */
+    const statusL = live
+      ? `Down ${psClock(live.from)}`
+      : stats.wakeSince ? `Awake since ${psClock(stats.wakeSince)}` : "";
+    const statusR = live
+      ? (live.hadExit ? `settled ${psClock(live.settledAt)}` : "settling…")
+      : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
 
     return `
       ${this._head(sec, `<span class="ps-chip ${chipCls}"><span class="ps-dot"></span>${psEsc(chipTxt)}</span>`)}
       <div class="ps-jtop">
-        <div class="ps-ring" style="width:98px;height:98px" data-info="${psEsc(sec.hatch)}">
+        <div class="ps-ring" style="width:120px;height:120px" data-info="${psEsc(sec.hatch)}">
           ${ring}
           <div class="ps-rv">${noData
             ? `<b class="ps-nodata">—</b><small>no data</small>`
-            : `<b>${(totalMins / 60).toFixed(1)}h</b><small>of ${maxH}h</small>`}</div>
+            : `<b>${psHM(nightMins)}</b><small>${nightSession && nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
         </div>
         <div class="ps-grow">
-          <div class="ps-jn">${psEsc(sec.name || sec.title || "Nursery")}</div>
-          <div class="ps-js">${psEsc(heroLabel)}<br>${psEsc(heroSub)}</div>
-          <div class="ps-chips" style="margin-top:9px">
-            ${noData
-              ? `<span class="ps-chip">${err ? "Recorder unavailable" : loaded ? "Nothing recorded" : "Loading…"}</span>`
-              : `<span class="ps-chip deep">Night ${nightMins ? psHM(nightMins) : "—"}</span>
-                 <span class="ps-chip lt">${todayNaps.length
-                    ? `${todayNaps.length} nap${todayNaps.length > 1 ? "s" : ""} ${psHM(napMins)}`
-                    : "No naps"}</span>`}
-            ${wifiOk ? "" : `<span class="ps-chip bad">Hatch offline</span>`}
-          </div>
+          <span class="ps-lbl">Naps${napMins ? ` · ${psHM(napMins)}` : ""}</span>
+          <div class="ps-naps">${napRings || `<span class="ps-flat" style="font-size:var(--pc-fs-xs)">${
+            noData ? (err ? "recorder unavailable" : loaded ? "none yet" : "loading…") : "none yet"}</span>`}</div>
         </div>
       </div>
-      <div class="ps-xtra">
-        <span class="ps-lbl" style="display:block;margin:2px 0 6px">Naps today${
-          todayNaps.length ? ` · ${todayNaps.length} · ${psHM(napMins)}` : ""}</span>
-        ${napRows}
+      ${noData ? "" : `<div class="ps-jstat">
+        <span>${psEsc(statusL)}</span>
+        <span>${psEsc(statusR)}</span>
+      </div>`}
+      ${wifiOk ? "" : `<div class="ps-chips"><span class="ps-chip bad">Hatch offline</span></div>`}
 
-        <span class="ps-lbl" style="display:block;margin:14px 0 6px">${
-          nightSession && nightSession.active ? "Tonight" : "Last night"}</span>
+      <div class="ps-xtra">
+        ${this._nurseryRail(nightSession, loaded, err)}
         ${nightSession ? `
+        <div class="ps-jrs">
           <div class="ps-jr"><span class="ps-l">Asleep</span>
             <span class="ps-v">${psHM(nightSession.asleepMinutes)}</span>
-            <span class="ps-flat">${avgNight == null ? "" : psHM(avgNight) + " avg"}</span></div>
+            <span class="${avg == null ? "ps-flat" : nightSession.asleepMinutes >= avg ? "ps-good" : "ps-warnc"}">${
+              avg == null ? "" : psHM(avg) + " avg"}</span></div>
+          <div class="ps-jr"><span class="ps-l">Longest stretch</span>
+            <span class="ps-v">${psHM(nightSession.longestStretch)}</span>
+            <span class="ps-flat">${stats.avgStretch == null ? "" : psHM(stats.avgStretch) + " avg"}</span></div>
           <div class="ps-jr"><span class="ps-l">Down / up</span>
             <span class="ps-v">${psClock(nightSession.from)} – ${
               nightSession.active ? "now" : psClock(nightSession.to)}</span>
-            <span class="ps-flat">${nightSession.splits > 1 ? nightSession.splits + " spans" : ""}</span></div>
+            <span class="ps-flat">${stats.bedSpread == null ? "" : "±" + stats.bedSpread + "m"}</span></div>
           <div class="ps-jr"><span class="ps-l">Settled</span>
             <span class="ps-v">${nightSession.hadExit ? psClock(nightSession.settledAt) : "—"}</span>
-            <span class="ps-flat">${nightSession.hadExit ? psHM(nightSession.settleMinutes) + " to settle" : "nobody went in"}</span></div>
-          <div class="ps-jr"><span class="ps-l">Interventions</span>
-            <span class="ps-v">${nightSession.interventions}</span>
-            <span class="ps-flat">${avgIns == null ? "" : avgIns.toFixed(1) + " avg"}</span></div>
+            <span class="ps-flat">${nightSession.hadExit ? psHM(nightSession.settleMinutes) : "nobody went in"}</span></div>
           ${nightSession.events.length ? `<div class="ps-jr"><span class="ps-l">Went in at</span>
             <span class="ps-v">${nightSession.events.map((t) => psClock(t)).join(", ")}</span></div>` : ""}
-          ${this._nurseryTimeline(nightSession, loaded, err)}
-        ` : `<div class="ps-jr"><span class="ps-l">${
-          err ? "Recorder did not answer" : loaded ? "No night recorded yet" : "Loading…"}</span></div>`}
+        </div>` : ""}
 
-        <span class="ps-lbl" style="display:block;margin:14px 0 6px">Last ${dayKeys.length} day${dayKeys.length === 1 ? "" : "s"}</span>
-        ${dayRows || `<div class="ps-jr"><span class="ps-l">No history yet</span></div>`}
+        ${this._nurseryDayRail(sessions, todayKey, stats.bedMean)}
+        <div class="ps-jrs">
+          ${todayNaps.length ? todayNaps.map((s) => `
+            <div class="ps-jr"><span class="ps-l">${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
+              <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " …" : ""}</span>
+              <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
+                !s.active && s.asleepMinutes < catnapUnder ? "short" : s.interventions ? s.interventions + " in" : ""}</span></div>`).join("")
+            : `<div class="ps-jr"><span class="ps-l">No naps yet today</span></div>`}
+          ${stats.wakeWindowMin == null ? "" : `<div class="ps-jr"><span class="ps-l">Awake for</span>
+            <span class="ps-v">${psHM(stats.wakeWindowMin)}</span>
+            <span class="ps-flat">since ${psClock(stats.wakeSince)}</span></div>`}
+        </div>
       </div>`;
   },
 });
@@ -9591,6 +9696,14 @@ const PS_STYLES = `
       .ps-btn.armed { background: var(--ps-warn); color: #1a1a1a; }
 
       /* graph scrubber */
+      /* nursery: nap rings and the one line of live status */
+      .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
+      .ps-napr { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+      .ps-napr > span { font-size: var(--pc-fs-micro); font-variant-numeric: tabular-nums; }
+      .ps-jstat { display: flex; justify-content: space-between; gap: 10px;
+                  font-size: var(--pc-fs-xs); color: var(--ps-muted);
+                  font-variant-numeric: tabular-nums; padding: 0 2px; }
+      .ps-rail svg { width: 100%; height: 18px; display: block; }
       .ps-hypplot { position: relative; }
       /* Default to letting the browser scroll; claim the gesture only once a
          long press has deliberately entered scrub mode. */

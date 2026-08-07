@@ -1185,6 +1185,23 @@ class PurdyShellCard extends PcBaseCard {
           html = `<b>${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
             (i ? `<span><i style="background:var(--ps-cool)"></i>In<b>${i.v.toFixed(1)}\u00B0</b></span>` : "") +
             (o ? `<span><i style="background:var(--ps-heat)"></i>Out<b>${o.v.toFixed(1)}\u00B0</b></span>` : "");
+        } else if (kind === "night") {
+          /* The nursery rail. Unlike the hypnogram there is no state series to
+             sample — just two phases and a set of point events — so the
+             readout answers "what was happening here, and how far into the
+             night is it". */
+          const d = this._nightData;
+          if (!d) return;
+          const t = d.from + f * (d.to - d.from);
+          const tol = (d.to - d.from) / 90;
+          const near = (d.events || []).find((e) => Math.abs(e - t) <= tol);
+          const into = Math.max(0, Math.round((t - d.from) / 60000));
+          const phase = near
+            ? ["var(--ps-warn)", "went in"]
+            : t < d.settledAt ? ["var(--ps-light)", "settling"] : ["var(--ps-deep)", "asleep"];
+          html = `<b>${new Date(near || t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
+            `<span><i style="background:${phase[0]}"></i>${phase[1]}</span>` +
+            `<span>${psDur(into)} in</span>`;
         } else {
           const d = this._hypData;
           if (!d) return;
@@ -1284,7 +1301,7 @@ class PurdyShellCard extends PcBaseCard {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
-      nurserySessions: psNurserySessions, dayKey: psDayKey, hm: psHM,
+      nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
     };
   }
 

@@ -2752,42 +2752,95 @@ check('a zero-length segment is omitted rather than drawn as a dot', (() => {
   const svg = new SH()._ringSvg(98, 8, [[0.5, 'var(--ps-deep)'], [0, 'var(--ps-light)']], null);
   return (svg.match(/stroke-dasharray/g) || []).length === 2;
 })());
-check('the ring centre shows total sleep against a daily max',
-  /<b>\d+\.\d+h<\/b><small>of \d+h<\/small>/.test(nurseryRendered.html));
-check('the rendered night arc uses the deep colour',
-  /stroke="var\(--ps-deep\)"/.test(nurseryRendered.html));
-check('the timeline draws a bar per session',
-  (nurseryRendered.html.match(/<rect[^>]*height="(30|22)"/g) || []).length === 2);
-check('interventions are ticked onto the timeline',
-  (nurseryRendered.html.match(/fill="var\(--ps-warn\)"/g) || []).length >= 1);
-check('the settling entry is not ticked as an intervention', (() => {
-  const night = nurseryRendered.sess.find((x) => x.night);
-  return night.interventions === 1 && night.hadExit === true;
+
+/* The ring is scaled to his own seven-day average, not a made-up twelve
+   hours, so the marker sits at his normal and the reading is above/below it.
+   A fixed goal stops meaning anything as he grows. */
+check('the ring centre names the night, not a percentage of a fixed goal',
+  /<b>[^<]+<\/b><small>(LAST NIGHT|TONIGHT)<\/small>/.test(nurseryRendered.html)
+  && !/of \d+h/.test(nurseryRendered.html));
+check('the ring carries a goal marker at his own average',
+  /<line[^>]*var\(--ps-warn\)[^>]*rotate\(/.test(nurseryRendered.html));
+check('the average is computed from finished nights only', (() => {
+  const st = SH.helpers.nurseryStats([
+    { night: true, active: false, asleepMinutes: 600, interventions: 1, longestStretch: 300, from: NT(20, 0) },
+    { night: true, active: true, asleepMinutes: 5, interventions: 0, longestStretch: 5, from: NT(20, 5) },
+  ], { now: NT(22, 0), days: 7 });
+  return st.avgNightMin === 600 && st.nights === 1;
 })());
-check('the finished nap is counted and classified',
-  nurseryRendered.sess.filter((x) => !x.night).length === 1);
-check('the timeline is night-scoped and labelled',
-  /Last night|Tonight/.test(nurseryRendered.html) && !/Last 24h/.test(nurseryRendered.html));
-/* Collapsed is deliberately minimal: ring, one line, two chips. The graph and
-   every detail row live behind the expand. */
-check('the night graph lives behind the expand, not in the collapsed view', (() => {
-  const x = nurseryRendered.html.indexOf('ps-xtra');
-  return x > 0 && nurseryRendered.html.indexOf('<svg viewBox="0 0 100 46"') > x;
-})());
-check('the collapsed chips give the nap count and total', (() => {
+
+/* Collapsed is rings and one line of live status — no bars. */
+check('the collapsed view names the nap total and draws a ring per nap', (() => {
   const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
-  return /nap/i.test(top) && /Night/.test(top);
+  return /Naps ·/.test(top) && /ps-napr/.test(top);
 })());
-check('naps are listed with a start and an end time', (() => {
-  const x = nurseryRendered.html.slice(nurseryRendered.html.indexOf('Naps today'));
-  return /\d{1,2}:\d{2}[^<]*–[^<]*\d{1,2}:\d{2}/.test(x);
+check('no bar is drawn in the collapsed view', (() => {
+  const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
+  return !/ps-bar|class="bar"/.test(top);
 })());
-check('the night block names when he went down and got up',
-  /Down \/ up/.test(nurseryRendered.html) && /Settled/.test(nurseryRendered.html));
-check('the timeline separates settling from asleep',
+check('collapsed carries one line of live status', (() => {
+  const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
+  return /ps-jstat/.test(top) && /(Awake since|Down )/.test(top);
+})());
+
+/* No slot is drawn for a nap that has not happened — two short naps make a
+   third possible, but only going down a third time makes it real. */
+check('a nap that has not happened gets no ring', (() => {
+  const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
+  return (top.match(/ps-napr/g) || []).length === 1;
+})());
+
+/* The night rail scrubs, using the shell's existing machinery. */
+check('the night rail is wired for scrubbing',
+  /data-scrub="night"/.test(nurseryRendered.html)
+  && /data-readout="night"/.test(nurseryRendered.html)
+  && /ps-cross/.test(nurseryRendered.html));
+check('the scrub readout has a night branch',
+  /kind === "night"/.test(fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+check('the rail separates settling from asleep',
   /settling/.test(nurseryRendered.html) && /asleep/.test(nurseryRendered.html));
-check('naps are not drawn on the night graph',
-  (nurseryRendered.html.match(/<rect[^>]*height="(30|22)"/g) || []).length === 2);
+check('interventions are ticked onto the rail',
+  (nurseryRendered.html.match(/fill="var\(--ps-warn\)"/g) || []).length >= 1);
+check('the rail lives behind the expand, not in the collapsed view', (() => {
+  const x = nurseryRendered.html.indexOf('ps-xtra');
+  return x > 0 && nurseryRendered.html.indexOf('data-scrub="night"') > x;
+})());
+
+/* The measurements worth having whether or not this card shows them. */
+check('longest unbroken stretch is reported', /Longest stretch/.test(nurseryRendered.html));
+check('the longest stretch is the biggest gap, not the last one', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 59), s: 'idle' }],
+    [{ t: NT(20, 5), s: 'on' }, { t: NT(20, 6), s: 'off' },
+     { t: NT(21, 0), s: 'on' }, { t: NT(21, 1), s: 'off' },
+     { t: NT(23, 0), s: 'on' }, { t: NT(23, 1), s: 'off' }], { now: NT(23, 59) })[0];
+  /* settled 20:06, ins 21:00 and 23:00, end 23:59 → gaps 54, 120, 59 */
+  return s.longestStretch === 120;
+})());
+check('bedtime consistency is a spread, and after-midnight counts as late', (() => {
+  const st = SH.helpers.nurseryStats([
+    { night: true, active: false, asleepMinutes: 600, interventions: 0, longestStretch: 600, from: NT(19, 45) },
+    { night: true, active: false, asleepMinutes: 600, interventions: 0, longestStretch: 600, from: NT(20, 15) },
+  ], { now: NT(23, 0), days: 7 });
+  return st.bedMean === 1200 && st.bedSpread === 15;
+})());
+check('a single night has a bedtime but no spread to report', (() => {
+  const st = SH.helpers.nurseryStats(
+    [{ night: true, active: false, asleepMinutes: 600, interventions: 0, longestStretch: 600, from: NT(20, 0) }],
+    { now: NT(23, 0), days: 7 });
+  return st.bedMean === 1200 && st.bedSpread === null;
+})());
+check('the wake window is null while he is asleep, not zero', (() => {
+  const st = SH.helpers.nurseryStats(
+    [{ night: false, active: true, asleepMinutes: 10, interventions: 0, longestStretch: 10, from: NT(13, 0), to: NT(13, 10) }],
+    { now: NT(13, 10), days: 7 });
+  return st.wakeWindowMin === null && st.wakeSince === null;
+})());
+check('the wake window counts from the end of the last session', (() => {
+  const st = SH.helpers.nurseryStats(
+    [{ night: false, active: false, asleepMinutes: 40, interventions: 0, longestStretch: 40, from: NT(10, 0), to: NT(10, 58) }],
+    { now: NT(13, 12), days: 7 });
+  return st.wakeWindowMin === 134;
+})());
 
 check('a nursery section renders without a recorder answer', (() => {
   const s = new SH();
