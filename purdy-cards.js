@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.39.1";
+const PC_VERSION = "1.40.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -9080,19 +9080,31 @@ Object.assign(PurdyShellCard.prototype, {
     }
 
     const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    /* Labelled at the hours the gridlines actually fall on, with the true ends
+       either side — evenly spacing three captions across a rail whose axis is
+       not evenly divided points every one of them at the wrong time. */
+    const marks = [fmt(from)];
+    for (let hh = step; hh < hours; hh += step) {
+      const at = new Date(from + hh * 3600000);
+      marks.push(at.toLocaleTimeString([], { hour: "numeric" }));
+    }
+    marks.push(night.active ? "now" : fmt(to));
+    const hourLabels = marks.map((m) => `<span>${psEsc(m)}</span>`).join("");
     return `<div class="ps-hyp">
         <div class="ps-hypt" data-readout="night">
           <span class="ps-lbl">${night.active ? "Tonight" : "Last night"}</span>
           <span><i style="background:var(--ps-light);opacity:.5"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep</span>
           <b>${night.interventions} in</b>
         </div>
-        <div class="ps-hypplot" data-scrub="night">
-          <svg viewBox="0 0 100 46" preserveAspectRatio="none" aria-hidden="true">
-            ${grid}${bars}${ticks}
-          </svg>
-          <div class="ps-cross" hidden></div>
+        <div class="ps-railbox">
+          <div class="ps-hypplot" data-scrub="night">
+            <svg viewBox="0 0 100 46" preserveAspectRatio="none" aria-hidden="true">
+              ${grid}${bars}${ticks}
+            </svg>
+            <div class="ps-cross" hidden></div>
+          </div>
+          <div class="ps-railticks">${hourLabels}</div>
         </div>
-        <div class="ps-hypt"><span>${psEsc(fmt(from))}</span><span>${psEsc(night.active ? "now" : fmt(to))}</span></div>
       </div>`;
   },
 
@@ -9100,17 +9112,20 @@ Object.assign(PurdyShellCard.prototype, {
      and tonight's expected bedtime as a ghost. Answers "are we on schedule"
      without a single number. */
   _nurseryDayRail(sessions, todayKey, bedMean) {
-    const start = new Date(); start.setHours(0, 0, 0, 0);
-    const t0 = start.getTime();
-    const t1 = t0 + 86400000;
-    const PAD = 0;
-    const x = (t) => ((t - t0) / (t1 - t0)) * 100;
+    /* 6am to 10pm, not midnight to midnight: a whole-day axis spends a third
+       of its width on hours nothing ever happens in, which squeezes the naps
+       into slivers. The tail of last night and the head of tonight still land
+       inside it. */
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const t0 = day.getTime() + 6 * 3600000;
+    const t1 = day.getTime() + 22 * 3600000;
+    const x = (t) => Math.max(0, Math.min(100, ((t - t0) / (t1 - t0)) * 100));
 
     let bars = "";
     (sessions || []).forEach((s) => {
       if (s.to < t0 || s.from > t1) return;
-      const a = Math.max(x(s.from), 0);
-      const b = Math.min(x(s.to), 100);
+      const a = x(s.from);
+      const b = x(s.to);
       const short = !s.night && s.asleepMinutes < 30;
       bars += `<rect x="${a.toFixed(2)}" y="6" width="${Math.max(0.5, b - a).toFixed(2)}"
         height="6" rx="2" fill="${s.night ? "var(--ps-deep)" : short ? "var(--ps-warn)" : "var(--ps-light)"}"
@@ -9126,15 +9141,18 @@ Object.assign(PurdyShellCard.prototype, {
     const nx = x(Date.now());
     return `<div class="ps-hyp">
         <div class="ps-hypt"><span class="ps-lbl">Today</span></div>
-        <div class="ps-rail">
-          <svg viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true">
+        <div class="ps-railbox">
+          <svg viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true"
+            style="width:100%;height:18px;display:block">
             <rect x="0" y="6" width="100" height="6" rx="2" fill="rgba(255,255,255,.05)"/>
             ${bars}${ghost}
             <line x1="${nx.toFixed(2)}" y1="1.5" x2="${nx.toFixed(2)}" y2="16.5"
               stroke="var(--ps-text)" stroke-width="0.8"/>
           </svg>
+          <div class="ps-railticks">
+            <span>6 AM</span><span>10</span><span>2 PM</span><span>6</span><span>10 PM</span>
+          </div>
         </div>
-        <div class="ps-hypt"><span>12</span><span>6 AM</span><span>noon</span><span>6 PM</span><span>12</span></div>
       </div>`;
   },
 
@@ -9212,28 +9230,6 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }).join("");
 
-    /* Nap total against a BAND. There is no single number to miss by: under
-       `ok_min` is short, `ok_min`–`max_min` is fine, and the mark is the aim.
-       Drawn even at zero, because "none yet" against the band is exactly the
-       reading wanted at nine in the morning. */
-    const nb = sec.nap_band || {};
-    const bOk = nb.ok_min == null ? 120 : nb.ok_min;
-    const bAim = nb.aim_min == null ? 150 : nb.aim_min;
-    const bMax = nb.max_min == null ? 180 : nb.max_min;
-    const pct = (m) => Math.max(0, Math.min(100, (m / bMax) * 100));
-    const bandTxt = napMins >= bAim ? "on target" : napMins >= bOk ? "fine" : "short";
-    const band = `<div class="ps-band">
-        <div class="ps-bandt"><span>Naps today</span>
-          <b class="${napMins >= bOk ? "ps-good" : "ps-warnc"}">${psHM(napMins)} · ${bandTxt}</b></div>
-        <div class="ps-bandbar">
-          <div class="ps-bandok" style="left:${pct(bOk).toFixed(1)}%;right:0"></div>
-          <div class="ps-bandaim" style="left:${pct(bAim).toFixed(1)}%"></div>
-          <div class="ps-bandfill" style="width:${pct(napMins).toFixed(1)}%;
-            background:var(${napMins >= bOk ? "--ps-good" : "--ps-warn"})"></div>
-        </div>
-        <div class="ps-bandsc"><span>0</span><span>${psHM(bOk)}</span><span>${psHM(bAim)} aim</span><span>${psHM(bMax)}</span></div>
-      </div>`;
-
     /* One line of live status, and nothing else. Predicted bedtime comes from
        his own average rather than a configured time. */
     /* Time since the last nap ended belongs on the collapsed face, not behind
@@ -9264,7 +9260,6 @@ Object.assign(PurdyShellCard.prototype, {
             noData ? (err ? "recorder unavailable" : loaded ? "none yet" : "loading…") : "none yet"}</span>`}</div>
         </div>
       </div>
-      ${noData ? "" : band}
       ${noData ? "" : `<div class="ps-jstat">
         <span>${psEsc(statusL)}</span>
         <span>${psEsc(statusR)}</span>
@@ -9742,21 +9737,14 @@ const PS_STYLES = `
       .ps-rv.sm b { font-size: var(--pc-fs-md); }
       .ps-rv.sm small { font-size: var(--pc-fs-micro); margin-top: 1px; }
 
-      /* Nap total against a band, not a single goal: under 2h is short, 2-3h
-         is fine, and the mark is the 2.5h aim. */
-      .ps-band { display: flex; flex-direction: column; gap: 5px; }
-      .ps-bandt { display: flex; justify-content: space-between; align-items: baseline;
-                  font-size: var(--pc-fs-xs); color: var(--ps-muted);
-                  font-variant-numeric: tabular-nums; }
-      .ps-bandt b { color: var(--ps-text); font-weight: 650; }
-      .ps-bandbar { position: relative; height: 7px; border-radius: var(--pc-r-hair);
-                    background: var(--ps-track); overflow: hidden; }
-      .ps-bandok { position: absolute; top: 0; bottom: 0; background: rgba(129,201,149,.20); }
-      .ps-bandaim { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--ps-good); }
-      .ps-bandfill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: var(--pc-r-hair); }
-      .ps-bandsc { display: flex; justify-content: space-between;
-                   font-size: var(--pc-fs-micro); color: var(--ps-dim);
-                   font-variant-numeric: tabular-nums; }
+      /* Both nursery rails sit in a box, like every other panel on the card.
+         Without it a rail reads as a bare line floating on the ground rather
+         than a plot with an axis. */
+      .ps-railbox { background: var(--ps-fill); border-radius: var(--pc-r-sm);
+                    padding: 9px 10px 7px; }
+      .ps-railticks { display: flex; justify-content: space-between; margin-top: 5px;
+                      font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                      font-variant-numeric: tabular-nums; }
 
       /* nursery: nap rings and the one line of live status */
       .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
@@ -9765,7 +9753,6 @@ const PS_STYLES = `
       .ps-jstat { display: flex; justify-content: space-between; gap: 10px;
                   font-size: var(--pc-fs-xs); color: var(--ps-muted);
                   font-variant-numeric: tabular-nums; padding: 0 2px; }
-      .ps-rail svg { width: 100%; height: 18px; display: block; }
       .ps-hypplot { position: relative; }
       /* Default to letting the browser scroll; claim the gesture only once a
          long press has deliberately entered scrub mode. */

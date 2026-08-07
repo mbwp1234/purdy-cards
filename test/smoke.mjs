@@ -2789,16 +2789,25 @@ const nurseryRendered = (() => {
     sess: s._nurserySessions(s._config.sections[0]) };
 })();
 
-check('the nap band draws a zone, an aim mark and a fill',
-  /ps-bandok/.test(nurseryRendered.html) && /ps-bandaim/.test(nurseryRendered.html)
-  && /ps-bandfill/.test(nurseryRendered.html));
-check('the band reads short / fine / on target rather than a number missed',
-  /(short|fine|on target)/.test(nurseryRendered.html) && !/short of/.test(nurseryRendered.html));
 check('the small ring modifier is actually defined',
   /\.ps-rv\.sm b \{/.test(SH.styles));
-check('the day rail labels sit on their real hours',
-  /<span>12<\/span><span>6 AM<\/span><span>noon<\/span><span>6 PM<\/span><span>12<\/span>/
+
+/* Both rails are plots with an axis, so both sit in a box — a bare line on the
+   card ground does not read as one. */
+check('both rails sit in a box',
+  (nurseryRendered.html.match(/ps-railbox/g) || []).length === 2);
+check('the night rail is labelled at the hours its gridlines fall on', (() => {
+  const rail = nurseryRendered.html.slice(nurseryRendered.html.indexOf('data-scrub="night"'));
+  const ticks = rail.slice(rail.indexOf('ps-railticks'), rail.indexOf('</div>', rail.indexOf('ps-railticks')));
+  /* ends plus one per gridline, never three captions spread evenly over an
+     axis that is not evenly divided */
+  return (ticks.match(/<span>/g) || []).length >= 3;
+})());
+check('the day rail spans the waking day, not midnight to midnight',
+  /<span>6 AM<\/span><span>10<\/span><span>2 PM<\/span><span>6<\/span><span>10 PM<\/span>/
     .test(nurseryRendered.html));
+check('no goal-progress bar survives anywhere',
+  !/ps-bandok|ps-bandfill|ps-bandaim/.test(nurseryRendered.html));
 
 check('the horseshoe draws a track plus at least the night arc',
   (nurseryRendered.html.match(/stroke-dasharray/g) || []).length >= 2);

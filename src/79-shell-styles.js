@@ -432,21 +432,14 @@ const PS_STYLES = `
       .ps-rv.sm b { font-size: var(--pc-fs-md); }
       .ps-rv.sm small { font-size: var(--pc-fs-micro); margin-top: 1px; }
 
-      /* Nap total against a band, not a single goal: under 2h is short, 2-3h
-         is fine, and the mark is the 2.5h aim. */
-      .ps-band { display: flex; flex-direction: column; gap: 5px; }
-      .ps-bandt { display: flex; justify-content: space-between; align-items: baseline;
-                  font-size: var(--pc-fs-xs); color: var(--ps-muted);
-                  font-variant-numeric: tabular-nums; }
-      .ps-bandt b { color: var(--ps-text); font-weight: 650; }
-      .ps-bandbar { position: relative; height: 7px; border-radius: var(--pc-r-hair);
-                    background: var(--ps-track); overflow: hidden; }
-      .ps-bandok { position: absolute; top: 0; bottom: 0; background: rgba(129,201,149,.20); }
-      .ps-bandaim { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--ps-good); }
-      .ps-bandfill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: var(--pc-r-hair); }
-      .ps-bandsc { display: flex; justify-content: space-between;
-                   font-size: var(--pc-fs-micro); color: var(--ps-dim);
-                   font-variant-numeric: tabular-nums; }
+      /* Both nursery rails sit in a box, like every other panel on the card.
+         Without it a rail reads as a bare line floating on the ground rather
+         than a plot with an axis. */
+      .ps-railbox { background: var(--ps-fill); border-radius: var(--pc-r-sm);
+                    padding: 9px 10px 7px; }
+      .ps-railticks { display: flex; justify-content: space-between; margin-top: 5px;
+                      font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                      font-variant-numeric: tabular-nums; }
 
       /* nursery: nap rings and the one line of live status */
       .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
@@ -455,7 +448,6 @@ const PS_STYLES = `
       .ps-jstat { display: flex; justify-content: space-between; gap: 10px;
                   font-size: var(--pc-fs-xs); color: var(--ps-muted);
                   font-variant-numeric: tabular-nums; padding: 0 2px; }
-      .ps-rail svg { width: 100%; height: 18px; display: block; }
       .ps-hypplot { position: relative; }
       /* Default to letting the browser scroll; claim the gesture only once a
          long press has deliberately entered scrub mode. */
