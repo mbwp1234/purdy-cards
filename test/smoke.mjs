@@ -2661,6 +2661,65 @@ check('every accepted section type has a renderer, and vice versa', (() => {
   return accepted.length > 0 && accepted.join(',') === rendered.join(',');
 })());
 
+/* The section is meant to read like the sock card it replaced: one horseshoe
+   with two arcs and a total in the middle, then a strip showing the day. */
+const nurseryRendered = (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
+  s._hass = { states: { 'media_player.h': { state: 'playing', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} } } };
+  const HR = 3600000, MIN = 60000;
+  const d = new Date(); d.setHours(20, 10, 0, 0);
+  const bed = d.getTime() - 24 * HR;
+  const wake = bed + 10.5 * HR;
+  /* Anchored to now, not to a clock hour: pinning the nap to 10:30 made the
+     fixture depend on what time the suite happened to run, and before 10:30
+     the nap sat in the future with a zero-length arc. */
+  const napStart = Date.now() - 3 * HR;
+  s._nursery = {
+    'media_player.h': [{ t: bed, s: 'playing' }, { t: wake, s: 'idle' },
+      { t: napStart, s: 'playing' }, { t: napStart + 50 * MIN, s: 'idle' }],
+    'binary_sensor.d': [
+      { t: bed + 4 * MIN, s: 'on' }, { t: bed + 5 * MIN, s: 'off' },
+      { t: bed + 4 * HR, s: 'on' }, { t: bed + 4 * HR + 90000, s: 'off' },
+      { t: napStart + 2 * MIN, s: 'on' }, { t: napStart + 6 * MIN, s: 'off' }],
+  };
+  return { html: s._secNursery(s._config.sections[0]),
+    sess: s._nurserySessions(s._config.sections[0]) };
+})();
+
+check('the horseshoe draws a track plus at least the night arc',
+  (nurseryRendered.html.match(/stroke-dasharray/g) || []).length >= 2);
+/* Two arcs, deterministically — the rendered fixture cannot assert this
+   without depending on the hour the suite runs at. */
+check('two ring segments draw as two arcs on one track', (() => {
+  const svg = new SH()._ringSvg(98, 8,
+    [[0.5, 'var(--ps-deep)'], [0.25, 'var(--ps-light)']], null);
+  return (svg.match(/stroke-dasharray/g) || []).length === 3
+    && /var\(--ps-deep\)/.test(svg) && /var\(--ps-light\)/.test(svg);
+})());
+check('a zero-length segment is omitted rather than drawn as a dot', (() => {
+  const svg = new SH()._ringSvg(98, 8, [[0.5, 'var(--ps-deep)'], [0, 'var(--ps-light)']], null);
+  return (svg.match(/stroke-dasharray/g) || []).length === 2;
+})());
+check('the ring centre shows total sleep against a daily max',
+  /<b>\d+\.\d+h<\/b><small>of \d+h<\/small>/.test(nurseryRendered.html));
+check('the rendered night arc uses the deep colour',
+  /stroke="var\(--ps-deep\)"/.test(nurseryRendered.html));
+check('the timeline draws a bar per session',
+  (nurseryRendered.html.match(/<rect[^>]*height="(30|22)"/g) || []).length === 2);
+check('interventions are ticked onto the timeline',
+  (nurseryRendered.html.match(/fill="var\(--ps-warn\)"/g) || []).length >= 1);
+check('the settling entry is not ticked as an intervention', (() => {
+  const night = nurseryRendered.sess.find((x) => x.night);
+  return night.interventions === 1 && night.hadExit === true;
+})());
+check('the finished nap is counted and classified',
+  nurseryRendered.sess.filter((x) => !x.night).length === 1);
+check('the timeline is labelled and bounded',
+  /Last 24h/.test(nurseryRendered.html));
+
 check('a nursery section renders without a recorder answer', (() => {
   const s = new SH();
   s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', hatch: 'media_player.h', door: 'binary_sensor.d' }] });

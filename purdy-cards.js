@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.34.0";
+const PC_VERSION = "1.35.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8931,6 +8931,72 @@ Object.assign(PurdyShellCard.prototype, {
     return psNurserySessions(h[sec.hatch], h[sec.door], sec);
   },
 
+  /* The hypnogram's counterpart. The sock drew sleep stages; there are none
+     here, so this draws the shape of the day instead — where the sessions sat,
+     which were nights and which naps, and where someone went in.
+   *
+     Deliberately NOT folded together with `_hypnoSvg`: they are the same size
+     and both are bars on a time axis, but that one samples a state series and
+     this one plots intervals with point events on top. Merging them would mean
+     picking one model and changing how the other view reads — the same reason
+     the hypnogram and the sleep card's graph were left apart. */
+  _nurseryTimeline(sessions, loaded, err) {
+    const H = 46, PAD = 3;
+    const to = Date.now();
+    const from = to - 24 * 3600000;
+    const span = to - from;
+    const x = (t) => PAD + ((t - from) / span) * (100 - PAD * 2);
+
+    const shown = (sessions || []).filter((s) => s.to > from);
+    if (!loaded || err || !shown.length) {
+      const msg = err ? "Recorder did not answer"
+        : !loaded ? "Loading…" : "No sleep recorded in the last 24h";
+      return `<div class="ps-hyp">
+          <div class="ps-hypt"><span class="ps-lbl">Last 24h</span></div>
+          <div class="ps-nohist">${psEsc(msg)}</div>
+        </div>`;
+    }
+
+    let bars = "";
+    let ticks = "";
+    shown.forEach((s) => {
+      const a = x(Math.max(s.from, from));
+      const b = x(Math.min(s.to, to));
+      const w = Math.max(0.6, b - a);
+      const col = s.night ? "var(--ps-deep)" : "var(--ps-light)";
+      bars += `<rect x="${a.toFixed(2)}" y="${s.night ? 8 : 16}" width="${w.toFixed(2)}"
+        height="${s.night ? 30 : 22}" rx="2" fill="${col}" opacity="${s.active ? 0.95 : 0.8}"/>`;
+      /* Where someone went in, drawn over the bar it belongs to. */
+      s.events.forEach((t) => {
+        if (t < from) return;
+        ticks += `<rect x="${(x(t) - 0.35).toFixed(2)}" y="4" width="0.7" height="38"
+          rx="0.3" fill="var(--ps-warn)"/>`;
+      });
+    });
+
+    /* Six-hourly gridlines, so the eye can place a bar without an axis. */
+    let grid = "";
+    for (let i = 1; i < 4; i += 1) {
+      const gx = PAD + (i / 4) * (100 - PAD * 2);
+      grid += `<line x1="${gx.toFixed(2)}" y1="2" x2="${gx.toFixed(2)}" y2="44"
+        stroke="var(--ps-line)" stroke-width="0.25"/>`;
+    }
+
+    const ins = shown.reduce((a, s) => a + s.interventions, 0);
+    const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric" });
+    return `<div class="ps-hyp">
+        <div class="ps-hypt">
+          <span class="ps-lbl">Last 24h</span>
+          <span><i style="background:var(--ps-deep)"></i>night<i style="background:var(--ps-light);margin-left:9px"></i>nap</span>
+          <b>${ins} in</b>
+        </div>
+        <svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" aria-hidden="true">
+          ${grid}${bars}${ticks}
+        </svg>
+        <div class="ps-hypt"><span>${psEsc(fmt(from))}</span><span>${psEsc(fmt(to))}</span></div>
+      </div>`;
+  },
+
   _secNursery(sec) {
     const h = this._hass;
     const playing = pcState(h, sec.hatch) === "playing";
@@ -9017,23 +9083,46 @@ Object.assign(PurdyShellCard.prototype, {
       ? (nightsWithData.reduce((a, d) => a + d.night.interventions, 0) / nightsWithData.length)
       : null;
 
+    /* The horseshoe, carrying the same meaning the sock card's did: one ring,
+       two arcs, a total in the middle. Deep/light became night/naps — there
+       are no sleep stages here, but "how much has he slept today, and how
+       much of it was the night" is the question that ring was answering. */
+    const nightSession = live && live.night ? live : lastNight;
+    const nightMins = nightSession ? nightSession.minutes : 0;
+    const totalMins = nightMins + napMins;
+    const maxH = (sec.ring || {}).max_hours || 14;
+    const maxMins = maxH * 60;
+    /* No data and a genuine zero must not look the same. */
+    const noData = !loaded || (!lastNight && !live && !todayNaps.length);
+    const ring = this._ringSvg(98, 8, [
+      [nightMins / maxMins, "var(--ps-deep)"],
+      [napMins / maxMins, "var(--ps-light)"],
+    ], avgNight != null ? Math.min(1, avgNight / maxMins) : null);
+
     return `
       ${this._head(sec, `<span class="ps-chip ${chipCls}"><span class="ps-dot"></span>${psEsc(chipTxt)}</span>`)}
       <div class="ps-jtop">
+        <div class="ps-ring" style="width:98px;height:98px" data-info="${psEsc(sec.hatch)}">
+          ${ring}
+          <div class="ps-rv">${noData
+            ? `<b class="ps-nodata">—</b><small>no data</small>`
+            : `<b>${(totalMins / 60).toFixed(1)}h</b><small>of ${maxH}h</small>`}</div>
+        </div>
         <div class="ps-grow">
           <div class="ps-jn">${psEsc(sec.name || sec.title || "Nursery")}</div>
           <div class="ps-js">${psEsc(heroLabel)}<br>${psEsc(heroSub)}</div>
           <div class="ps-chips" style="margin-top:9px">
-            ${hero
-              ? `<span class="ps-chip deep">${psHM(hero.minutes)}</span>
-                 <span class="ps-chip ${hero.interventions ? "warn" : "good"}">${hero.interventions} intervention${hero.interventions === 1 ? "" : "s"}</span>`
-              : `<span class="ps-chip">${err ? "Recorder unavailable" : loaded ? "Nothing recorded" : "Loading…"}</span>`}
-            ${hero && hero.hadExit ? `<span class="ps-chip lt">Settled ${psHM(hero.settleMinutes)}</span>` : ""}
-            ${napMins ? `<span class="ps-chip lt">Naps ${psHM(napMins)}</span>` : ""}
+            ${noData
+              ? `<span class="ps-chip">${err ? "Recorder unavailable" : loaded ? "Nothing recorded" : "Loading…"}</span>`
+              : `<span class="ps-chip deep">Night ${nightMins ? psHM(nightMins) : "—"}</span>
+                 <span class="ps-chip lt">Naps ${napMins ? psHM(napMins) : "—"}</span>`}
+            ${hero && hero.hadExit ? `<span class="ps-chip">Settled ${psHM(hero.settleMinutes)}</span>` : ""}
+            ${hero ? `<span class="ps-chip ${hero.interventions ? "warn" : "good"}">${hero.interventions} in</span>` : ""}
             ${wifiOk ? "" : `<span class="ps-chip bad">Hatch offline</span>`}
           </div>
         </div>
       </div>
+      ${this._nurseryTimeline(sessions, loaded, err)}
       <div class="ps-xtra">
         <span class="ps-lbl" style="display:block;margin:2px 0 6px">Today</span>
         ${todayRows}
