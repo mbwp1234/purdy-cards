@@ -2767,7 +2767,10 @@ const nurseryRendered = (() => {
   const s = new SH();
   s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
     hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
-  s._hass = { states: { 'media_player.h': { state: 'playing', attributes: {} },
+  /* idle, matching its own history — the fixture used to claim the Hatch was
+     playing while its history ended in idle, so the chip took the "asleep with
+     no live session" branch and nothing about the awake state could be tested. */
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'off', attributes: {} } } };
   const HR = 3600000, MIN = 60000;
   const d = new Date(); d.setHours(20, 10, 0, 0);
@@ -2849,16 +2852,33 @@ check('no bar is drawn in the collapsed view', (() => {
   const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
   return !/ps-bar|class="bar"/.test(top);
 })());
-check('collapsed carries one line of live status', (() => {
+/* Time since the last nap decides whether the next one is due, so the CHIP
+   carries it. The door does not appear there at all: it is opened several
+   times a day for reasons nobody tracks, and as a chip state it displaced the
+   one number that matters when he is up. */
+check('the chip carries awake time and since, on the collapsed face', (() => {
   const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
-  return /ps-jstat/.test(top) && /(Awake |Down )/.test(top);
+  const chip = top.slice(top.indexOf('ps-chip'), top.indexOf('</span>', top.indexOf('ps-dot')) + 60);
+  return /Awake \d+h? ?\d*m? · since \d/.test(chip);
 })());
-/* Time since the last nap decides whether the next one is due, so it belongs
-   on the face. The chip cannot carry it: the chip reports live state, and with
-   the door open it says "Door open" and the wake window vanishes. */
-check('the wake window is on the collapsed face, not only behind the expand', (() => {
+check('the door is not a chip state', (() => {
+  const sh = new SH();
+  sh.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  sh._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'on', attributes: {} } } };
+  const nap = Date.now() - 3 * 3600000;
+  sh._nursery = {
+    'media_player.h': [{ t: nap, s: 'playing' }, { t: nap + 40 * 60000, s: 'idle' }],
+    'binary_sensor.d': [],
+  };
+  const html = sh._secNursery(sh._config.sections[0]);
+  return !/Door open/.test(html) && /Awake .*· since/.test(html);
+})());
+check('the status line does not repeat what the chip says', (() => {
   const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
-  return /Awake \d+h? ?\d*m? · since/.test(top);
+  const stat = top.slice(top.indexOf('ps-jstat'));
+  return !/Awake/.test(stat);
 })());
 
 /* No slot is drawn for a nap that has not happened — two short naps make a

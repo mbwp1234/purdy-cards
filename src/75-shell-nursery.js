@@ -530,7 +530,13 @@ Object.assign(PurdyShellCard.prototype, {
     const clock = (m) => (m == null ? "—"
       : `${((Math.floor(m / 60) % 12) || 12)}:${String(m % 60).padStart(2, "0")} ${m < 720 ? "AM" : "PM"}`);
 
-    /* Chip — what is true right now, never what the history says. */
+    /* Chip - what is true right now, never what the history says.
+     *
+     * The door deliberately does NOT appear here. It is opened several times a
+     * day for reasons nobody is tracking, and while it was a chip state it
+     * displaced the one number that matters when he is up: how long he has
+     * been awake and since when. That is what decides whether the next nap is
+     * due, so that is what the chip carries. */
     let chipCls = "";
     let chipTxt = "Awake";
     if (playing && live) {
@@ -538,10 +544,8 @@ Object.assign(PurdyShellCard.prototype, {
       chipTxt = live.hadExit ? `Asleep ${psHM(live.asleepMinutes)}` : `Settling ${psHM(live.minutes)}`;
     } else if (playing) {
       chipCls = "deep"; chipTxt = "Asleep";
-    } else if (doorOpen) {
-      chipCls = "warn"; chipTxt = "Door open";
     } else if (stats.wakeWindowMin != null) {
-      chipTxt = `Awake ${psHM(stats.wakeWindowMin)}`;
+      chipTxt = `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`;
     }
 
     /* The horseshoe is scaled to HIS OWN seven-day average, not a made-up
@@ -581,15 +585,8 @@ Object.assign(PurdyShellCard.prototype, {
 
     /* One line of live status, and nothing else. Predicted bedtime comes from
        his own average rather than a configured time. */
-    /* Time since the last nap ended belongs on the collapsed face, not behind
-       the expand: it is what decides whether the next nap is due. The chip
-       cannot carry it — the chip reports the live state, and on a day the door
-       happens to be open it says "Door open" and the wake window disappears. */
-    const statusL = live
-      ? `Down ${psClock(live.from)}`
-      : stats.wakeWindowMin != null
-        ? `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`
-        : "";
+    /* The chip carries awake-and-since now, so this line must not repeat it. */
+    const statusL = live ? `Down ${psClock(live.from)}` : "";
     const statusR = live
       ? (live.hadExit ? `settled ${psClock(live.settledAt)}` : "settling…")
       : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
