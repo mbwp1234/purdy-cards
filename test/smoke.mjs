@@ -2393,6 +2393,10 @@ check('a genuine gap longer than the merge window stays two sessions', (() => {
 /* The real thing: mounting the sensor produced ten transitions in 34 seconds,
    five of them under 300ms. Counted raw that is ten interventions. */
 check('mounting chatter does not become ten interventions', (() => {
+  /* The real recorded burst, against the real session it fell inside: the
+     Hatch ran 08:30:08 to 09:10:36, so these land 35 minutes in — past the
+     nap exit window, so they are read as visits rather than a put-down.
+     Ten raw opens, three interventions. */
   const door = [
     { t: NT(9, 5, 37), s: 'on' }, { t: NT(9, 5, 41), s: 'off' },
     { t: NT(9, 5, 42), s: 'on' }, { t: NT(9, 5, 43), s: 'off' },
@@ -2402,10 +2406,13 @@ check('mounting chatter does not become ten interventions', (() => {
     { t: NT(9, 6, 5), s: 'on' }, { t: NT(9, 6, 7), s: 'off' },
     { t: NT(9, 6, 10), s: 'on' }, { t: NT(9, 6, 10), s: 'off' },
     { t: NT(9, 6, 11), s: 'on' }, { t: NT(9, 6, 49), s: 'off' },
+    { t: NT(9, 6, 59), s: 'on' }, { t: NT(9, 9, 25), s: 'off' },
+    { t: NT(9, 9, 32), s: 'on' }, { t: NT(9, 10, 37), s: 'off' },
   ];
-  const s = nsess([{ t: NT(9, 0), s: 'playing' }, { t: NT(10, 0), s: 'idle' }], door,
-    { now: NT(10, 0) });
-  return s.length === 1 && s[0].interventions === 1;
+  const s = nsess(
+    [{ t: NT(8, 30, 8), s: 'playing' }, { t: NT(9, 10, 36), s: 'idle' }],
+    door, { now: NT(10, 0) });
+  return s.length === 1 && s[0].minutes === 40 && s[0].interventions === 3;
 })());
 
 check('a sub-second flicker alone is never an intervention', (() => {
@@ -2460,6 +2467,106 @@ check('a held-open door still counts while the session runs', (() => {
   const s = nsess([{ t: NT(20, 0), s: 'playing' }], [{ t: NT(21, 0), s: 'on' }],
     { now: NT(21, 5) });
   return s[0].interventions === 1 && s[0].active === true;
+})());
+
+/* The put-down. Someone must be IN the room to start the Hatch, so the first
+   door-open of a session is them leaving. Counting it made every session read
+   one intervention high — the sock's settling stir in a new costume. */
+check('walking out after the put-down is not an intervention', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(20, 4), s: 'on' }, { t: NT(20, 4, 20), s: 'off' }], { now: NT(23, 0) });
+  return s[0].interventions === 0 && s[0].hadExit === true;
+})());
+
+check('the door closing behind them is when he is actually alone', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(20, 12), s: 'on' }, { t: NT(20, 13), s: 'off' }], { now: NT(23, 0) });
+  return s[0].settleMinutes === 13 && s[0].minutes === 180;
+})());
+
+check('sitting with him a while at bedtime still reads as settling', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(20, 14, 30), s: 'on' }, { t: NT(20, 15), s: 'off' }], { now: NT(23, 0) });
+  return s[0].interventions === 0 && s[0].settleMinutes === 15;
+})());
+
+/* Naps here run as short as twenty minutes. A single 45-minute exit window was
+   longer than the whole nap, so every door open was swallowed as the put-down
+   and a short nap could never report an intervention at all. */
+check('a twenty-minute nap can still report an intervention', (() => {
+  const s = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 20), s: 'idle' }],
+    [{ t: NT(13, 2), s: 'on' }, { t: NT(13, 2, 30), s: 'off' },
+     { t: NT(13, 14), s: 'on' }, { t: NT(13, 15), s: 'off' }], { now: NT(14, 0) });
+  return s.length === 1 && s[0].night === false
+    && s[0].hadExit === true && s[0].interventions === 1;
+})());
+
+check('the nap exit window is far shorter than the night one', (() => {
+  const nap = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 40), s: 'idle' }],
+    [{ t: NT(13, 10), s: 'on' }, { t: NT(13, 11), s: 'off' }], { now: NT(14, 0) });
+  const night = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(20, 10), s: 'on' }, { t: NT(20, 11), s: 'off' }], { now: NT(23, 0) });
+  /* Same ten-minute offset: a real visit during a nap, the put-down at night. */
+  return nap[0].interventions === 1 && nap[0].hadExit === false
+    && night[0].interventions === 0 && night[0].hadExit === true;
+})());
+
+/* Judging the gap by time alone fused a nap, twelve minutes awake and the next
+   nap into one bogus session. Someone going in is the boundary. */
+check('two naps separated by getting him up stay two naps', (() => {
+  const s = nsess([
+    { t: NT(9, 0), s: 'playing' }, { t: NT(9, 25), s: 'idle' },
+    { t: NT(9, 37), s: 'playing' }, { t: NT(10, 5), s: 'idle' },
+  ], [{ t: NT(9, 26), s: 'on' }, { t: NT(9, 26, 30), s: 'off' }], { now: NT(11, 0) });
+  return s.length === 2;
+})());
+
+check('a Hatch that stops with nobody entering is one session, not two', (() => {
+  const s = nsess([
+    { t: NT(9, 0), s: 'playing' }, { t: NT(9, 25), s: 'idle' },
+    { t: NT(9, 28), s: 'playing' }, { t: NT(10, 5), s: 'idle' },
+  ], [], { now: NT(11, 0) });
+  return s.length === 1 && s[0].splits === 2;
+})());
+
+check('a nap rule can be tuned without disturbing the night rule', (() => {
+  const cfg = { nap: { exit_window_min: 2 }, now: NT(14, 0) };
+  const s = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 30), s: 'idle' }],
+    [{ t: NT(13, 4), s: 'on' }, { t: NT(13, 5), s: 'off' }], cfg);
+  return s[0].hadExit === false && s[0].interventions === 1;
+})());
+
+check('a first entry hours in is a real intervention, not a put-down exit', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 59), s: 'idle' }],
+    [{ t: NT(22, 30), s: 'on' }, { t: NT(22, 31), s: 'off' }], { now: NT(23, 59) });
+  return s[0].interventions === 1 && s[0].hadExit === false && s[0].settleMinutes === 0;
+})());
+
+check('the exit is dropped but everything after it still counts', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 59), s: 'idle' }],
+    [{ t: NT(20, 4, 30), s: 'on' }, { t: NT(20, 5), s: 'off' },
+     { t: NT(21, 30), s: 'on' }, { t: NT(21, 31), s: 'off' },
+     { t: NT(22, 45), s: 'on' }, { t: NT(22, 46), s: 'off' }], { now: NT(23, 59) });
+  return s[0].interventions === 2 && s[0].settleMinutes === 5;
+})());
+
+check('ducking straight back in is part of leaving, not a first intervention', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(20, 5), s: 'on' }, { t: NT(20, 5, 20), s: 'off' },
+     { t: NT(20, 5, 40), s: 'on' }, { t: NT(20, 6), s: 'off' }], { now: NT(23, 0) });
+  return s[0].interventions === 0;
+})());
+
+check('a session nobody entered has no exit and settles at bedtime', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }], [],
+    { now: NT(23, 0) });
+  return s[0].hadExit === false && s[0].settleMinutes === 0 && s[0].interventions === 0;
+})());
+
+check('duration still measures the whole Hatch span, not from settled', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(20, 30), s: 'on' }, { t: NT(20, 31), s: 'off' }], { now: NT(23, 0) });
+  return s[0].minutes === 180;
 })());
 
 check('no history at all yields no sessions rather than throwing',

@@ -43,7 +43,11 @@ function psClock(t) {
  *  - merge_gap_min   The Hatch can auto-off or be bumped mid-night. Two spans
  *                    separated by less than this are one night, not two. A
  *                    momentary `unavailable` closes a span too, so this also
- *                    absorbs connectivity blips.
+ *                    absorbs connectivity blips. **A gap containing a door
+ *                    event is never merged**, however short — that is someone
+ *                    getting him up, which is a real boundary. Without that,
+ *                    a 20-minute nap, twelve minutes awake and the next nap
+ *                    fused into one bogus 50-minute session.
  *  - min_session_min Drops a Hatch switched on and straight off again. A run
  *                    that is STILL going is never dropped, however short — that
  *                    is a session in progress, not a stray.
@@ -53,18 +57,60 @@ function psClock(t) {
  *  - door_merge_sec  Going in and coming out is one visit. Without this, every
  *                    intervention counts twice — in and out — which is the same
  *                    double-count the sock's 30-minute cooldown existed to stop.
+ *  - exit_window_min The put-down. Someone has to be IN the room to start the
+ *                    Hatch, so the first door-open of a session is almost
+ *                    always them leaving — and counting it made every session
+ *                    read one intervention high, which is the sock's settling
+ *                    stir wearing a different hat. It is not discarded: the
+ *                    door closing behind them is the moment he is actually
+ *                    alone, so it becomes `settledAt`, and the gap from bedtime
+ *                    to it is settling time. Bounded, because a first entry
+ *                    three hours in is a real intervention, not an exit.
  */
 function psNurserySessions(hatch, door, opts) {
   const o = opts || {};
-  const mergeGap = (o.merge_gap_min == null ? 15 : o.merge_gap_min) * 60000;
-  const minLen = (o.min_session_min == null ? 10 : o.min_session_min) * 60000;
   const doorMin = (o.door_min_sec == null ? 2 : o.door_min_sec) * 1000;
   const doorMerge = (o.door_merge_sec == null ? 60 : o.door_merge_sec) * 1000;
   const nightAfter = o.night_after_hour == null ? 18 : o.night_after_hour;
   const morning = o.morning_hour == null ? 5 : o.morning_hour;
   const now = o.now == null ? Date.now() : o.now;
 
-  /* 1 — raw playing spans */
+  /* A nap and a night are not the same event at different lengths — they need
+     their own numbers. Naps here run as short as twenty minutes, so a single
+     45-minute exit window was longer than the whole nap: every door open would
+     have been swallowed as the put-down and a short nap could never report an
+     intervention at all. One set of thresholds cannot serve both. */
+  const NAP = { min_session_min: 8, exit_window_min: 6, merge_gap_min: 5 };
+  const NIGHT = { min_session_min: 20, exit_window_min: 20, merge_gap_min: 20 };
+  const isNight = (t) => {
+    const hr = new Date(t).getHours();
+    return hr >= nightAfter || hr < morning;
+  };
+  /* Per-kind config wins, then a flat top-level override, then the default —
+     so `nap: {exit_window_min: 4}` tunes one without disturbing the other. */
+  const rule = (t, key) => {
+    const kind = isNight(t) ? "night" : "nap";
+    const scoped = o[kind] || {};
+    const base = kind === "night" ? NIGHT : NAP;
+    const v = scoped[key] != null ? scoped[key] : (o[key] != null ? o[key] : base[key]);
+    return v * 60000;
+  };
+
+  /* 1 — door opens first: the merge step needs them */
+  const opens = [];
+  let dOpen = null;
+  (door || []).forEach((p) => {
+    if (p.s === "on") {
+      if (dOpen == null) dOpen = p.t;
+    } else if (dOpen != null) {
+      opens.push({ from: dOpen, to: p.t });
+      dOpen = null;
+    }
+  });
+  if (dOpen != null) opens.push({ from: dOpen, to: now, held: true });
+  const realOpens = opens.filter((op) => op.held || op.to - op.from >= doorMin);
+
+  /* 2 — raw playing spans */
   const spans = [];
   let openAt = null;
   (hatch || []).forEach((p) => {
@@ -77,11 +123,17 @@ function psNurserySessions(hatch, door, opts) {
   });
   if (openAt != null) spans.push({ from: openAt, to: now, active: true });
 
-  /* 2 — merge across short gaps */
+  /* 3 — merge across short gaps, but NEVER across a door event. Someone going
+     in is the boundary: the Hatch stopping on its own with nobody entering is
+     one session interrupted, whereas a door open in the gap means he was got
+     up. Judging the gap by time alone fused a nap, twelve minutes awake and
+     the next nap into one session. */
   const merged = [];
   spans.forEach((s) => {
     const last = merged[merged.length - 1];
-    if (last && s.from - last.to < mergeGap) {
+    const gap = last ? s.from - last.to : Infinity;
+    const entered = last && realOpens.some((op) => op.from >= last.to && op.from <= s.from);
+    if (last && gap < rule(s.from, "merge_gap_min") && !entered) {
       last.to = s.to;
       if (s.active) last.active = true;
       last.splits = (last.splits || 1) + 1;
@@ -90,29 +142,27 @@ function psNurserySessions(hatch, door, opts) {
     }
   });
 
-  /* 3 — drop strays, never drop a run in progress */
-  const kept = merged.filter((s) => s.active || s.to - s.from >= minLen);
-
-  /* 4 — door opens as intervals, so a flicker can be measured and discarded */
-  const opens = [];
-  let dOpen = null;
-  (door || []).forEach((p) => {
-    if (p.s === "on") {
-      if (dOpen == null) dOpen = p.t;
-    } else if (dOpen != null) {
-      opens.push({ from: dOpen, to: p.t });
-      dOpen = null;
-    }
-  });
-  if (dOpen != null) opens.push({ from: dOpen, to: now, held: true });
+  /* 4 — drop strays, never drop a run in progress */
+  const kept = merged.filter((s) => s.active || s.to - s.from >= rule(s.from, "min_session_min"));
 
   /* 5 — attach interventions and classify */
   return kept.map((s) => {
+    const exitWindow = rule(s.from, "exit_window_min");
+    /* Every door event inside the session that survives the chatter filter,
+       before deciding which of them is the exit. */
+    const inside = realOpens.filter((op) => op.from >= s.from && op.from <= s.to);
+
+    /* The put-down exit: the first one, if it lands inside the window. Later
+       than that and nobody was settling him — it is a real intervention. */
+    const exit = inside.length && inside[0].from - s.from <= exitWindow ? inside[0] : null;
+    const settledAt = exit ? Math.min(exit.to, s.to) : s.from;
+
     const events = [];
-    let lastCounted = -Infinity;
-    opens.forEach((op) => {
-      if (op.from < s.from || op.from > s.to) return;
-      if (!op.held && op.to - op.from < doorMin) return;
+    /* Seeded from the exit so a straight-back-in within the merge window is
+       part of leaving, not a first intervention. */
+    let lastCounted = exit ? exit.from : -Infinity;
+    inside.forEach((op) => {
+      if (exit && op === exit) return;
       if (op.from - lastCounted < doorMerge) return;
       lastCounted = op.from;
       events.push(op.from);
@@ -136,6 +186,13 @@ function psNurserySessions(hatch, door, opts) {
       day: psDayKey(anchor),
       interventions: events.length,
       events,
+      /* Bedtime is when the Hatch started; settled is when the door shut
+         behind them. Duration deliberately still measures the whole Hatch
+         span — redefining it silently would make tonight incomparable with
+         every night already recorded. */
+      settledAt,
+      settleMinutes: Math.max(0, Math.round((settledAt - s.from) / 60000)),
+      hadExit: !!exit,
     };
   });
 }
@@ -251,7 +308,7 @@ Object.assign(PurdyShellCard.prototype, {
           <div class="ps-jr">
             <span class="ps-l">${s.night ? "Night" : "Nap"} · ${psClock(s.from)}</span>
             <span class="ps-v">${psHM(s.minutes)}${s.active ? " …" : ""}</span>
-            <span class="ps-flat">${s.interventions} in</span>
+            <span class="ps-flat">${s.hadExit ? `settled ${psHM(s.settleMinutes)} · ` : ""}${s.interventions} in</span>
           </div>`).join("")
       : `<div class="ps-jr"><span class="ps-l">Nothing yet today</span></div>`;
 
@@ -299,6 +356,7 @@ Object.assign(PurdyShellCard.prototype, {
               ? `<span class="ps-chip deep">${psHM(hero.minutes)}</span>
                  <span class="ps-chip ${hero.interventions ? "warn" : "good"}">${hero.interventions} intervention${hero.interventions === 1 ? "" : "s"}</span>`
               : `<span class="ps-chip">${err ? "Recorder unavailable" : loaded ? "Nothing recorded" : "Loading…"}</span>`}
+            ${hero && hero.hadExit ? `<span class="ps-chip lt">Settled ${psHM(hero.settleMinutes)}</span>` : ""}
             ${napMins ? `<span class="ps-chip lt">Naps ${psHM(napMins)}</span>` : ""}
             ${wifiOk ? "" : `<span class="ps-chip bad">Hatch offline</span>`}
           </div>
