@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.39.0";
+const PC_VERSION = "1.39.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8722,6 +8722,12 @@ function psNurserySessions(hatch, door, opts) {
   const o = opts || {};
   const doorMin = (o.door_min_sec == null ? 2 : o.door_min_sec) * 1000;
   const doorMerge = (o.door_merge_sec == null ? 60 : o.door_merge_sec) * 1000;
+  /* Going in to GET HIM is not an intervention. The door opens moments before
+     the sound machine stops — six seconds, on the 10:58 nap — so an event this
+     close to the end is the retrieval: the far more precise cousin of the
+     sock's hour-wide wake-for-the-day guess. Finished sessions only; a run
+     still going has no end to be near. */
+  const retrieval = (o.retrieval_window_min == null ? 5 : o.retrieval_window_min) * 60000;
   const nightAfter = o.night_after_hour == null ? 18 : o.night_after_hour;
   const morning = o.morning_hour == null ? 5 : o.morning_hour;
   const now = o.now == null ? Date.now() : o.now;
@@ -8850,6 +8856,7 @@ function psNurserySessions(hatch, door, opts) {
     let lastCounted = hadExit ? inside[i - 1].from : -Infinity;
     inside.slice(i).forEach((op) => {
       if (op.from - lastCounted < doorMerge) return;
+      if (!s.active && s.to - op.from <= retrieval) return;   /* picking him up */
       lastCounted = op.from;
       events.push(op.from);
     });
@@ -9127,7 +9134,7 @@ Object.assign(PurdyShellCard.prototype, {
               stroke="var(--ps-text)" stroke-width="0.8"/>
           </svg>
         </div>
-        <div class="ps-hypt"><span>6 AM</span><span>noon</span><span>6 PM</span></div>
+        <div class="ps-hypt"><span>12</span><span>6 AM</span><span>noon</span><span>6 PM</span><span>12</span></div>
       </div>`;
   },
 
@@ -9177,6 +9184,10 @@ Object.assign(PurdyShellCard.prototype, {
     const avg = stats.avgNightMin;
     const maxMins = avg ? Math.round(avg * 1.25) : ((sec.ring || {}).max_hours || 12) * 60;
     const nightMins = nightSession ? nightSession.asleepMinutes : 0;
+    /* A night that has not happened and a night of no sleep are different
+       facts. The ring read "0m LAST NIGHT" on a day with no recorded night at
+       all — the exact shape the sock taught us to avoid. */
+    const nightNoData = !loaded || !nightSession;
     const noData = !loaded || (!nightSession && !todayNaps.length);
     const ring = this._ringSvg(120, 9,
       [[nightMins / maxMins, "var(--ps-deep)"]],
@@ -9201,6 +9212,28 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }).join("");
 
+    /* Nap total against a BAND. There is no single number to miss by: under
+       `ok_min` is short, `ok_min`–`max_min` is fine, and the mark is the aim.
+       Drawn even at zero, because "none yet" against the band is exactly the
+       reading wanted at nine in the morning. */
+    const nb = sec.nap_band || {};
+    const bOk = nb.ok_min == null ? 120 : nb.ok_min;
+    const bAim = nb.aim_min == null ? 150 : nb.aim_min;
+    const bMax = nb.max_min == null ? 180 : nb.max_min;
+    const pct = (m) => Math.max(0, Math.min(100, (m / bMax) * 100));
+    const bandTxt = napMins >= bAim ? "on target" : napMins >= bOk ? "fine" : "short";
+    const band = `<div class="ps-band">
+        <div class="ps-bandt"><span>Naps today</span>
+          <b class="${napMins >= bOk ? "ps-good" : "ps-warnc"}">${psHM(napMins)} · ${bandTxt}</b></div>
+        <div class="ps-bandbar">
+          <div class="ps-bandok" style="left:${pct(bOk).toFixed(1)}%;right:0"></div>
+          <div class="ps-bandaim" style="left:${pct(bAim).toFixed(1)}%"></div>
+          <div class="ps-bandfill" style="width:${pct(napMins).toFixed(1)}%;
+            background:var(${napMins >= bOk ? "--ps-good" : "--ps-warn"})"></div>
+        </div>
+        <div class="ps-bandsc"><span>0</span><span>${psHM(bOk)}</span><span>${psHM(bAim)} aim</span><span>${psHM(bMax)}</span></div>
+      </div>`;
+
     /* One line of live status, and nothing else. Predicted bedtime comes from
        his own average rather than a configured time. */
     const statusL = live
@@ -9215,9 +9248,9 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-jtop">
         <div class="ps-ring" style="width:120px;height:120px" data-info="${psEsc(sec.hatch)}">
           ${ring}
-          <div class="ps-rv">${noData
-            ? `<b class="ps-nodata">—</b><small>no data</small>`
-            : `<b>${psHM(nightMins)}</b><small>${nightSession && nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
+          <div class="ps-rv">${nightNoData
+            ? `<b class="ps-nodata">—</b><small>${loaded ? "NO NIGHT YET" : "LOADING"}</small>`
+            : `<b>${psHM(nightMins)}</b><small>${nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
         </div>
         <div class="ps-grow">
           <span class="ps-lbl">Naps${napMins ? ` · ${psHM(napMins)}` : ""}</span>
@@ -9225,6 +9258,7 @@ Object.assign(PurdyShellCard.prototype, {
             noData ? (err ? "recorder unavailable" : loaded ? "none yet" : "loading…") : "none yet"}</span>`}</div>
         </div>
       </div>
+      ${noData ? "" : band}
       ${noData ? "" : `<div class="ps-jstat">
         <span>${psEsc(statusL)}</span>
         <span>${psEsc(statusR)}</span>
@@ -9696,6 +9730,28 @@ const PS_STYLES = `
       .ps-btn.armed { background: var(--ps-warn); color: #1a1a1a; }
 
       /* graph scrubber */
+      /* The small-ring modifier. It was used by the nursery nap rings from the
+         start and never defined, so a 36m nap rendered its number at the 2xl
+         step inside a 52px ring and spilled over the stroke. */
+      .ps-rv.sm b { font-size: var(--pc-fs-md); }
+      .ps-rv.sm small { font-size: var(--pc-fs-micro); margin-top: 1px; }
+
+      /* Nap total against a band, not a single goal: under 2h is short, 2-3h
+         is fine, and the mark is the 2.5h aim. */
+      .ps-band { display: flex; flex-direction: column; gap: 5px; }
+      .ps-bandt { display: flex; justify-content: space-between; align-items: baseline;
+                  font-size: var(--pc-fs-xs); color: var(--ps-muted);
+                  font-variant-numeric: tabular-nums; }
+      .ps-bandt b { color: var(--ps-text); font-weight: 650; }
+      .ps-bandbar { position: relative; height: 7px; border-radius: var(--pc-r-hair);
+                    background: var(--ps-track); overflow: hidden; }
+      .ps-bandok { position: absolute; top: 0; bottom: 0; background: rgba(129,201,149,.20); }
+      .ps-bandaim { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--ps-good); }
+      .ps-bandfill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: var(--pc-r-hair); }
+      .ps-bandsc { display: flex; justify-content: space-between;
+                   font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                   font-variant-numeric: tabular-nums; }
+
       /* nursery: nap rings and the one line of live status */
       .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
       .ps-napr { display: flex; flex-direction: column; align-items: center; gap: 3px; }

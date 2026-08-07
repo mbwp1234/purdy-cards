@@ -2409,10 +2409,12 @@ check('mounting chatter does not become ten interventions', (() => {
     { t: NT(9, 6, 59), s: 'on' }, { t: NT(9, 9, 25), s: 'off' },
     { t: NT(9, 9, 32), s: 'on' }, { t: NT(9, 10, 37), s: 'off' },
   ];
+  /* Ends well after the burst so the retrieval rule cannot also apply — this
+     test is about chatter alone. */
   const s = nsess(
-    [{ t: NT(8, 30, 8), s: 'playing' }, { t: NT(9, 10, 36), s: 'idle' }],
-    door, { now: NT(10, 0) });
-  return s.length === 1 && s[0].minutes === 40 && s[0].interventions === 3;
+    [{ t: NT(8, 30, 8), s: 'playing' }, { t: NT(10, 30), s: 'idle' }],
+    door, { now: NT(11, 0) });
+  return s.length === 1 && s[0].interventions === 3;
 })());
 
 check('a sub-second flicker alone is never an intervention', (() => {
@@ -2679,6 +2681,55 @@ check('a session nobody settled reports its whole span as asleep', (() => {
   return s.settleMinutes === 0 && s.asleepMinutes === 60 && s.minutes === 60;
 })());
 
+
+/* Going in to get him is not an intervention. On the real 10:58 nap the door
+   opened six seconds before the sound machine stopped. */
+check('the retrieval at the end of a nap is not an intervention', (() => {
+  const s = nsess(
+    [{ t: NT(10, 6, 40), s: 'playing' }, { t: NT(10, 58, 51), s: 'idle' }],
+    [{ t: NT(10, 7, 32), s: 'on' }, { t: NT(10, 8, 4), s: 'off' },
+     { t: NT(10, 22, 19), s: 'on' }, { t: NT(10, 22, 26), s: 'off' },
+     { t: NT(10, 58, 45), s: 'on' }, { t: NT(11, 2, 0), s: 'off' }],
+    { now: NT(12, 0) })[0];
+  return s.interventions === 0 && s.settledAt === NT(10, 22, 26);
+})());
+
+check('a genuine visit well before the end still counts', (() => {
+  const s = nsess(
+    [{ t: NT(10, 0), s: 'playing' }, { t: NT(12, 0), s: 'idle' }],
+    [{ t: NT(10, 2), s: 'on' }, { t: NT(10, 3), s: 'off' },
+     { t: NT(11, 0), s: 'on' }, { t: NT(11, 1), s: 'off' },
+     { t: NT(11, 58), s: 'on' }, { t: NT(12, 1), s: 'off' }],
+    { now: NT(12, 30) })[0];
+  /* 11:00 counts; 11:58 is the retrieval. */
+  return s.interventions === 1;
+})());
+
+check('a running session has no end, so nothing is treated as retrieval', (() => {
+  const s = nsess([{ t: NT(10, 0), s: 'playing' }],
+    [{ t: NT(10, 2), s: 'on' }, { t: NT(10, 3), s: 'off' },
+     { t: NT(11, 0), s: 'on' }, { t: NT(11, 1), s: 'off' }],
+    { now: NT(11, 2) })[0];
+  return s.active === true && s.interventions === 1;
+})());
+
+/* A night that has not happened and a night of no sleep are different facts. */
+check('no night recorded reads as no data, not as a zero-length night', (() => {
+  const sh = new SH();
+  sh.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  sh._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} } } };
+  const nap = Date.now() - 3 * 3600000;
+  sh._nursery = {
+    'media_player.h': [{ t: nap, s: 'playing' }, { t: nap + 40 * 60000, s: 'idle' }],
+    'binary_sensor.d': [],
+  };
+  const html = sh._secNursery(sh._config.sections[0]);
+  return /NO NIGHT YET/.test(html) && !/<b>0m<\/b><small>LAST NIGHT/.test(html);
+})());
+
+
 check('no history at all yields no sessions rather than throwing',
   nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
 
@@ -2737,6 +2788,17 @@ const nurseryRendered = (() => {
   return { html: s._secNursery(s._config.sections[0]),
     sess: s._nurserySessions(s._config.sections[0]) };
 })();
+
+check('the nap band draws a zone, an aim mark and a fill',
+  /ps-bandok/.test(nurseryRendered.html) && /ps-bandaim/.test(nurseryRendered.html)
+  && /ps-bandfill/.test(nurseryRendered.html));
+check('the band reads short / fine / on target rather than a number missed',
+  /(short|fine|on target)/.test(nurseryRendered.html) && !/short of/.test(nurseryRendered.html));
+check('the small ring modifier is actually defined',
+  /\.ps-rv\.sm b \{/.test(SH.styles));
+check('the day rail labels sit on their real hours',
+  /<span>12<\/span><span>6 AM<\/span><span>noon<\/span><span>6 PM<\/span><span>12<\/span>/
+    .test(nurseryRendered.html));
 
 check('the horseshoe draws a track plus at least the night arc',
   (nurseryRendered.html.match(/stroke-dasharray/g) || []).length >= 2);

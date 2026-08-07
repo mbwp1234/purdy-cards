@@ -426,6 +426,28 @@ const PS_STYLES = `
       .ps-btn.armed { background: var(--ps-warn); color: #1a1a1a; }
 
       /* graph scrubber */
+      /* The small-ring modifier. It was used by the nursery nap rings from the
+         start and never defined, so a 36m nap rendered its number at the 2xl
+         step inside a 52px ring and spilled over the stroke. */
+      .ps-rv.sm b { font-size: var(--pc-fs-md); }
+      .ps-rv.sm small { font-size: var(--pc-fs-micro); margin-top: 1px; }
+
+      /* Nap total against a band, not a single goal: under 2h is short, 2-3h
+         is fine, and the mark is the 2.5h aim. */
+      .ps-band { display: flex; flex-direction: column; gap: 5px; }
+      .ps-bandt { display: flex; justify-content: space-between; align-items: baseline;
+                  font-size: var(--pc-fs-xs); color: var(--ps-muted);
+                  font-variant-numeric: tabular-nums; }
+      .ps-bandt b { color: var(--ps-text); font-weight: 650; }
+      .ps-bandbar { position: relative; height: 7px; border-radius: var(--pc-r-hair);
+                    background: var(--ps-track); overflow: hidden; }
+      .ps-bandok { position: absolute; top: 0; bottom: 0; background: rgba(129,201,149,.20); }
+      .ps-bandaim { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--ps-good); }
+      .ps-bandfill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: var(--pc-r-hair); }
+      .ps-bandsc { display: flex; justify-content: space-between;
+                   font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                   font-variant-numeric: tabular-nums; }
+
       /* nursery: nap rings and the one line of live status */
       .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
       .ps-napr { display: flex; flex-direction: column; align-items: center; gap: 3px; }
