@@ -389,7 +389,9 @@ Object.assign(PurdyShellCard.prototype, {
     const h = this._hass;
     const th = h.states[sec.goal] || h.states[sec.thermostat];
     const cur = th && th.attributes.current_temperature;
-    const goal = th && th.attributes.temperature;
+    /* Reads the optimistic setpoint while one is in flight, so the number
+       moves on the tap instead of five seconds later. */
+    const goal = this._optGoal(sec.goal || sec.thermostat, th && th.attributes.temperature);
     const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
     const reason = th && th.attributes.hvac_action_reason;
     const rng = sec.ring || { min: 60, max: 80 };

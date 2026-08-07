@@ -86,6 +86,10 @@ class PurdyShellCard extends PcBaseCard {
     this._nursery = null;
     this._nurseryErr = null;
     this._nurseryTimer = null;
+    /* An optimistic setpoint, so the goal moves on the tap rather than on the
+       round trip. See _optGoal. */
+    this._goalOpt = null;
+    this._goalSend = null;
     this._events = [];
     this._sched = null;
     this._dragging = false;   // a volume drag must survive the state repaint
@@ -177,6 +181,8 @@ class PurdyShellCard extends PcBaseCard {
     if (this._historyTimer) clearInterval(this._historyTimer);
     if (this._eventTimer) clearInterval(this._eventTimer);
     if (this._nurseryTimer) clearInterval(this._nurseryTimer);
+    clearTimeout(this._goalSend);
+    this._goalSend = null;
     this._clock = null;
     this._historyTimer = null;
     this._eventTimer = null;
@@ -621,6 +627,18 @@ class PurdyShellCard extends PcBaseCard {
     }
   }
 
+  /* What the goal should READ as, which is not always what the thermostat
+     says yet. The optimistic value stands until the real state agrees with it
+     or until it expires — so a call that never lands shows the truth again
+     rather than leaving a number on screen that nothing backs. */
+  _optGoal(id, real) {
+    const o = this._goalOpt;
+    if (!o || o.id !== id) return real;
+    if (Date.now() > o.until) { this._goalOpt = null; return real; }
+    if (real != null && Math.abs(real - o.value) < 0.01) { this._goalOpt = null; return real; }
+    return o.value;
+  }
+
   /* Bind exactly once per element. _bind runs after every patch, but a patch
      leaves unchanged regions untouched — so without this guard each repaint
      would stack another copy of every listener onto the surviving nodes. */
@@ -912,8 +930,23 @@ class PurdyShellCard extends PcBaseCard {
         const id = sec.goal || sec.thermostat;
         const st = this._hass.states[id];
         if (!st || st.attributes.temperature == null) return;
-        const next = st.attributes.temperature + parseInt(el.dataset.step, 10) * (sec.step || 1);
-        this._hass.callService("climate", "set_temperature", { entity_id: id, temperature: next });
+        /* Step from what is ON SCREEN, not from what the thermostat last
+           said. GTTC takes several seconds to acknowledge a setpoint, and
+           reading the live attribute meant a second tap inside that window
+           recomputed the SAME number — so the goal could not be moved more
+           than one step at a time however fast you pressed. */
+        const base = this._optGoal(id, st.attributes.temperature);
+        const step = parseInt(el.dataset.step, 10) * (sec.step || 1);
+        const next = Math.round((base + step) * 10) / 10;
+        this._goalOpt = { id, value: next, until: Date.now() + 12000 };
+        this._last = null;
+        this._render();
+        /* One call for a burst of taps: three quick presses are one setpoint,
+           not three, and the last one wins. */
+        clearTimeout(this._goalSend);
+        this._goalSend = setTimeout(() => {
+          this._hass.callService("climate", "set_temperature", { entity_id: id, temperature: next });
+        }, 450);
       });
     });
 

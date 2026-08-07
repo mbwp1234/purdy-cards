@@ -3012,6 +3012,43 @@ check('a player with no app id is still judged on content type',
   isMusic({ attributes: { media_content_type: 'playlist' } }) &&
   !isMusic({ attributes: { media_content_type: 'tvshow' } }));
 
+/* ---- climate setpoint: optimistic, and steppable more than once ---- */
+/* GTTC takes several seconds to acknowledge a setpoint. The stepper read the
+   live attribute to compute the next value, so a second tap inside that window
+   recomputed the SAME number — the goal could not be moved more than one step
+   at a time however fast you pressed, and nothing moved on screen until the
+   round trip finished. */
+const climSrc = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+check('the stepper steps from what is on screen, not from the live attribute',
+  /const base = this\._optGoal\(id, st\.attributes\.temperature\)/.test(climSrc));
+check('a burst of taps sends one service call, not one per tap',
+  /clearTimeout\(this\._goalSend\)/.test(climSrc) && /this\._goalSend = setTimeout/.test(climSrc));
+check('the climate section renders the optimistic goal',
+  /_optGoal\(sec\.goal \|\| sec\.thermostat/.test(
+    fs.readFileSync(new URL('../src/71-shell-sections.js', import.meta.url), 'utf8')));
+check('the pending send is cleared on disconnect so it cannot fire detached',
+  /clearTimeout\(this\._goalSend\);\s*\n\s*this\._goalSend = null;/.test(climSrc));
+
+check('the optimistic goal stands, then yields to the real state', (() => {
+  const sh = new SH();
+  sh._goalOpt = { id: 'climate.g', value: 71, until: Date.now() + 10000 };
+  const held = sh._optGoal('climate.g', 68);          // thermostat still behind
+  const caught = sh._optGoal('climate.g', 71);        // real state agrees
+  return held === 71 && caught === 71 && sh._goalOpt === null;
+})());
+
+check('an optimistic goal that never lands expires rather than lying', (() => {
+  const sh = new SH();
+  sh._goalOpt = { id: 'climate.g', value: 71, until: Date.now() - 1 };
+  return sh._optGoal('climate.g', 68) === 68 && sh._goalOpt === null;
+})());
+
+check('an optimistic goal for one entity does not leak onto another', (() => {
+  const sh = new SH();
+  sh._goalOpt = { id: 'climate.g', value: 71, until: Date.now() + 10000 };
+  return sh._optGoal('climate.other', 68) === 68;
+})());
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
