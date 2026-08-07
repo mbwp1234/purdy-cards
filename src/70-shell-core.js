@@ -13,9 +13,13 @@
  * screen is an edit to `sections:`, never a code change.
  * ========================================================================== */
 
+/* setConfig rejects anything not on this list, so a new section type has to be
+   added HERE as well as to the renderer dispatch in _render. Miss this and the
+   card throws out of setConfig and Lovelace replaces the whole thing with
+   "Configuration error" — not just the one section. */
 const PS_SECTIONS = [
   "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
-  "nowplaying",
+  "nowplaying", "nursery",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so

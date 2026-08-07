@@ -2465,6 +2465,43 @@ check('a held-open door still counts while the session runs', (() => {
 check('no history at all yields no sessions rather than throwing',
   nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
 
+/* setConfig validates section types against a whitelist and THROWS on an
+   unknown one, which Lovelace turns into "Configuration error" for the entire
+   card — every other section goes down with it. Adding a renderer without
+   adding the type to PS_SECTIONS shipped exactly that in v1.31.0. */
+check('setConfig accepts a nursery section', (() => {
+  try {
+    new SH().setConfig({ sections: [{ type: 'nursery', key: 'j', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+    return true;
+  } catch (e) { return false; }
+})());
+
+check('setConfig still rejects a genuinely unknown section type', (() => {
+  try { new SH().setConfig({ sections: [{ type: 'nonsense', key: 'x' }] }); return false; }
+  catch (e) { return /unknown section type/.test(e.message); }
+})());
+
+/* The structural guard: the accept-list and the renderer dispatch must name
+   the same set. Either half alone is a card that throws. */
+check('every accepted section type has a renderer, and vice versa', (() => {
+  const core = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+  const listed = (/const PS_SECTIONS = \[([\s\S]*?)\];/.exec(core) || [])[1] || '';
+  const accepted = (listed.match(/"([a-z]+)"/g) || []).map((s) => s.replace(/"/g, '')).sort();
+  const dispatch = (/const body = \{([\s\S]*?)\}\[sec\.type\]\(\);/.exec(core) || [])[1] || '';
+  const rendered = (dispatch.match(/^\s*([a-z]+):/gm) || [])
+    .map((s) => s.trim().replace(':', '')).sort();
+  return accepted.length > 0 && accepted.join(',') === rendered.join(',');
+})());
+
+check('a nursery section renders without a recorder answer', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} }, 'binary_sensor.d': { state: 'off', attributes: {} } } };
+  const html = s._secNursery(s._config.sections[0]);
+  /* Loading and "he has never slept" must not read the same. */
+  return /Loading/.test(html) && !/Nothing recorded/.test(html);
+})());
+
 check('the nursery fetch sends end_time, like every other history call',
   /history\/period\/\$\{start\}[\s\S]{0,200}end_time=/.test(
     fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8')));

@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.31.0";
+const PC_VERSION = "1.31.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -5121,9 +5121,13 @@ class PurdyMusicCard extends PcBaseCard {
  * screen is an edit to `sections:`, never a code change.
  * ========================================================================== */
 
+/* setConfig rejects anything not on this list, so a new section type has to be
+   added HERE as well as to the renderer dispatch in _render. Miss this and the
+   card throws out of setConfig and Lovelace replaces the whole thing with
+   "Configuration error" — not just the one section. */
 const PS_SECTIONS = [
   "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
-  "nowplaying",
+  "nowplaying", "nursery",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
