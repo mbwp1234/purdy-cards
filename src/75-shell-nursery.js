@@ -578,17 +578,22 @@ Object.assign(PurdyShellCard.prototype, {
     /* Nap rings. No slot is drawn for a nap that has not happened — two short
        naps make a third possible, but only going down a third time makes it
        real, and the card has no business claiming more than it can see. */
-    const ringPx = todayNaps.length > 2 ? 44 : 52;
-    const stroke = todayNaps.length > 2 ? 4.5 : 5.5;
+    /* 52px was sized against "36m". An hour-crossing nap reads "1h19m" and
+       needs the room; there is width for three at 58 in the row beside the
+       night ring, so only a fourth nap forces the smaller ring. */
+    const ringPx = todayNaps.length > 3 ? 46 : 58;
+    const stroke = todayNaps.length > 3 ? 4.5 : 5.5;
     const napRings = todayNaps.map((s) => {
       const short = !s.active && s.asleepMinutes < catnapUnder;
       const col = short ? "var(--ps-warn)" : "var(--ps-light)";
       const sub = s.active ? "now" : psClock(s.from);
       const subCol = s.active ? "var(--ps-light)" : short ? "var(--ps-warn)" : "var(--ps-dim)";
+      const val = psHM(s.asleepMinutes).replace(" ", "");
+      const fit = val.length >= 5 ? " sm5" : val.length === 4 ? " sm4" : "";
       return `<div class="ps-napr">
           <div class="ps-ring" style="width:${ringPx}px;height:${ringPx}px" data-info="${psEsc(sec.hatch)}">
             ${this._ringSvg(ringPx, stroke, [[s.asleepMinutes / napTarget, col]], null)}
-            <div class="ps-rv sm"><b>${psHM(s.asleepMinutes).replace(" ", "")}</b></div>
+            <div class="ps-rv sm${fit}"><b>${psEsc(val)}</b></div>
           </div>
           <span style="color:${subCol}">${psEsc(sub)}</span>
         </div>`;

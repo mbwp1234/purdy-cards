@@ -2831,6 +2831,41 @@ const nurseryRendered = (() => {
 
 check('the small ring modifier is actually defined',
   /\.ps-rv\.sm b \{/.test(SH.styles));
+/* Same lesson, one layer down: the length-fitted steps are also asked for by
+   class name, so a missing rule is again a silent overhang. */
+check('the length-fitted ring steps are defined',
+  /\.ps-rv\.sm4 b \{/.test(SH.styles) && /\.ps-rv\.sm5 b \{/.test(SH.styles));
+/* Its own fixture, because the shared one's only nap is 44m — three characters,
+   which is exactly the case that never overhung. A vacuous pass here would be
+   worse than no test. */
+check('a nap reading that crosses the hour asks for a smaller step', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} } } };
+  const MIN = 60000;
+  /* Two naps, one either side of the hour: 44m and 1h19m — the pair on the
+     screenshot that showed the overhang. */
+  const a = Date.now() - 5 * 60 * MIN, b = Date.now() - 2.5 * 60 * MIN;
+  s._nursery = {
+    'media_player.h': [{ t: a, s: 'playing' }, { t: a + 50 * MIN, s: 'idle' },
+      { t: b, s: 'playing' }, { t: b + 85 * MIN, s: 'idle' }],
+    'binary_sensor.d': [
+      { t: a + 2 * MIN, s: 'on' }, { t: a + 6 * MIN, s: 'off' },
+      { t: b + 2 * MIN, s: 'on' }, { t: b + 6 * MIN, s: 'off' }],
+  };
+  const html = s._secNursery(s._config.sections[0]);
+  const rv = html.match(/class="ps-rv sm[^"]*"><b>[^<]+</g) || [];
+  if (rv.length !== 2) return false;
+  const sawLong = rv.some((m) => m.slice(m.indexOf('<b>') + 3, -1).length >= 5);
+  return sawLong && rv.every((m) => {
+    const val = m.slice(m.indexOf('<b>') + 3, -1);
+    const cls = m.slice(m.indexOf('sm'), m.indexOf('"><b>'));
+    return val.length >= 5 ? cls === 'sm sm5'
+      : val.length === 4 ? cls === 'sm sm4' : cls === 'sm';
+  });
+})());
 
 /* Both rails are plots with an axis, so both sit in a box — a bare line on the
    card ground does not read as one. */

@@ -431,6 +431,13 @@ const PS_STYLES = `
          step inside a 52px ring and spilled over the stroke. */
       .ps-rv.sm b { font-size: var(--pc-fs-md); }
       .ps-rv.sm small { font-size: var(--pc-fs-micro); margin-top: 1px; }
+      /* And one step is not enough, because the string is not one width: "36m"
+         and "1h19m" differ by two thirds and the ring does not. A nap that
+         crossed the hour drew five characters at the md step and overhung the
+         stroke on both sides. The step follows the reading's LENGTH, not the
+         ring's size. */
+      .ps-rv.sm4 b { font-size: var(--pc-fs-sm); }
+      .ps-rv.sm5 b { font-size: var(--pc-fs-xs); letter-spacing: -.04em; }
 
       /* Both nursery rails sit in a box, like every other panel on the card.
          Without it a rail reads as a bare line floating on the ground rather
