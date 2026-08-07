@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.35.0";
+const PC_VERSION = "1.36.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8727,8 +8727,8 @@ function psNurserySessions(hatch, door, opts) {
      45-minute exit window was longer than the whole nap: every door open would
      have been swallowed as the put-down and a short nap could never report an
      intervention at all. One set of thresholds cannot serve both. */
-  const NAP = { min_session_min: 8, exit_window_min: 15, merge_gap_min: 5, settled_quiet_min: 5 };
-  const NIGHT = { min_session_min: 20, exit_window_min: 30, merge_gap_min: 20, settled_quiet_min: 8 };
+  const NAP = { min_session_min: 8, exit_window_min: 25, merge_gap_min: 5 };
+  const NIGHT = { min_session_min: 20, exit_window_min: 30, merge_gap_min: 20 };
   const isNight = (t) => {
     const hr = new Date(t).getHours();
     return hr >= nightAfter || hr < morning;
@@ -8803,22 +8803,21 @@ function psNurserySessions(hatch, door, opts) {
        before deciding which of them is the exit. */
     const inside = realOpens.filter((op) => op.from >= s.from && op.from <= s.to);
 
-    /* The put-down.
+    /* The put-down: everything up to the LAST door event within the window is
+     * settling, and its close is when he was left alone.
      *
-     * "The first door-open of the session is them leaving" is wrong, and a
-     * live settle proved it: the door was already open when the Hatch went on,
-     * closed at 10:07:31 with her INSIDE, and she left minutes later. Taking
-     * the first open banked her arrival as the exit and would have counted her
-     * actual departure as intervention #1 — the same off-by-one as before,
-     * pointing the other way.
+     * Two earlier rules failed against real settles. "The first door-open is
+     * them leaving" banked her ARRIVAL as the exit — the door was already open
+     * when the Hatch went on and closed at 10:07:31 with her inside. Then
+     * "settling ends at the first close followed by quiet" failed too: she sat
+     * with him for fourteen silent minutes, and from door events alone that
+     * quiet is indistinguishable from the quiet after she leaves. Only what
+     * happens NEXT tells them apart, so no forward-looking gap rule works.
      *
-     * The discriminator is not which one is first, it is the door closing and
-     * STAYING closed. Coming in is followed by a few minutes of her being in
-     * there; leaving is followed by the rest of the nap. So walk the events
-     * from the start of the session and keep treating them as settling while
-     * each next one arrives before the quiet threshold. The window is only a
-     * backstop now — the quiet gap does the real work. */
-    const quiet = rule(s.from, "settled_quiet_min");
+     * The window swallows an intervention that lands inside it, and that is
+     * deliberate rather than tolerated: an early intervention means he had not
+     * started the nap yet, so it belongs to settling. Settling here typically
+     * runs 10-20 minutes, hence the generous default. */
     let settledAt = s.from;
     let hadExit = false;
     let i = 0;
@@ -8826,8 +8825,6 @@ function psNurserySessions(hatch, door, opts) {
       settledAt = Math.min(inside[i].to, s.to);
       hadExit = true;
       i += 1;
-      const next = inside[i];
-      if (!next || next.from - settledAt >= quiet) break;
     }
 
     const events = [];
@@ -8940,60 +8937,62 @@ Object.assign(PurdyShellCard.prototype, {
      this one plots intervals with point events on top. Merging them would mean
      picking one model and changing how the other view reads — the same reason
      the hypnogram and the sleep card's graph were left apart. */
-  _nurseryTimeline(sessions, loaded, err) {
-    const H = 46, PAD = 3;
-    const to = Date.now();
-    const from = to - 24 * 3600000;
-    const span = to - from;
-    const x = (t) => PAD + ((t - from) / span) * (100 - PAD * 2);
-
-    const shown = (sessions || []).filter((s) => s.to > from);
-    if (!loaded || err || !shown.length) {
+  _nurseryTimeline(night, loaded, err) {
+    const PAD = 3;
+    /* The night only. Naps are two twenty-minute bars in a 24-hour axis —
+       slivers carrying no shape, and their numbers are already in the rows
+       below. The old sock card drew one night for the same reason. */
+    if (!loaded || err || !night) {
       const msg = err ? "Recorder did not answer"
-        : !loaded ? "Loading…" : "No sleep recorded in the last 24h";
+        : !loaded ? "Loading…" : "No night recorded yet";
       return `<div class="ps-hyp">
-          <div class="ps-hypt"><span class="ps-lbl">Last 24h</span></div>
+          <div class="ps-hypt"><span class="ps-lbl">Night</span></div>
           <div class="ps-nohist">${psEsc(msg)}</div>
         </div>`;
     }
 
-    let bars = "";
+    const from = night.from;
+    const to = night.to;
+    const span = Math.max(60000, to - from);
+    const x = (t) => PAD + ((t - from) / span) * (100 - PAD * 2);
+
+    /* Two segments, because they mean different things: the settling phase
+       before he was left alone, then the night proper. */
+    const sx = x(night.settledAt);
+    let bars = `<rect x="${PAD}" y="12" width="${Math.max(0.4, sx - PAD).toFixed(2)}"
+        height="22" rx="2" fill="var(--ps-light)" opacity="0.55"/>
+      <rect x="${sx.toFixed(2)}" y="8" width="${Math.max(0.4, (100 - PAD) - sx).toFixed(2)}"
+        height="30" rx="2" fill="var(--ps-deep)" opacity="${night.active ? 0.95 : 0.8}"/>`;
+
     let ticks = "";
-    shown.forEach((s) => {
-      const a = x(Math.max(s.from, from));
-      const b = x(Math.min(s.to, to));
-      const w = Math.max(0.6, b - a);
-      const col = s.night ? "var(--ps-deep)" : "var(--ps-light)";
-      bars += `<rect x="${a.toFixed(2)}" y="${s.night ? 8 : 16}" width="${w.toFixed(2)}"
-        height="${s.night ? 30 : 22}" rx="2" fill="${col}" opacity="${s.active ? 0.95 : 0.8}"/>`;
-      /* Where someone went in, drawn over the bar it belongs to. */
-      s.events.forEach((t) => {
-        if (t < from) return;
-        ticks += `<rect x="${(x(t) - 0.35).toFixed(2)}" y="4" width="0.7" height="38"
-          rx="0.3" fill="var(--ps-warn)"/>`;
-      });
+    night.events.forEach((t) => {
+      ticks += `<rect x="${(x(t) - 0.35).toFixed(2)}" y="4" width="0.7" height="38"
+        rx="0.3" fill="var(--ps-warn)"/>`;
     });
 
-    /* Six-hourly gridlines, so the eye can place a bar without an axis. */
+    /* An hourly gridline, so the eye can place a tick without an axis. */
     let grid = "";
-    for (let i = 1; i < 4; i += 1) {
-      const gx = PAD + (i / 4) * (100 - PAD * 2);
-      grid += `<line x1="${gx.toFixed(2)}" y1="2" x2="${gx.toFixed(2)}" y2="44"
-        stroke="var(--ps-line)" stroke-width="0.25"/>`;
+    const hours = span / 3600000;
+    if (hours >= 2) {
+      const step = hours > 8 ? 2 : 1;
+      for (let h = step; h < hours; h += step) {
+        const gx = x(from + h * 3600000);
+        grid += `<line x1="${gx.toFixed(2)}" y1="2" x2="${gx.toFixed(2)}" y2="44"
+          stroke="var(--ps-line)" stroke-width="0.25"/>`;
+      }
     }
 
-    const ins = shown.reduce((a, s) => a + s.interventions, 0);
-    const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric" });
+    const fmt = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     return `<div class="ps-hyp">
         <div class="ps-hypt">
-          <span class="ps-lbl">Last 24h</span>
-          <span><i style="background:var(--ps-deep)"></i>night<i style="background:var(--ps-light);margin-left:9px"></i>nap</span>
-          <b>${ins} in</b>
+          <span class="ps-lbl">${night.active ? "Tonight" : "Last night"}</span>
+          <span><i style="background:var(--ps-light);opacity:.55"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep</span>
+          <b>${night.interventions} in</b>
         </div>
-        <svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <svg viewBox="0 0 100 46" preserveAspectRatio="none" aria-hidden="true">
           ${grid}${bars}${ticks}
         </svg>
-        <div class="ps-hypt"><span>${psEsc(fmt(from))}</span><span>${psEsc(fmt(to))}</span></div>
+        <div class="ps-hypt"><span>${psEsc(fmt(from))}</span><span>${psEsc(night.active ? "now" : fmt(to))}</span></div>
       </div>`;
   },
 
@@ -9122,7 +9121,7 @@ Object.assign(PurdyShellCard.prototype, {
           </div>
         </div>
       </div>
-      ${this._nurseryTimeline(sessions, loaded, err)}
+      ${this._nurseryTimeline(nightSession, loaded, err)}
       <div class="ps-xtra">
         <span class="ps-lbl" style="display:block;margin:2px 0 6px">Today</span>
         ${todayRows}

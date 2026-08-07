@@ -2493,21 +2493,32 @@ check('sitting with him a while at bedtime still reads as settling', (() => {
 /* Naps here run as short as twenty minutes. A single 45-minute exit window was
    longer than the whole nap, so every door open was swallowed as the put-down
    and a short nap could never report an intervention at all. */
-check('a twenty-minute nap can still report an intervention', (() => {
+/* An intervention early in a nap means he had not started the nap yet, so it
+   belongs to settling — the window swallowing it is the intended behaviour,
+   not a tolerated cost. A nap only reports interventions once he is properly
+   down. */
+check('an early nap visit counts as settling, not an intervention', (() => {
   const s = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 20), s: 'idle' }],
     [{ t: NT(13, 2), s: 'on' }, { t: NT(13, 2, 30), s: 'off' },
      { t: NT(13, 14), s: 'on' }, { t: NT(13, 15), s: 'off' }], { now: NT(14, 0) });
   return s.length === 1 && s[0].night === false
-    && s[0].hadExit === true && s[0].interventions === 1;
+    && s[0].hadExit === true && s[0].interventions === 0
+    && s[0].settledAt === NT(13, 15);
 })());
 
-check('the nap settling window is tighter than the night one', (() => {
-  /* Same twenty-minute offset with no prior door activity: past the nap
-     backstop, still inside the night one. */
-  const nap = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 50), s: 'idle' }],
-    [{ t: NT(13, 20), s: 'on' }, { t: NT(13, 21), s: 'off' }], { now: NT(14, 0) });
+check('a long nap still reports a visit past the window', (() => {
+  const s = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(15, 0), s: 'idle' }],
+    [{ t: NT(13, 6), s: 'on' }, { t: NT(13, 7), s: 'off' },
+     { t: NT(14, 10), s: 'on' }, { t: NT(14, 11), s: 'off' }], { now: NT(15, 0) });
+  return s[0].interventions === 1 && s[0].settledAt === NT(13, 7);
+})());
+
+check('the nap window is tighter than the night one', (() => {
+  /* Same 28-minute offset: past the nap window, still inside the night one. */
+  const nap = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(15, 0), s: 'idle' }],
+    [{ t: NT(13, 28), s: 'on' }, { t: NT(13, 29), s: 'off' }], { now: NT(15, 0) });
   const night = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
-    [{ t: NT(20, 20), s: 'on' }, { t: NT(20, 21), s: 'off' }], { now: NT(23, 0) });
+    [{ t: NT(20, 28), s: 'on' }, { t: NT(20, 29), s: 'off' }], { now: NT(23, 0) });
   return nap[0].interventions === 1 && nap[0].hadExit === false
     && night[0].interventions === 0 && night[0].hadExit === true;
 })());
@@ -2527,13 +2538,15 @@ check('a settle where the door closes with her still inside', (() => {
     && s[0].settledAt === NT(10, 12, 30);
 })());
 
-check('a visit well after the quiet gap still counts', (() => {
-  const s = nsess([{ t: NT(10, 6, 40), s: 'playing' }, { t: NT(10, 50), s: 'idle' }], [
+check('a visit well past the window still counts', (() => {
+  const s = nsess([{ t: NT(10, 6, 40), s: 'playing' }, { t: NT(11, 30), s: 'idle' }], [
     { t: NT(10, 7, 32), s: 'on' }, { t: NT(10, 8, 4), s: 'off' },
     { t: NT(10, 12, 0), s: 'on' }, { t: NT(10, 12, 30), s: 'off' },
-    { t: NT(10, 31, 0), s: 'on' }, { t: NT(10, 32, 0), s: 'off' },
-  ], { now: NT(10, 50) });
-  return s[0].interventions === 1;
+    { t: NT(10, 45, 0), s: 'on' }, { t: NT(10, 46, 0), s: 'off' },
+  ], { now: NT(11, 30) });
+  /* Settling ran to 10:12:30 — the last event inside the window — and the
+     10:45 visit is a real one. */
+  return s[0].interventions === 1 && s[0].settledAt === NT(10, 12, 30);
 })());
 
 check('ducking back in before the quiet gap is still settling', (() => {
@@ -2630,6 +2643,20 @@ check('an unparseable ignore_before hides nothing rather than everything', (() =
   return s.length === 1;
 })());
 
+
+/* The live settle, end to end, exactly as recorded on 2026-08-07. This is the
+   sequence that broke two earlier rules, so it is pinned. */
+check('the real 2026-08-07 settle reads as 16m and zero interventions', (() => {
+  const s = nsess(
+    [{ t: NT(10, 0), s: 'idle' }, { t: NT(10, 6, 40), s: 'playing' }, { t: NT(11, 40), s: 'idle' }],
+    [{ t: NT(9, 56, 27), s: 'on' }, { t: NT(10, 7, 31), s: 'off' },
+     { t: NT(10, 7, 32), s: 'on' }, { t: NT(10, 8, 4), s: 'off' },
+     { t: NT(10, 22, 19), s: 'on' }, { t: NT(10, 22, 26), s: 'off' }],
+    { now: NT(11, 40) });
+  return s.length === 1 && s[0].interventions === 0
+    && s[0].settledAt === NT(10, 22, 26) && s[0].settleMinutes === 16;
+})());
+
 check('no history at all yields no sessions rather than throwing',
   nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
 
@@ -2717,8 +2744,12 @@ check('the settling entry is not ticked as an intervention', (() => {
 })());
 check('the finished nap is counted and classified',
   nurseryRendered.sess.filter((x) => !x.night).length === 1);
-check('the timeline is labelled and bounded',
-  /Last 24h/.test(nurseryRendered.html));
+check('the timeline is night-scoped and labelled',
+  /Last night|Tonight/.test(nurseryRendered.html) && !/Last 24h/.test(nurseryRendered.html));
+check('the timeline separates settling from asleep',
+  /settling/.test(nurseryRendered.html) && /asleep/.test(nurseryRendered.html));
+check('naps are not drawn on the night graph',
+  (nurseryRendered.html.match(/<rect[^>]*height="(30|22)"/g) || []).length === 2);
 
 check('a nursery section renders without a recorder answer', (() => {
   const s = new SH();
