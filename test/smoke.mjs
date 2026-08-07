@@ -2569,6 +2569,34 @@ check('duration still measures the whole Hatch span, not from settled', (() => {
   return s[0].minutes === 180;
 })());
 
+/* Commissioning noise: setting the sensor up, and switching the sound machine
+   on to see what it reports, both look exactly like sleep. */
+check('ignore_before drops the commissioning session', (() => {
+  const s = nsess([{ t: NT(8, 30), s: 'playing' }, { t: NT(9, 10), s: 'idle' },
+    { t: NT(13, 0), s: 'playing' }, { t: NT(14, 0), s: 'idle' }], [],
+    { now: NT(15, 0), ignore_before: NT(12, 0) });
+  return s.length === 1 && s[0].from === NT(13, 0);
+})());
+
+check('ignore_before accepts an ISO string as well as epoch ms', (() => {
+  const iso = new Date(NT(12, 0)).toISOString();
+  const s = nsess([{ t: NT(8, 30), s: 'playing' }, { t: NT(9, 10), s: 'idle' },
+    { t: NT(13, 0), s: 'playing' }, { t: NT(14, 0), s: 'idle' }], [],
+    { now: NT(15, 0), ignore_before: iso });
+  return s.length === 1;
+})());
+
+check('a session in progress survives the cut — it is happening now', (() => {
+  const s = nsess([{ t: NT(8, 30), s: 'playing' }], [], { now: NT(9, 0), ignore_before: NT(12, 0) });
+  return s.length === 1 && s[0].active === true;
+})());
+
+check('an unparseable ignore_before hides nothing rather than everything', (() => {
+  const s = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(14, 0), s: 'idle' }], [],
+    { now: NT(15, 0), ignore_before: 'not a date' });
+  return s.length === 1;
+})());
+
 check('no history at all yields no sessions rather than throwing',
   nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
 

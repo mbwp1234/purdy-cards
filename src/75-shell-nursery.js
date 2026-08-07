@@ -75,6 +75,19 @@ function psNurserySessions(hatch, door, opts) {
   const morning = o.morning_hour == null ? 5 : o.morning_hour;
   const now = o.now == null ? Date.now() : o.now;
 
+  /* Setting a contact sensor up, and switching the sound machine on to see
+     what it reports, both look exactly like sleep to this function — the
+     commissioning session read as a 40-minute nap with three interventions
+     and would have skewed a week of averages. `ignore_before` draws a line
+     under that without purging the recorder, which is destructive and takes
+     the real data with it. Useful again any time a sensor is re-sited.
+     An unparseable value is ignored rather than silently hiding everything. */
+  const cut = o.ignore_before == null ? null : (() => {
+    const v = typeof o.ignore_before === "number"
+      ? o.ignore_before : Date.parse(o.ignore_before);
+    return Number.isFinite(v) ? v : null;
+  })();
+
   /* A nap and a night are not the same event at different lengths — they need
      their own numbers. Naps here run as short as twenty minutes, so a single
      45-minute exit window was longer than the whole nap: every door open would
@@ -142,8 +155,12 @@ function psNurserySessions(hatch, door, opts) {
     }
   });
 
-  /* 4 — drop strays, never drop a run in progress */
-  const kept = merged.filter((s) => s.active || s.to - s.from >= rule(s.from, "min_session_min"));
+  /* 4 — drop strays, never drop a run in progress; then anything before the
+     commissioning cut. A session STILL RUNNING is kept regardless — it is
+     happening now, whatever the cut says about history. */
+  const kept = merged
+    .filter((s) => s.active || s.to - s.from >= rule(s.from, "min_session_min"))
+    .filter((s) => s.active || cut == null || s.from >= cut);
 
   /* 5 — attach interventions and classify */
   return kept.map((s) => {
