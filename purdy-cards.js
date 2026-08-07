@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.41.1";
+const PC_VERSION = "1.42.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8752,6 +8752,10 @@ function psClock(t) {
  *                    alone, so it becomes `settledAt`, and the gap from bedtime
  *                    to it is settling time. Bounded, because a first entry
  *                    three hours in is a real intervention, not an exit.
+ *                    The window runs from the LAST visit, not from the session
+ *                    start — a put-down is several trips, not one exit.
+ *  - settle_max_min  The brake on that chain. Without a ceiling, a visit every
+ *                    twenty minutes would make a whole night read as settling.
  */
 function psNurserySessions(hatch, door, opts) {
   const o = opts || {};
@@ -8785,8 +8789,10 @@ function psNurserySessions(hatch, door, opts) {
      45-minute exit window was longer than the whole nap: every door open would
      have been swallowed as the put-down and a short nap could never report an
      intervention at all. One set of thresholds cannot serve both. */
-  const NAP = { min_session_min: 8, exit_window_min: 25, merge_gap_min: 5 };
-  const NIGHT = { min_session_min: 20, exit_window_min: 30, merge_gap_min: 20 };
+  const NAP = { min_session_min: 8, exit_window_min: 25, merge_gap_min: 5,
+    settle_max_min: 30 };
+  const NIGHT = { min_session_min: 20, exit_window_min: 30, merge_gap_min: 20,
+    settle_max_min: 60 };
   const isNight = (t) => {
     const hr = new Date(t).getHours();
     return hr >= nightAfter || hr < morning;
@@ -8886,12 +8892,37 @@ function psNurserySessions(hatch, door, opts) {
      * The window swallows an intervention that lands inside it, and that is
      * deliberate rather than tolerated: an early intervention means he had not
      * started the nap yet, so it belongs to settling. Settling here typically
-     * runs 10-20 minutes, hence the generous default. */
+     * runs 10-20 minutes, hence the generous default.
+     *
+     * The window CHAINS off the last visit, it does not run from the session
+     * start — a fixed window from bedtime assumes the put-down is one exit, and
+     * it is not. On the 2026-08-07 night the Hatch went on at 19:06:19 and the
+     * room was visited four times over 33 minutes; measured from the start, the
+     * 30-minute window closed at 19:36:19 and the FOURTH visit missed it by two
+     * and a half minutes. So the card marked him settled at 19:32 and called
+     * the real final exit an intervention — and worse than a miscount, it
+     * started `asleepMinutes` while someone was still in the room. Widening the
+     * window to 40 would have fixed that night and broken on a 45-minute one;
+     * chaining is the shape that scales.
+     *
+     * The chain runs from the CLOSE of the last visit, not its open: the question is
+     * how long the room has been quiet since anyone was last in it.
+     *
+     * `settle_max_min` is the brake. Chaining alone is unbounded — a visit
+     * every twenty minutes all night would make the entire night "settling" and
+     * report zero interventions — so total settling is capped regardless of how
+     * the chain runs. The nap cap is tight because swallowing thirty minutes of
+     * a fifty-minute nap would be worse than the bug it fixes. */
+    const settleMax = rule(s.from, "settle_max_min");
     let settledAt = s.from;
     let hadExit = false;
     let i = 0;
-    while (i < inside.length && inside[i].from - s.from <= exitWindow) {
+    let quietFrom = s.from;
+    while (i < inside.length
+           && inside[i].from - quietFrom <= exitWindow
+           && inside[i].from - s.from <= settleMax) {
       settledAt = Math.min(inside[i].to, s.to);
+      quietFrom = settledAt;
       hadExit = true;
       i += 1;
     }

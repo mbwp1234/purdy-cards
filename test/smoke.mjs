@@ -2659,6 +2659,38 @@ check('the real 2026-08-07 settle reads as 16m and zero interventions', (() => {
     && s[0].settledAt === NT(10, 22, 26) && s[0].settleMinutes === 16;
 })());
 
+/* The real 2026-08-07 NIGHT put-down: four trips over 33 minutes. Measured
+   from the session start the 30-minute window closed at 19:36:19 and the last
+   trip missed it by 2m32s, so the card marked him settled at 19:32 and called
+   the actual final exit intervention #1 — starting asleepMinutes while someone
+   was still in the room. Pinned for the same reason the 10:06 settle is. */
+check('the real 2026-08-07 night put-down is four trips of settling, not three', (() => {
+  const s = nsess(
+    [{ t: NT(18, 30), s: 'idle' }, { t: NT(19, 6, 19), s: 'playing' }],
+    [{ t: NT(19, 5, 25), s: 'on' }, { t: NT(19, 5, 36), s: 'off' },
+     { t: NT(19, 5, 39), s: 'on' }, { t: NT(19, 5, 40), s: 'off' },
+     { t: NT(19, 23, 19), s: 'on' }, { t: NT(19, 23, 23), s: 'off' },
+     { t: NT(19, 25, 34), s: 'on' }, { t: NT(19, 25, 38), s: 'off' },
+     { t: NT(19, 32, 11), s: 'on' }, { t: NT(19, 32, 15), s: 'off' },
+     { t: NT(19, 38, 51), s: 'on' }, { t: NT(19, 39, 0), s: 'off' }],
+    { now: NT(21, 0) });
+  return s.length === 1 && s[0].interventions === 0
+    && s[0].settledAt === NT(19, 39, 0) && s[0].settleMinutes === 33;
+})());
+
+/* The brake. Chaining alone would let a visit every twenty minutes swallow a
+   whole night, which is the failure mode a fixed window could not have. */
+check('settle_max_min stops the chain running away with the night', (() => {
+  const door = [];
+  for (let m = 20; m <= 200; m += 20) {
+    door.push({ t: NT(19, m), s: 'on' }, { t: NT(19, m, 10), s: 'off' });
+  }
+  const s = nsess(
+    [{ t: NT(19, 0), s: 'playing' }, { t: NT(23, 59), s: 'idle' }], door,
+    { now: NT(23, 59) })[0];
+  return s.settleMinutes <= 60 && s.interventions > 0;
+})());
+
 
 /* Settling is not sleep. The Hatch span is time in the sleep environment; the
    reported figure is from being left alone to the end. settledAt is when they
