@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.37.0";
+const PC_VERSION = "1.38.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -9046,19 +9046,18 @@ Object.assign(PurdyShellCard.prototype, {
 
     const wifiOk = !sec.hatch_wifi || pcState(h, sec.hatch_wifi) === "on";
 
-    /* Today's sessions, newest first. */
-    const todayAll = sessions
-      .filter((s) => s.day === todayKey || (s.night && s.active))
-      .slice()
-      .reverse();
-    const todayRows = todayAll.length
-      ? todayAll.map((s) => `
+    /* Naps are their own list, because the questions asked of them are
+       different from the ones asked of a night: how long, when did it start,
+       when did it end, and how many were there. No settling column — for a
+       fifty-minute nap that is noise beside the number that matters. */
+    const napRows = todayNaps.length
+      ? todayNaps.slice().reverse().map((s) => `
           <div class="ps-jr">
-            <span class="ps-l">${s.night ? "Night" : "Nap"} · ${psClock(s.from)}</span>
+            <span class="ps-l">${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
             <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " …" : ""}</span>
-            <span class="ps-flat">${s.hadExit ? `+${psHM(s.settleMinutes)} settling · ` : ""}${s.interventions} in</span>
+            <span class="ps-flat">${s.interventions ? `${s.interventions} in` : ""}</span>
           </div>`).join("")
-      : `<div class="ps-jr"><span class="ps-l">Nothing yet today</span></div>`;
+      : `<div class="ps-jr"><span class="ps-l">No naps yet today</span></div>`;
 
     /* Recent days. A day with no night recorded still gets a row — an absent
        night is information, and skipping it would silently shorten the list. */
@@ -9125,23 +9124,42 @@ Object.assign(PurdyShellCard.prototype, {
             ${noData
               ? `<span class="ps-chip">${err ? "Recorder unavailable" : loaded ? "Nothing recorded" : "Loading…"}</span>`
               : `<span class="ps-chip deep">Night ${nightMins ? psHM(nightMins) : "—"}</span>
-                 <span class="ps-chip lt">Naps ${napMins ? psHM(napMins) : "—"}</span>`}
-            ${hero && hero.hadExit ? `<span class="ps-chip">+${psHM(hero.settleMinutes)} settling</span>` : ""}
-            ${hero ? `<span class="ps-chip ${hero.interventions ? "warn" : "good"}">${hero.interventions} in</span>` : ""}
+                 <span class="ps-chip lt">${todayNaps.length
+                    ? `${todayNaps.length} nap${todayNaps.length > 1 ? "s" : ""} ${psHM(napMins)}`
+                    : "No naps"}</span>`}
             ${wifiOk ? "" : `<span class="ps-chip bad">Hatch offline</span>`}
           </div>
         </div>
       </div>
-      ${this._nurseryTimeline(nightSession, loaded, err)}
       <div class="ps-xtra">
-        <span class="ps-lbl" style="display:block;margin:2px 0 6px">Today</span>
-        ${todayRows}
+        <span class="ps-lbl" style="display:block;margin:2px 0 6px">Naps today${
+          todayNaps.length ? ` · ${todayNaps.length} · ${psHM(napMins)}` : ""}</span>
+        ${napRows}
+
+        <span class="ps-lbl" style="display:block;margin:14px 0 6px">${
+          nightSession && nightSession.active ? "Tonight" : "Last night"}</span>
+        ${nightSession ? `
+          <div class="ps-jr"><span class="ps-l">Asleep</span>
+            <span class="ps-v">${psHM(nightSession.asleepMinutes)}</span>
+            <span class="ps-flat">${avgNight == null ? "" : psHM(avgNight) + " avg"}</span></div>
+          <div class="ps-jr"><span class="ps-l">Down / up</span>
+            <span class="ps-v">${psClock(nightSession.from)} – ${
+              nightSession.active ? "now" : psClock(nightSession.to)}</span>
+            <span class="ps-flat">${nightSession.splits > 1 ? nightSession.splits + " spans" : ""}</span></div>
+          <div class="ps-jr"><span class="ps-l">Settled</span>
+            <span class="ps-v">${nightSession.hadExit ? psClock(nightSession.settledAt) : "—"}</span>
+            <span class="ps-flat">${nightSession.hadExit ? psHM(nightSession.settleMinutes) + " to settle" : "nobody went in"}</span></div>
+          <div class="ps-jr"><span class="ps-l">Interventions</span>
+            <span class="ps-v">${nightSession.interventions}</span>
+            <span class="ps-flat">${avgIns == null ? "" : avgIns.toFixed(1) + " avg"}</span></div>
+          ${nightSession.events.length ? `<div class="ps-jr"><span class="ps-l">Went in at</span>
+            <span class="ps-v">${nightSession.events.map((t) => psClock(t)).join(", ")}</span></div>` : ""}
+          ${this._nurseryTimeline(nightSession, loaded, err)}
+        ` : `<div class="ps-jr"><span class="ps-l">${
+          err ? "Recorder did not answer" : loaded ? "No night recorded yet" : "Loading…"}</span></div>`}
+
         <span class="ps-lbl" style="display:block;margin:14px 0 6px">Last ${dayKeys.length} day${dayKeys.length === 1 ? "" : "s"}</span>
         ${dayRows || `<div class="ps-jr"><span class="ps-l">No history yet</span></div>`}
-        ${avgNight == null ? "" : `
-        <div class="ps-jr"><span class="ps-l">Average night</span>
-          <span class="ps-v">${psHM(avgNight)}</span>
-          <span class="ps-flat">${avgIns.toFixed(1)} in</span></div>`}
       </div>`;
   },
 });

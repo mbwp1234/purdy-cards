@@ -2768,6 +2768,22 @@ check('the finished nap is counted and classified',
   nurseryRendered.sess.filter((x) => !x.night).length === 1);
 check('the timeline is night-scoped and labelled',
   /Last night|Tonight/.test(nurseryRendered.html) && !/Last 24h/.test(nurseryRendered.html));
+/* Collapsed is deliberately minimal: ring, one line, two chips. The graph and
+   every detail row live behind the expand. */
+check('the night graph lives behind the expand, not in the collapsed view', (() => {
+  const x = nurseryRendered.html.indexOf('ps-xtra');
+  return x > 0 && nurseryRendered.html.indexOf('<svg viewBox="0 0 100 46"') > x;
+})());
+check('the collapsed chips give the nap count and total', (() => {
+  const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
+  return /nap/i.test(top) && /Night/.test(top);
+})());
+check('naps are listed with a start and an end time', (() => {
+  const x = nurseryRendered.html.slice(nurseryRendered.html.indexOf('Naps today'));
+  return /\d{1,2}:\d{2}[^<]*–[^<]*\d{1,2}:\d{2}/.test(x);
+})());
+check('the night block names when he went down and got up',
+  /Down \/ up/.test(nurseryRendered.html) && /Settled/.test(nurseryRendered.html));
 check('the timeline separates settling from asleep',
   /settling/.test(nurseryRendered.html) && /asleep/.test(nurseryRendered.html));
 check('naps are not drawn on the night graph',
