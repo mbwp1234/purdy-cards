@@ -77,6 +77,11 @@ class PurdyShellCard extends PcBaseCard {
     this._openGroups = {};    // "sectionKey|groupName" -> true for open groups
     this._sheet = null;       // "alerts" when the alert sheet is showing
     this._history = {};
+    /* null, not {} — the nursery section has to tell "the recorder has not
+       answered yet" from "he has never slept", and {} reads as the second. */
+    this._nursery = null;
+    this._nurseryErr = null;
+    this._nurseryTimer = null;
     this._events = [];
     this._sched = null;
     this._dragging = false;   // a volume drag must survive the state repaint
@@ -134,6 +139,7 @@ class PurdyShellCard extends PcBaseCard {
 
   _start() {
     this._startHistory();
+    this._startNursery();
     this._fetchEvents();
     this._fetchSchedule();
     this._fetchRecent();
@@ -166,9 +172,14 @@ class PurdyShellCard extends PcBaseCard {
     if (this._clock) clearInterval(this._clock);
     if (this._historyTimer) clearInterval(this._historyTimer);
     if (this._eventTimer) clearInterval(this._eventTimer);
+    if (this._nurseryTimer) clearInterval(this._nurseryTimer);
     this._clock = null;
     this._historyTimer = null;
     this._eventTimer = null;
+    /* Nulled, not just cleared — connectedCallback tells "stopped" from
+       "running" by the handle, so leaving it set would stack a second poller
+       on every return to the view. */
+    this._nurseryTimer = null;
   }
 
   /* Everything the shell reads, so a state change repaints exactly once. */
@@ -210,6 +221,9 @@ class PurdyShellCard extends PcBaseCard {
         push((s.hold || {}).remaining);
         push((s.schedule || {}).mode_entity);
         push((s.schedule || {}).switch_entity);
+      }
+      if (s.type === "nursery") {
+        push(s.hatch); push(s.door); push(s.hatch_wifi); push(s.light);
       }
       if (s.type === "tv" || s.type === "nowplaying") {
         (s.tvs || []).forEach((t) => { push(t.media_player); push(t.app_sensor); push(t.remote); });
@@ -519,6 +533,7 @@ class PurdyShellCard extends PcBaseCard {
         systems: () => this._secSystems(sec),
         tv: () => this._secTv(sec),
         nowplaying: () => this._secNowplaying(sec),
+        nursery: () => this._secNursery(sec),
       }[sec.type]();
       if (!body) return;   // a self-hiding section takes its divider with it
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
@@ -1265,6 +1280,7 @@ class PurdyShellCard extends PcBaseCard {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
+      nurserySessions: psNurserySessions, dayKey: psDayKey, hm: psHM,
     };
   }
 

@@ -2346,6 +2346,141 @@ check('the standalone climate card uses the same geometry, not a second copy',
   /_polyline\(points, w, h, pad = 4\) \{\s*return pcSparkPoly/.test(
     fs.readFileSync(new URL('../src/10-climate-panel-card.js', import.meta.url), 'utf8')));
 
+/* ---- nursery: sessions from the Hatch, interventions from the door ----
+ *
+ * Sleep is no longer inferred from a wearable. A `playing` span IS the
+ * session, because the sound machine is only ever on when sleep is intended.
+ * Every threshold below is checked against real recorded data, not invented
+ * numbers — most importantly the door chatter, which is what mounting the
+ * sensor actually produced.
+ */
+const nsess = SH.helpers.nurserySessions;
+const NT = (h, m, s) => new Date(2026, 7, 7, h, m, s || 0).getTime();
+
+check('a playing span becomes a session', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }], [],
+    { now: NT(23, 30) });
+  return s.length === 1 && s[0].minutes === 180 && s[0].night === true;
+})());
+
+check('a session still running is active and never dropped for being short', (() => {
+  const s = nsess([{ t: NT(13, 0), s: 'playing' }], [], { now: NT(13, 2) });
+  return s.length === 1 && s[0].active === true && s[0].minutes === 2;
+})());
+
+check('a Hatch switched straight off again is not a session', (() => {
+  const s = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(13, 3), s: 'idle' }], [],
+    { now: NT(14, 0) });
+  return s.length === 0;
+})());
+
+check('an auto-off mid-night merges back into one night, not two', (() => {
+  const s = nsess([
+    { t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' },
+    { t: NT(23, 5), s: 'playing' }, { t: NT(23, 59), s: 'idle' },
+  ], [], { now: NT(23, 59) });
+  return s.length === 1 && s[0].splits === 2 && s[0].minutes === 239;
+})());
+
+check('a genuine gap longer than the merge window stays two sessions', (() => {
+  const s = nsess([
+    { t: NT(9, 0), s: 'playing' }, { t: NT(10, 0), s: 'idle' },
+    { t: NT(13, 0), s: 'playing' }, { t: NT(14, 30), s: 'idle' },
+  ], [], { now: NT(15, 0) });
+  return s.length === 2 && s.every((x) => x.night === false);
+})());
+
+/* The real thing: mounting the sensor produced ten transitions in 34 seconds,
+   five of them under 300ms. Counted raw that is ten interventions. */
+check('mounting chatter does not become ten interventions', (() => {
+  const door = [
+    { t: NT(9, 5, 37), s: 'on' }, { t: NT(9, 5, 41), s: 'off' },
+    { t: NT(9, 5, 42), s: 'on' }, { t: NT(9, 5, 43), s: 'off' },
+    { t: NT(9, 5, 59), s: 'on' }, { t: NT(9, 5, 59), s: 'off' },
+    { t: NT(9, 6, 0), s: 'on' }, { t: NT(9, 6, 0), s: 'off' },
+    { t: NT(9, 6, 2), s: 'on' }, { t: NT(9, 6, 2), s: 'off' },
+    { t: NT(9, 6, 5), s: 'on' }, { t: NT(9, 6, 7), s: 'off' },
+    { t: NT(9, 6, 10), s: 'on' }, { t: NT(9, 6, 10), s: 'off' },
+    { t: NT(9, 6, 11), s: 'on' }, { t: NT(9, 6, 49), s: 'off' },
+  ];
+  const s = nsess([{ t: NT(9, 0), s: 'playing' }, { t: NT(10, 0), s: 'idle' }], door,
+    { now: NT(10, 0) });
+  return s.length === 1 && s[0].interventions === 1;
+})());
+
+check('a sub-second flicker alone is never an intervention', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(21, 0, 0), s: 'on' }, { t: NT(21, 0, 0), s: 'off' }], { now: NT(23, 0) });
+  return s[0].interventions === 0;
+})());
+
+check('going in and coming out is one visit, not two', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(21, 0, 0), s: 'on' }, { t: NT(21, 0, 8), s: 'off' },
+     { t: NT(21, 0, 40), s: 'on' }, { t: NT(21, 0, 48), s: 'off' }], { now: NT(23, 0) });
+  return s[0].interventions === 1;
+})());
+
+check('two separate visits count twice', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(21, 0), s: 'on' }, { t: NT(21, 0, 10), s: 'off' },
+     { t: NT(22, 0), s: 'on' }, { t: NT(22, 0, 10), s: 'off' }], { now: NT(23, 0) });
+  return s[0].interventions === 2;
+})());
+
+check('a door open outside any session is ignored entirely', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }],
+    [{ t: NT(15, 0), s: 'on' }, { t: NT(15, 0, 30), s: 'off' }], { now: NT(23, 0) });
+  return s[0].interventions === 0;
+})());
+
+/* The agreed rule: first session starting after 18:00 is the night. */
+check('an afternoon session is a nap and an evening one is the night', (() => {
+  const s = nsess([
+    { t: NT(13, 0), s: 'playing' }, { t: NT(14, 30), s: 'idle' },
+    { t: NT(20, 15), s: 'playing' }, { t: NT(23, 30), s: 'idle' },
+  ], [], { now: NT(23, 30) });
+  return s[0].night === false && s[1].night === true;
+})());
+
+check('a night restarted after midnight files under the evening it began', (() => {
+  const s = nsess([{ t: new Date(2026, 7, 8, 1, 30).getTime(), s: 'playing' },
+    { t: new Date(2026, 7, 8, 6, 0).getTime(), s: 'idle' }],
+    [], { now: new Date(2026, 7, 8, 7, 0).getTime() });
+  return s[0].night === true && s[0].day === '2026-08-07';
+})());
+
+check('the day key is local, not UTC — an 8pm bedtime files under today', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 0), s: 'idle' }], [],
+    { now: NT(23, 30) });
+  return s[0].day === '2026-08-07';
+})());
+
+check('a held-open door still counts while the session runs', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }], [{ t: NT(21, 0), s: 'on' }],
+    { now: NT(21, 5) });
+  return s[0].interventions === 1 && s[0].active === true;
+})());
+
+check('no history at all yields no sessions rather than throwing',
+  nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
+
+check('the nursery fetch sends end_time, like every other history call',
+  /history\/period\/\$\{start\}[\s\S]{0,200}end_time=/.test(
+    fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8')));
+
+check('the nursery poller is nulled on disconnect so it cannot stack',
+  /this\._nurseryTimer = null;/.test(
+    fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+
+check('the nursery section is wired into the renderer dispatch',
+  /nursery: \(\) => this\._secNursery\(sec\)/.test(
+    fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+
+check('_startNursery is actually called, not merely defined',
+  /this\._startNursery\(\);/.test(
+    fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+
 /* An MA player mirrors its source device: a Twitch stream came back as
    media_content_type "music", and only a missing title kept it off the screen. */
 const isMusic = SH.helpers.isMusic;
