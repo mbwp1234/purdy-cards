@@ -2842,7 +2842,14 @@ check('no bar is drawn in the collapsed view', (() => {
 })());
 check('collapsed carries one line of live status', (() => {
   const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
-  return /ps-jstat/.test(top) && /(Awake since|Down )/.test(top);
+  return /ps-jstat/.test(top) && /(Awake |Down )/.test(top);
+})());
+/* Time since the last nap decides whether the next one is due, so it belongs
+   on the face. The chip cannot carry it: the chip reports live state, and with
+   the door open it says "Door open" and the wake window vanishes. */
+check('the wake window is on the collapsed face, not only behind the expand', (() => {
+  const top = nurseryRendered.html.slice(0, nurseryRendered.html.indexOf('ps-xtra'));
+  return /Awake \d+h? ?\d*m? · since/.test(top);
 })());
 
 /* No slot is drawn for a nap that has not happened — two short naps make a

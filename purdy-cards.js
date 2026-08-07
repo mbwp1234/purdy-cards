@@ -9236,9 +9236,15 @@ Object.assign(PurdyShellCard.prototype, {
 
     /* One line of live status, and nothing else. Predicted bedtime comes from
        his own average rather than a configured time. */
+    /* Time since the last nap ended belongs on the collapsed face, not behind
+       the expand: it is what decides whether the next nap is due. The chip
+       cannot carry it — the chip reports the live state, and on a day the door
+       happens to be open it says "Door open" and the wake window disappears. */
     const statusL = live
       ? `Down ${psClock(live.from)}`
-      : stats.wakeSince ? `Awake since ${psClock(stats.wakeSince)}` : "";
+      : stats.wakeWindowMin != null
+        ? `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`
+        : "";
     const statusR = live
       ? (live.hadExit ? `settled ${psClock(live.settledAt)}` : "settling…")
       : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
