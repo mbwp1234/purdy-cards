@@ -458,9 +458,17 @@ const PS_STYLES = `
       .ps-mlist { display: flex; flex-direction: column; gap: 1px; }
       /* Nothing in the view scrolls sideways any more; only the sheet scrolls,
          and only downwards. */
-      .ps-mi { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 4px;
-               border-radius: var(--pc-r-sm); text-align: left; }
-      .ps-mi:active { background: var(--pc-fill-1); }
+      /* A row is a play button plus a queue button, not one button — "play it"
+         and "play it after this" are both one tap, and neither is a gesture
+         you have to know about. */
+      .ps-mi { display: flex; align-items: center; gap: 4px; width: 100%; }
+      .ps-miplay { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+                   padding: 7px 4px; border-radius: var(--pc-r-sm); text-align: left; }
+      .ps-miplay:active { background: var(--pc-fill-1); }
+      .ps-miq { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%;
+                display: grid; place-items: center; color: var(--ps-dim); position: relative; }
+      .ps-miq::after { content: ""; position: absolute; inset: -7px -4px; }
+      .ps-miq:active { color: var(--ps-cool); }
       .ps-th { width: 34px; height: 34px; border-radius: var(--pc-r-xs); background: var(--pc-fill-2);
                display: grid; place-items: center; color: var(--ps-dim); flex: 0 0 auto; overflow: hidden; }
       .ps-th .ps-ico { width: 15px; height: 15px; }
@@ -490,8 +498,49 @@ const PS_STYLES = `
                  border-top: 1px solid var(--ps-hair-soft); }
       .ps-vrow:first-of-type { border-top: 0; }
       .ps-vname { flex: 0 0 96px; font-size: var(--pc-fs-sm); font-weight: 650; color: var(--ps-muted);
-                  display: flex; align-items: center; gap: 6px; }
+                  display: flex; align-items: center; gap: 6px; position: relative; }
+      .ps-vname::after { content: ""; position: absolute; inset: -8px -4px; }
       .ps-vrow.on .ps-vname { color: var(--ps-text); }
+      /* The target room is the one every control in the sheet acts on, so it
+         has to be legible as such at a glance, not just a shade brighter. */
+      .ps-vrow.on { box-shadow: inset 2px 0 0 var(--ps-cool); padding-left: 8px; }
+      .ps-vrow.joined .ps-vname { color: var(--ps-cool); }
+
+      /* grouping, queue and the transient confirmation line */
+      .ps-jb, .ps-jspace { flex: 0 0 26px; height: 26px; }
+      .ps-jb { border-radius: 50%; display: grid; place-items: center; position: relative;
+               background: var(--pc-fill-2); color: var(--ps-dim); }
+      .ps-jb::after { content: ""; position: absolute; inset: -9px -4px; }
+      .ps-jb .ps-ico { width: 14px; height: 14px; }
+      .ps-jb.on { background: rgba(77,208,225,.16); color: var(--ps-cool); }
+      .ps-mr.grp { box-shadow: inset 0 0 0 1px rgba(77,208,225,.22); color: var(--ps-cool); }
+      .ps-move { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+                 padding: 11px; margin-bottom: 12px; border-radius: var(--pc-r-md);
+                 background: rgba(77,208,225,.13); color: var(--ps-cool);
+                 font-size: var(--pc-fs-sm); font-weight: 650; }
+      .ps-qbar { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; padding: 8px 10px;
+                 border-radius: var(--pc-r-md); background: var(--pc-fill-1); }
+      .ps-qb { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; display: grid;
+               place-items: center; background: var(--pc-fill-2); color: var(--ps-dim); position: relative; }
+      .ps-qb::after { content: ""; position: absolute; inset: -10px -4px; }
+      .ps-qb .ps-ico { width: 15px; height: 15px; }
+      .ps-qb.on { background: rgba(77,208,225,.16); color: var(--ps-cool); }
+      .ps-qone { position: absolute; right: 0; bottom: -1px; font-size: var(--pc-fs-micro);
+                 font-weight: 700; line-height: 1; }
+      .ps-qup { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
+      .ps-qpos { flex: 0 0 auto; font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                 font-variant-numeric: tabular-nums; }
+      .ps-toast { margin-top: 10px; padding: 8px 11px; border-radius: var(--pc-r-sm);
+                  background: rgba(77,208,225,.13); color: var(--ps-cool);
+                  font-size: var(--pc-fs-xs); font-weight: 650; }
+
+      /* search filters */
+      .ps-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 4px; }
+      .ps-fc { padding: 6px 11px; border-radius: var(--pc-r-pill); background: var(--pc-fill-1);
+               color: var(--ps-dim); font-size: var(--pc-fs-xs); font-weight: 650; position: relative; }
+      .ps-fc::after { content: ""; position: absolute; inset: -7px -2px; }
+      .ps-fc.on { background: rgba(77,208,225,.16); color: var(--ps-cool);
+                  box-shadow: inset 0 0 0 1px rgba(77,208,225,.35); }
 
       /* alert sheet */
       .ps-scrim { position: fixed; inset: 0; background: rgba(4,6,10,.6); z-index: 8; backdrop-filter: blur(2px); }

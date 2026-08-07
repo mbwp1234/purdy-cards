@@ -221,57 +221,86 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }
 
+    /* Every control in this sheet acts on _activePlayer(). It used to act on
+       `nowPlaying || default_player` while the room list highlighted the
+       user's pick \u2014 so picking a room changed the highlight and nothing else,
+       which is what made choosing a speaker feel broken. One target, and the
+       room list is what sets it. */
     if (this._sheet === "music") {
       const sec = (this._config.sections || []).find((x) => x.type === "music");
       const np = this._nowPlaying();
       if (!sec) return "";
-      const art = np && np.st.attributes.entity_picture_local;
-      const target = np ? np.entity : sec.default_player;
+      const target = this._activePlayer();
       const tst = target && this._hass.states[target];
+      /* The header shows what the TARGET room is playing, not what some other
+         room is: pointing the controls at Kitchen while the artwork shows the
+         Living Room's track is how you skip the wrong song. */
+      const tmusic = tst && psIsMusic(tst) && tst.attributes.media_title ? tst : null;
+      const art = tmusic && tmusic.attributes.entity_picture_local;
       const vol = tst && tst.attributes.volume_level != null ? tst.attributes.volume_level : 0;
       const muted = !!(tst && tst.attributes.is_volume_muted);
+      const tname = (sec.players || []).find((p) => p.entity === target);
+      const playing = !!(tmusic && tst.state === "playing");
+      /* Something is playing, but not here. Offer to bring it rather than
+         making the user find it again from the start. */
+      const elsewhere = np && target && np.entity !== target && !tmusic;
+      const groupIds = this._groupOf(target);
 
       const rooms = (sec.players || []).map((p) => {
         const st = this._hass.states[p.entity];
         const live = st && st.state === "playing" && psIsMusic(st);
-        const active = this._isPicked(p.entity) ||
-          (!(this._sel || []).length && this._activePlayer() === p.entity);
+        const active = p.entity === target;
+        const joined = groupIds.indexOf(p.entity) >= 0;
         const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : 0;
-        return `<div class="ps-vrow ${active ? "on" : ""}">
-            <button class="ps-vname" type="button" data-pick="${psEsc(p.entity)}">
+        return `<div class="ps-vrow ${active ? "on" : ""} ${joined ? "joined" : ""}">
+            <button class="ps-vname" type="button" data-pick="${psEsc(p.entity)}"
+              aria-pressed="${active}">
               ${live ? `<span class="ps-live"></span>` : ""}${psEsc(p.name)}</button>
             <input class="ps-vol" type="range" min="0" max="100" step="1"
               value="${Math.round(pv * 100)}" data-vol="${psEsc(p.entity)}"
               aria-label="${psEsc(p.name)} volume" />
             <span class="ps-vnum">${Math.round(pv * 100)}</span>
+            ${active ? `<span class="ps-jspace"></span>` : `<button class="ps-jb ${joined ? "on" : ""}"
+              type="button" data-join="${psEsc(p.entity)}" aria-pressed="${joined}"
+              aria-label="${joined ? "Remove" : "Add"} ${psEsc(p.name)} ${joined ? "from" : "to"} the group">
+              <svg viewBox="0 0 24 24" class="ps-ico">${joined
+                ? `<path d="M9.5 14.5 14.5 9.5M8 11 6 13a3.5 3.5 0 0 0 5 5l2-2M16 13l2-2a3.5 3.5 0 0 0-5-5l-2 2"/>`
+                : `<path d="M12 7v10M7 12h10"/>`}</svg></button>`}
           </div>`;
       }).join("");
 
       return `<div class="ps-scrim" id="ps-scrim"></div>
         <div class="ps-sheet tall">
-          <div class="ps-sheeth"><span class="ps-lbl">Music</span>${close}</div>
+          <div class="ps-sheeth"><span class="ps-lbl">Music${
+            tname ? ` \u00B7 ${psEsc(tname.name)}` : ""}</span>${close}</div>
           <div class="ps-now" style="margin-bottom:12px">
             <div class="ps-art">${art
               ? `<img src="${psEsc(art)}" alt="" />`
               : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
             <div class="ps-grow">
-              <div class="ps-nt ps-trunc">${np ? psEsc(np.st.attributes.media_title) : "Nothing playing"}</div>
-              <div class="ps-ns ps-trunc">${np
-                ? psEsc([np.st.attributes.media_artist, np.name].filter(Boolean).join(" \u00B7 "))
-                : "Pick a room below"}</div>
+              <div class="ps-nt ps-trunc">${tmusic
+                ? psEsc(tmusic.attributes.media_title) : "Nothing playing here"}</div>
+              <div class="ps-ns ps-trunc">${tmusic
+                ? psEsc([tmusic.attributes.media_artist, tname && tname.name].filter(Boolean).join(" \u00B7 "))
+                : (elsewhere ? psEsc(`Playing in ${np.name}`) : "Pick something below")}</div>
             </div>
+            ${this._pinBtn()}
           </div>
+          ${elsewhere ? `<button class="ps-move" type="button" id="ps-move">
+            <svg viewBox="0 0 24 24" class="ps-ico"><path d="M4 12h13M13 7l5 5-5 5"/></svg>
+            Move ${psEsc(np.name)} playback here</button>` : ""}
           <div class="ps-transport">
             <button class="ps-tb" type="button" data-mpc="media_previous_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Previous">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M18 5v14L8 12zM6 5v14"/></svg></button>
             <button class="ps-tb big" type="button" data-mp="playpause" data-entity="${psEsc(target || "")}" aria-label="Play or pause">
-              <svg viewBox="0 0 24 24" class="ps-ico">${np && np.playing
+              <svg viewBox="0 0 24 24" class="ps-ico">${playing
                 ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
             <button class="ps-tb" type="button" data-mpc="media_next_track" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Next">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 5v14l10-7zM18 5v14"/></svg></button>
             <button class="ps-tb" type="button" data-mpc="media_stop" data-all="1" data-entity="${psEsc(target || "")}" aria-label="Stop">
               <svg viewBox="0 0 24 24" class="ps-ico"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg></button>
           </div>
+          ${this._queueHtml()}
           <div class="ps-volmain">
             <button class="ps-vbtn ${muted ? "muted" : ""}" type="button" data-mute="${psEsc(target || "")}"
               data-muted="${muted}" aria-label="Mute">
@@ -282,16 +311,12 @@ Object.assign(PurdyShellCard.prototype, {
               value="${Math.round(vol * 100)}" data-vol="${psEsc(target || "")}" aria-label="Volume" />
             <span class="ps-vnum">${Math.round(vol * 100)}</span>
           </div>
-          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms</span>
+          ${this._note ? `<div class="ps-toast">${psEsc(this._note)}</div>` : ""}
+
+          <span class="ps-lbl" style="display:block;margin:14px 0 6px">Rooms${
+            groupIds.length ? ` \u00B7 ${groupIds.length + 1} grouped` : ""}</span>
           ${rooms}
 
-          ${(sec.presets || []).length ? `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Presets</span>
-          <div class="ps-pres">${(sec.presets || []).map((p, i) =>
-            `<button class="ps-pr" type="button" data-preset="${i}">
-              <ha-icon icon="${psEsc(p.icon || "mdi:playlist-music")}"></ha-icon>
-              <span class="ps-trunc">${psEsc(p.name)}</span></button>`).join("")}</div>` : ""}
-
-          ${this._pinsHtml()}
           <span class="ps-lbl" style="display:block;margin:14px 0 6px">Search</span>
           <div class="ps-sbox">
             <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
@@ -300,18 +325,15 @@ Object.assign(PurdyShellCard.prototype, {
             ${this._query ? `<button class="ps-sclear" type="button" id="ps-qclear" aria-label="Clear">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
           </div>
-          ${this._searching ? `<div class="ps-note">Searching\u2026</div>` : ""}
-          ${this._results && this._results.length ? `<div class="ps-mlist">${
-            this._results.map((r, i) => `<button class="ps-mi" type="button" data-play="${i}" data-from="results">
-              <span class="ps-th">${r.image ? `<img src="${psEsc(r.image)}" alt="" />`
-                : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</span>
-              <span class="ps-grow"><span class="ps-min ps-trunc">${psEsc(r.name)}</span>
-              <span class="ps-mis ps-trunc">${psEsc(r.sub)}</span></span>
-              <span class="ps-kind">${psEsc(r.kind)}</span></button>`).join("")}</div>` : ""}
-          ${this._results && this._results.length && this._pinStore() ? `<div class="ps-note">
-            Hold a result to save it, or star what is playing.</div>` : ""}
-          ${this._results && !this._results.length && !this._searching
-            ? `<div class="ps-note">${sec.config_entry ? "No results." : "Search needs a Music Assistant config_entry."}</div>` : ""}
+          <div id="ps-res">${this._resultsHtml()}</div>
+
+          ${(sec.presets || []).length ? `<span class="ps-lbl" style="display:block;margin:14px 0 6px">Presets</span>
+          <div class="ps-pres">${(sec.presets || []).map((p, i) =>
+            `<button class="ps-pr" type="button" data-preset="${i}">
+              <ha-icon icon="${psEsc(p.icon || "mdi:playlist-music")}"></ha-icon>
+              <span class="ps-trunc">${psEsc(p.name)}</span></button>`).join("")}</div>` : ""}
+
+          ${this._pinsHtml()}
 
           <div style="margin-top:14px">${this._recentHtml()}</div>
         </div>`;

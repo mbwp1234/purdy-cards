@@ -1263,7 +1263,7 @@ check('a sheet_only section is not rendered in the column', (() => {
 check('the dock can open a sheet the way it opens a section',
   /if \(d\.sheet\) \{/.test(shellSrc));
 check('a sheet_only music section still feeds the targets', (() => {
-  shn._sel = ['media_player.kit'];
+  shn._pick = 'media_player.kit';
   return shn._targets().indexOf('media_player.kit') >= 0;
 })());
 
@@ -1352,7 +1352,9 @@ check('a reading reports why it is missing', (() => {
    a failed string replace. The pins one was destructive: the next save would
    have written the emptied list back over the helper. */
 check('no constructor block is spliced into another method', (() => {
-  const marks = (shellSrc.match(/rooms the user picked, overriding/g) || []).length;
+  /* Keyed on a comment that exists only inside the constructor. Do not key it
+     on a line that a future edit might legitimately move. */
+  const marks = (shellSrc.match(/-> true for open groups/g) || []).length;
   return marks === 1;
 })());
 
@@ -1654,6 +1656,117 @@ check('search calls music_assistant.search with a response', svcArgs.d === 'musi
 check('search passes the config entry', svcArgs.data.config_entry_id === 'ENTRY');
 check('search flattens tracks and playlists', shq._results.length === 2 && shq._results[0].kind === 'track');
 check('a track result names its artists', shq._results[0].sub === 'Bluey');
+check('an unfiltered search sends no media_type', shq._mtype === 'all' && svcArgs.data.media_type === undefined);
+
+/* A filter chip means "you already said what you wanted", so it asks Music
+   Assistant for that type only and spends the whole list on it rather than
+   four shallow buckets. */
+shq._mtype = 'album';
+shq._hass.callService = async (d, sv, data, t, x, ret) => {
+  svcArgs = { d, sv, data, ret };
+  return { response: { albums: Array.from({ length: 30 },
+    (_, i) => ({ uri: 'u:a' + i, name: 'Album ' + i })) } };
+};
+await shq._runSearch();
+check('a filtered search asks for that media type only',
+  JSON.stringify(svcArgs.data.media_type) === JSON.stringify(['album']));
+check('a filtered search gives the whole list to one type', shq._results.length === 20);
+check('every filtered row is that type', shq._results.every((r) => r.kind === 'album'));
+check('the filter chips render, with the current one lit',
+  /data-mtype="album"[^>]*aria-pressed="true"/.test(shq._resultsHtml()));
+check('a filtered list drops the per-row kind badge, since every row is that kind',
+  !/ps-kind/.test(shq._resultsHtml()));
+shq._mtype = 'all';
+
+/* Search as you type. The field keeps focus, and a focused field must keep
+   _dragging set or the patch destroys the input mid-word — so the results are
+   written into their own container instead of going through _render. */
+check('typing debounces rather than searching per keystroke', (() => {
+  let ran = 0;
+  const saved = shq._runSearch;
+  shq._runSearch = async () => { ran += 1; };
+  shq._queueSearch('b'); shq._queueSearch('bl'); shq._queueSearch('blu');
+  const immediate = ran === 0;
+  shq._runSearch = saved;
+  clearTimeout(shq._searchT);
+  return immediate;
+})());
+check('clearing the box drops the results without a request', (() => {
+  shq._results = [{ uri: 'u', name: 'x', kind: 'track' }];
+  shq._queueSearch('  ');
+  return shq._results === null;
+})());
+check('a stale answer cannot overwrite a newer query', await (async () => {
+  /* Two searches in flight; the first one to have been issued answers last. */
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  let call = 0;
+  shq._query = 'slow';
+  shq._hass.callService = async () => {
+    call += 1;
+    if (call === 1) { await gate; return { response: { tracks: [{ uri: 'u:old', name: 'Stale' }] } }; }
+    return { response: { tracks: [{ uri: 'u:new', name: 'Fresh' }] } };
+  };
+  const first = shq._runSearch();
+  const second = shq._runSearch();
+  await second;
+  release();
+  await first;
+  return shq._results.length === 1 && shq._results[0].name === 'Fresh';
+})());
+check('the search field is wired to the debounce, not only to Enter',
+  /q\.addEventListener\("input", \(\) => this\._queueSearch/.test(shellSrc));
+check('the results have their own container to be patched into',
+  /id="ps-res"/.test(fs.readFileSync(new URL('../src/74-shell-alerts.js', import.meta.url), 'utf8')));
+check('_paintResults is actually called, not merely defined',
+  (shellSrc + fs.readFileSync(new URL('../src/73-shell-music.js', import.meta.url), 'utf8'))
+    .split('_paintResults(')
+    .length > 3);
+
+/* Queueing is the row's second button. Long-press already means "save", so a
+   third gesture on the same row would be one too many to remember. */
+let enq = null;
+shq._hass.callService = (d, sv, data) => { enq = { d, sv, data }; };
+shq._enqueueUri('u:t', 'track');
+check('the queue button adds rather than replacing', enq.data.enqueue === 'add');
+check('queueing confirms itself, since the effect happens in another room',
+  typeof shq._note === 'string' && shq._note.length > 0);
+clearTimeout(shq._noteT); shq._note = null;
+check('a row carries both a play and a queue control', (() => {
+  const row = shq._mediaRow({ uri: 'u', name: 'T', sub: 'A', kind: 'track' }, 0, 'results');
+  return /data-play="0"/.test(row) && /data-queue="0"/.test(row);
+})());
+
+/* get_queue is the only place shuffle, repeat and "up next" are visible for
+   these players — the media_player attributes do not carry them. */
+const shqu = new SH();
+shqu.setConfig({ sections: [{ type: 'music', key: 'music', sheet_only: true,
+  default_player: 'media_player.a', players: [{ entity: 'media_player.a', name: 'K' }] }] });
+shqu._hass = { states: { 'media_player.a': { state: 'playing', attributes: { app_id: 'music_assistant', media_title: 'T' } } },
+  callService: async () => ({ response: { 'media_player.a': {
+    active: true, items: 27, current_index: 16, shuffle_enabled: true, repeat_mode: 'all',
+    next_item: { media_item: { name: 'Ice Cream' } } } } }) };
+await shqu._fetchQueue();
+const qh = shqu._queueHtml();
+check('the queue line says how far through the list it is', /17 of 27/.test(qh));
+check('the queue line names what is next', /Up next · Ice Cream/.test(qh));
+check('shuffle reads its state from the queue, not the entity', /id="ps-shuf"[^>]*\n?[^>]*aria-pressed="true"/.test(qh.replace(/\n\s*/g, ' ')));
+check('repeat shows as on when it is not off', /id="ps-rep"[\s\S]*?class="ps-qb on"|class="ps-qb on"[^>]*id="ps-rep"/.test(qh));
+check('a queue read for another room is not shown against this one', (() => {
+  shqu._queue = { ...shqu._queue, entity: 'media_player.zzz' };
+  return shqu._queueHtml() === '';
+})());
+check('a player with no queue shows no up-next line, not a wrong one', (() => {
+  shqu._queue = null;
+  return shqu._queueHtml() === '';
+})());
+check('the queue is only read while the music sheet is open', (() => {
+  shqu._sheet = null; shqu._queueKey = 'stale';
+  shqu._syncQueue();
+  return shqu._queueKey === null;
+})());
+check('_syncQueue is actually called from the render tail',
+  /this\._syncQueue\(\);/.test(shellSrc));
 
 let played = null;
 shq._hass.callService = (d, sv, data) => { played = { d, sv, data }; };
@@ -1786,28 +1899,86 @@ shx._hass = { states: {
 check('the playing room is the default target', shx._activePlayer() === 'media_player.a');
 shx._togglePick('media_player.b');
 check('picking a room overrides what is playing', shx._activePlayer() === 'media_player.b');
+/* One room, not a set. Two taps used to arm two rooms and "play to both" meant
+   two unsynchronised queues; real multi-room is join. */
 shx._togglePick('media_player.a');
-check('a second tap arms both rooms', JSON.stringify(shx._targets()) === JSON.stringify(['media_player.b', 'media_player.a']));
-shx._togglePick('media_player.b');
-check('tapping a selected room drops it', JSON.stringify(shx._targets()) === JSON.stringify(['media_player.a']));
+check('picking a second room replaces the first rather than adding to it',
+  JSON.stringify(shx._targets()) === JSON.stringify(['media_player.a']));
 shx._togglePick('media_player.a');
-check('emptying the selection falls back to what is playing', shx._activePlayer() === 'media_player.a' && shx._sel.length === 0);
-shx._sel = ['media_player.zzz'];
+check('tapping the picked room clears the pick', shx._pick === null);
+check('clearing the pick falls back to what is playing', shx._activePlayer() === 'media_player.a');
+shx._pick = 'media_player.zzz';
 check('a stale pick falls back rather than targeting a dead entity', shx._activePlayer() === 'media_player.a');
-shx._sel = [];
+shx._pick = null;
 
-shx._sel = ['media_player.a', 'media_player.b'];
-let playedMulti = null;
-shx._hass.callService = (d, sv, data) => { playedMulti = data; };
-shx._playUri('u:x', 'playlist');
-check('playing to two rooms sends both entity ids',
-  JSON.stringify(playedMulti.entity_id) === JSON.stringify(['media_player.a', 'media_player.b']));
-shx._sel = [];
+/* Grouping is media_player.join against the target room — these players carry
+   the GROUPING bit, so this really is one synchronised stream. */
+let joinArgs = null;
+shx._hass.callService = (d, sv, data) => { joinArgs = { d, sv, data }; };
+shx._toggleJoin('media_player.b');
+check('adding a room joins it to the target', joinArgs.d === 'media_player' && joinArgs.sv === 'join');
+check('join names the target as the leader and the room as a member',
+  joinArgs.data.entity_id === 'media_player.a' &&
+  joinArgs.data.group_members.indexOf('media_player.b') >= 0);
+shx._hass.states['media_player.a'].attributes.group_members = ['media_player.b'];
+check('a joined room reports as grouped', shx._isGrouped('media_player.b'));
+shx._toggleJoin('media_player.b');
+check('tapping a grouped room unjoins it', joinArgs.sv === 'unjoin' && joinArgs.data.entity_id === 'media_player.b');
+check('the target room cannot join itself', (() => {
+  joinArgs = null; shx._toggleJoin('media_player.a'); return joinArgs === null;
+})());
+shx._hass.states['media_player.a'].attributes.group_members = [];
+
+/* Something playing elsewhere moves rather than having to be found again. */
+shx._pick = 'media_player.b';
+let moved = null;
+shx._hass.callService = (d, sv, data) => { moved = { d, sv, data }; };
+shx._moveHere();
+check('move uses music_assistant.transfer_queue',
+  moved.d === 'music_assistant' && moved.sv === 'transfer_queue');
+check('move names the source and the destination',
+  moved.data.entity_id === 'media_player.b' && moved.data.source_player === 'media_player.a');
+shx._pick = null;
+check('there is nothing to move when the target is already playing', (() => {
+  moved = null; shx._moveHere(); return moved === null;
+})());
 shx._hass.callService = undefined;
+shx._note = null; if (shx._noteT) clearTimeout(shx._noteT);
 
 const mus = shx._secMusic(shx._config.sections[0]);
 check('rooms select rather than opening more-info', /data-pick="media_player.b"/.test(mus) && !/data-player=/.test(mus));
 check('the active room is marked pressed', /data-pick="media_player.a" aria-pressed="true"/.test(mus));
+check('only one room is marked pressed at a time',
+  (mus.match(/aria-pressed="true"/g) || []).length === 1);
+
+/* Every control in the sheet has to act on the room the sheet says it is on.
+   They used to act on `nowPlaying || default_player` while the list highlighted
+   the pick, so choosing a speaker changed the highlight and nothing else. */
+const shsheet = new SH();
+shsheet.setConfig({ now_playing: { players: [{ entity: 'media_player.a', name: 'Kitchen' }] },
+  sections: [{ type: 'music', key: 'music', sheet_only: true, default_player: 'media_player.a',
+    players: [{ entity: 'media_player.a', name: 'Kitchen' }, { entity: 'media_player.b', name: 'Living' }] }] });
+shsheet._hass = { states: {
+  'media_player.a': { state: 'playing', attributes: { app_id: 'music_assistant', media_title: 'Track', volume_level: 0.4 } },
+  'media_player.b': { state: 'idle', attributes: { app_id: 'music_assistant', volume_level: 0.7 } } } };
+shsheet._sheet = 'music';
+shsheet._pick = 'media_player.b';
+const msheet = shsheet._sheetHtml([]);
+check('the sheet transport targets the picked room, not the playing one',
+  /data-mp="playpause" data-entity="media_player\.b"/.test(msheet));
+check('the main volume targets the picked room',
+  /class="ps-vol"[^>]*data-vol="media_player\.b"/.test(msheet.replace(/\n\s*/g, ' ')));
+check('the main volume shows the picked room’s level, not another room’s',
+  /data-vol="media_player\.b" aria-label="Volume"/.test(msheet.replace(/\n\s*/g, ' ')));
+check('the sheet names the room it is driving', /Music · Living/.test(msheet));
+check('the sheet offers to move playback here', /id="ps-move"/.test(msheet) && /Move Kitchen playback here/.test(msheet));
+check('a room that is not the target gets a join button', /data-join="media_player\.a"/.test(msheet));
+check('the target room gets no join button of its own', !/data-join="media_player\.b"/.test(msheet));
+shsheet._pick = null;
+check('with nothing picked the sheet drives what is playing and offers no move', (() => {
+  const h = shsheet._sheetHtml([]);
+  return /data-mp="playpause" data-entity="media_player\.a"/.test(h) && !/id="ps-move"/.test(h);
+})());
 check('the music section leads with recently played', (() => {
   shx._recent = [{ uri: 'u:1', name: 'Dance Mode', sub: 'Bluey', kind: 'track' }];
   const html = shx._secMusic(shx._config.sections[0]);

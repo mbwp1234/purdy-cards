@@ -89,7 +89,14 @@ class PurdyShellCard extends PcBaseCard {
     this._schedNote = null;
     this._schedScope = undefined; // preset key being viewed; null = base lists
     this._schedDay = null;        // day being viewed; null = today
-    this._sel = [];           // rooms the user picked, overriding what is playing
+    /* ONE room, not a set. A multi-select made "play to two rooms" mean two
+       unsynchronised queues; real multi-room is media_player.join, which these
+       players support. null means "follow whatever is actually playing". */
+    this._pick = null;
+    this._queue = null;       // the active room's queue, from music_assistant.get_queue
+    this._queueKey = null;    // what the last queue read was for
+    this._mtype = "all";      // search filter: a media_type, or "all" for none
+    this._note = null;        // a transient confirmation line in the music sheet
     this._pins = [];          // saved playlists
     this._pending = false;
   }
@@ -568,6 +575,10 @@ class PurdyShellCard extends PcBaseCard {
     this._bind();
     this._bindScrub();
     this._reserve();
+    /* Only while the music sheet is open, and only when the answer could have
+       changed — see _syncQueue. Kicked from the tail of the render so it
+       cannot recurse into one that has not finished. */
+    this._syncQueue();
   }
 
   /* Reserve exactly as much room as the dock actually occupies.
@@ -752,22 +763,72 @@ class PurdyShellCard extends PcBaseCard {
       el.addEventListener("click", (e) => e.stopPropagation());
     });
 
+    /* Search as you type. The field keeps focus — and therefore keeps
+       _dragging set, or the patch would destroy the input mid-word — so the
+       results are written straight into #ps-res rather than through _render.
+       See _paintResults. */
     this._one("ps-q", (q) => {
       q.addEventListener("focus", () => { this._dragging = true; });
-      q.addEventListener("blur", () => { this._dragging = false; });
+      q.addEventListener("blur", () => {
+        this._dragging = false;
+        /* The value typed while the repaint was suppressed is the truth; a
+           later patch would otherwise restore the value from the last render. */
+        this._query = q.value;
+      });
       q.addEventListener("click", (e) => e.stopPropagation());
+      q.addEventListener("input", () => this._queueSearch(q.value));
       q.addEventListener("keydown", (e) => {
         if (e.key !== "Enter") return;
+        /* Enter still means "now" — it just closes the keyboard as well. */
+        if (this._searchT) clearTimeout(this._searchT);
         this._query = q.value;
-        this._dragging = false;
+        q.blur();
         this._runSearch();
       });
-      q.addEventListener("search", () => { this._query = q.value; this._dragging = false; this._runSearch(); });
+      q.addEventListener("search", () => this._queueSearch(q.value));
     });
     this._one("ps-qclear", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
-      this._query = ""; this._results = null; this._dragging = false; this._render();
+      if (this._searchT) clearTimeout(this._searchT);
+      this._query = ""; this._results = null; this._dragging = false;
+      this._last = null;
+      this._render();
     }));
+
+    this._each("[data-mtype]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (this._mtype === el.dataset.mtype) return;
+        this._mtype = el.dataset.mtype;
+        if (this._searchT) clearTimeout(this._searchT);
+        /* Changing the filter with nothing typed just moves the chip. */
+        if ((this._query || "").trim()) this._runSearch();
+        else this._paintResults();
+      });
+    });
+
+    this._each("[data-queue]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const list = el.dataset.from === "recent" ? this._recent : (this._results || []);
+        const it = list[parseInt(el.dataset.queue, 10)];
+        if (it) this._enqueueUri(it.uri, it.kind);
+      });
+    });
+
+    this._each("[data-join]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._toggleJoin(el.dataset.join);
+      });
+    });
+
+    this._one("ps-move", (el) =>
+      el.addEventListener("click", (e) => { e.stopPropagation(); this._moveHere(); }));
+    this._one("ps-shuf", (el) =>
+      el.addEventListener("click", (e) => { e.stopPropagation(); this._setShuffle(); }));
+    this._one("ps-rep", (el) =>
+      el.addEventListener("click", (e) => { e.stopPropagation(); this._cycleRepeat(); }));
 
     this._each("[data-play]", (el) => {
       const item = () => {
@@ -966,8 +1027,9 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const sec = this._config.sections.find((s) => s.type === "music");
         const p = sec && (sec.presets || [])[parseInt(el.dataset.preset, 10)];
-        const np = this._nowPlaying();
-        const target = np ? np.entity : (sec.default_player || (sec.players[0] || {}).entity);
+        /* A preset goes to the room you picked, like everything else here. It
+           used to ignore the pick and go to whatever happened to be playing. */
+        const target = this._activePlayer();
         if (!p || !target) return;
         this._hass.callService("music_assistant", "play_media", {
           entity_id: target, media_id: p.uri, media_type: p.media_type || "playlist",
