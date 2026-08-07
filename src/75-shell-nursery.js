@@ -221,12 +221,19 @@ function psNurserySessions(hatch, door, opts) {
       day: psDayKey(anchor),
       interventions: events.length,
       events,
-      /* Bedtime is when the Hatch started; settled is when the door shut
-         behind them. Duration deliberately still measures the whole Hatch
-         span — redefining it silently would make tonight incomparable with
-         every night already recorded. */
+      /* Three different quantities, kept apart because they answer different
+         questions and only one of them is "how long did he sleep":
+           minutes       the whole Hatch span — time in the sleep environment
+           settleMinutes Hatch-on to the door shutting behind them
+           asleepMinutes from being left alone to the end
+         settledAt is when they LEFT, which is not exactly when he dropped off
+         — he may well have gone under while they were still in the room — so
+         asleepMinutes is a lower bound and minutes an upper one. The card
+         shows the lower bound and names the settling beside it rather than
+         quietly folding an ambiguous quarter of an hour into "slept". */
       settledAt,
       settleMinutes: Math.max(0, Math.round((settledAt - s.from) / 60000)),
+      asleepMinutes: Math.max(0, Math.round((s.to - settledAt) / 60000)),
       hadExit,
     };
   });
@@ -379,14 +386,18 @@ Object.assign(PurdyShellCard.prototype, {
 
     const todayKey = psDayKey(new Date());
     const todayNaps = sessions.filter((s) => !s.night && s.day === todayKey);
-    const napMins = todayNaps.reduce((a, s) => a + s.minutes, 0);
+    /* Sleep totals exclude settling everywhere — the ring, the chips, the day
+   rows and the averages all mean the same thing as a result. */
+    const napMins = todayNaps.reduce((a, s) => a + s.asleepMinutes, 0);
 
     /* Chip: what is true right now, not what the history says. */
     let chipCls = "";
     let chipTxt = "Hatch off";
     if (playing) {
       chipCls = "deep";
-      chipTxt = live ? `Asleep ${psHM(live.minutes)}` : "Asleep";
+      chipTxt = live
+        ? (live.hadExit ? `Asleep ${psHM(live.asleepMinutes)}` : `Settling ${psHM(live.minutes)}`)
+        : "Asleep";
     } else if (doorOpen) {
       chipCls = "warn";
       chipTxt = "Door open";
@@ -410,8 +421,8 @@ Object.assign(PurdyShellCard.prototype, {
       ? todayAll.map((s) => `
           <div class="ps-jr">
             <span class="ps-l">${s.night ? "Night" : "Nap"} · ${psClock(s.from)}</span>
-            <span class="ps-v">${psHM(s.minutes)}${s.active ? " …" : ""}</span>
-            <span class="ps-flat">${s.hadExit ? `settled ${psHM(s.settleMinutes)} · ` : ""}${s.interventions} in</span>
+            <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " …" : ""}</span>
+            <span class="ps-flat">${s.hadExit ? `+${psHM(s.settleMinutes)} settling · ` : ""}${s.interventions} in</span>
           </div>`).join("")
       : `<div class="ps-jr"><span class="ps-l">Nothing yet today</span></div>`;
 
@@ -422,7 +433,7 @@ Object.assign(PurdyShellCard.prototype, {
       if (!byDay.has(s.day)) byDay.set(s.day, { night: null, naps: 0, napMins: 0, ins: 0 });
       const d = byDay.get(s.day);
       if (s.night) d.night = s;
-      else { d.naps += 1; d.napMins += s.minutes; }
+      else { d.naps += 1; d.napMins += s.asleepMinutes; }
       d.ins += s.interventions;
     });
     const dayKeys = [...byDay.keys()].sort().reverse().slice(0, sec.days || 7);
@@ -435,14 +446,14 @@ Object.assign(PurdyShellCard.prototype, {
       return `
         <div class="ps-jr">
           <span class="ps-l">${psEsc(label)}</span>
-          <span class="ps-v">${d.night ? psHM(d.night.minutes) : "—"}</span>
+          <span class="ps-v">${d.night ? psHM(d.night.asleepMinutes) : "—"}</span>
           <span class="ps-flat">${d.naps ? `${d.naps} nap${d.naps > 1 ? "s" : ""} ${psHM(d.napMins)}` : "no naps"} · ${d.ins} in</span>
         </div>`;
     }).join("");
 
     const nightsWithData = dayKeys.map((k) => byDay.get(k)).filter((d) => d.night);
     const avgNight = nightsWithData.length
-      ? Math.round(nightsWithData.reduce((a, d) => a + d.night.minutes, 0) / nightsWithData.length)
+      ? Math.round(nightsWithData.reduce((a, d) => a + d.night.asleepMinutes, 0) / nightsWithData.length)
       : null;
     const avgIns = nightsWithData.length
       ? (nightsWithData.reduce((a, d) => a + d.night.interventions, 0) / nightsWithData.length)
@@ -453,7 +464,7 @@ Object.assign(PurdyShellCard.prototype, {
        are no sleep stages here, but "how much has he slept today, and how
        much of it was the night" is the question that ring was answering. */
     const nightSession = live && live.night ? live : lastNight;
-    const nightMins = nightSession ? nightSession.minutes : 0;
+    const nightMins = nightSession ? nightSession.asleepMinutes : 0;
     const totalMins = nightMins + napMins;
     const maxH = (sec.ring || {}).max_hours || 14;
     const maxMins = maxH * 60;
@@ -481,7 +492,7 @@ Object.assign(PurdyShellCard.prototype, {
               ? `<span class="ps-chip">${err ? "Recorder unavailable" : loaded ? "Nothing recorded" : "Loading…"}</span>`
               : `<span class="ps-chip deep">Night ${nightMins ? psHM(nightMins) : "—"}</span>
                  <span class="ps-chip lt">Naps ${napMins ? psHM(napMins) : "—"}</span>`}
-            ${hero && hero.hadExit ? `<span class="ps-chip">Settled ${psHM(hero.settleMinutes)}</span>` : ""}
+            ${hero && hero.hadExit ? `<span class="ps-chip">+${psHM(hero.settleMinutes)} settling</span>` : ""}
             ${hero ? `<span class="ps-chip ${hero.interventions ? "warn" : "good"}">${hero.interventions} in</span>` : ""}
             ${wifiOk ? "" : `<span class="ps-chip bad">Hatch offline</span>`}
           </div>

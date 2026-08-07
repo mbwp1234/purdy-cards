@@ -2657,6 +2657,28 @@ check('the real 2026-08-07 settle reads as 16m and zero interventions', (() => {
     && s[0].settledAt === NT(10, 22, 26) && s[0].settleMinutes === 16;
 })());
 
+
+/* Settling is not sleep. The Hatch span is time in the sleep environment; the
+   reported figure is from being left alone to the end. settledAt is when they
+   LEFT, not when he dropped off, so this is a lower bound and the span an
+   upper one — the card names both rather than folding a quarter of an hour of
+   ambiguity into "slept". */
+check('the three durations are distinct and add up', (() => {
+  const s = nsess(
+    [{ t: NT(10, 6, 40), s: 'playing' }, { t: NT(11, 40), s: 'idle' }],
+    [{ t: NT(10, 7, 32), s: 'on' }, { t: NT(10, 8, 4), s: 'off' },
+     { t: NT(10, 22, 19), s: 'on' }, { t: NT(10, 22, 26), s: 'off' }],
+    { now: NT(12, 0) })[0];
+  return s.minutes === 93 && s.settleMinutes === 16 && s.asleepMinutes === 78
+    && Math.abs(s.minutes - (s.settleMinutes + s.asleepMinutes)) <= 1;
+})());
+
+check('a session nobody settled reports its whole span as asleep', (() => {
+  const s = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(14, 0), s: 'idle' }], [],
+    { now: NT(15, 0) })[0];
+  return s.settleMinutes === 0 && s.asleepMinutes === 60 && s.minutes === 60;
+})());
+
 check('no history at all yields no sessions rather than throwing',
   nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
 
