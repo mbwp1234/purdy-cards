@@ -3302,13 +3302,36 @@ check('a guarded drag sends nothing until the question is answered', (() => {
   sh._lightAsk = { id: 'light.night', kind: 'level', value: 80 };
   return calls === 0 && sh._optBri('light.night', 5) === 5;
 })());
-check('answering yes to a level change is what finally sends it', (() => {
+/* The lamp has to follow the finger. This debounced at 220ms and cleared the
+   timer on every move, so it only fired once the drag STOPPED — the number
+   moved and the room did not. */
+check('a brightness change is sent immediately, not after the drag ends', (() => {
   const sh = lsh();
   let sent = null;
   sh._hass.callService = (d, s2, data) => { sent = [d, s2, data]; };
-  sh._lightSetBri('light.night', 80);
-  /* debounced, so the optimistic value leads and one call follows */
-  return sh._optBri('light.night', 5) === 80 && sent === null;
+  sh._lightSetBri('light.a', 80);
+  return sent && sent[0] === 'light' && sent[1] === 'turn_on'
+    && sent[2].brightness === Math.round(80 / 100 * 255)
+    && sh._optBri('light.a', 30) === 80;
+})());
+check('a burst is throttled, and the last value still lands', (() => {
+  const sh = lsh();
+  let calls = 0, last = null;
+  sh._hass.callService = (d, s2, data) => { calls += 1; last = data.brightness; };
+  [30, 40, 50, 60, 70].forEach((v) => sh._lightSetBri('light.a', v));
+  /* leading edge fires once; the rest coalesce into one trailing send */
+  return calls === 1 && last === Math.round(30 / 100 * 255)
+    && sh._briSend['light.a'].value === 70 && !!sh._briSend['light.a'].timer;
+})());
+check('the drag paints in place and never calls _render', (() => {
+  /* _render mid-gesture replaces the sheet and detaches the row under the
+     finger, which is what made a drag do nothing until you lifted off. */
+  const bind = src.slice(src.indexOf('_bindLights() {'), src.indexOf('_lightCfg(id) {'));
+  let move = bind.slice(bind.indexOf('const onMove'), bind.indexOf('const finish'));
+  /* Comments explain the rule and would otherwise match it — strip them, or
+     the test passes on prose instead of on code. */
+  move = move.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  return /_paintLight\(/.test(move) && !/_render\(\)/.test(move);
 })());
 
 /* Moods are target sets, and a guarded light is never in one — "all off" that

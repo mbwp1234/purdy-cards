@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.45.0";
+const PC_VERSION = "1.45.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -9578,29 +9578,45 @@ Object.assign(PurdyShellCard.prototype, {
     return "";
   },
 
-  _lightRow(l, open) {
+  /* The look of a lit row, as values. Shared by the renderer and by the live
+     drag painter below, because a drag CANNOT go through _render(): the shell
+     patches, so re-rendering mid-gesture replaces the sheet and detaches the
+     very element under the finger. Same reason the scrub readouts and the music
+     search results are written straight to the DOM. Two code paths drawing the
+     same row would drift, so there is one. */
+  _lightPaint(l) {
     const c = plRgb(l.kelvin, l.on ? l.rgb : null);
     const b = l.bri / 100;
-    const sub = this._lightSub(l);
     /* Reach and intensity both scale, so a dim lamp is a small warm pool
        rather than a faint wash of the whole row. */
     const reach = 24 + b * 90;
-    const bg = `radial-gradient(120% 300% at 22px 50%,${plRgba(c, (.11 + b * .50).toFixed(3))} 0%,`
-      + `${plRgba(c, (.04 + b * .20).toFixed(3))} ${(reach * .42).toFixed(1)}%, transparent ${reach.toFixed(1)}%)`;
-    /* A lit row lifts off the column in its own colour; a dark one is barely a
-       hairline. That is what makes "what is on" countable across a room. */
-    const lift = l.on
-      ? `box-shadow:0 6px 26px -10px ${plRgba(c, (.34 + b * .3).toFixed(2))};`
-        + `border-color:${plRgba(c, (.16 + b * .14).toFixed(2))};background:rgba(255,255,255,.035)`
-      : "";
+    return {
+      c,
+      bg: `radial-gradient(120% 300% at 22px 50%,${plRgba(c, (.11 + b * .50).toFixed(3))} 0%,`
+        + `${plRgba(c, (.04 + b * .20).toFixed(3))} ${(reach * .42).toFixed(1)}%, transparent ${reach.toFixed(1)}%)`,
+      /* A lit row lifts off the column in its own colour; a dark one is barely
+         a hairline. That is what makes "what is on" countable across a room. */
+      lift: l.on
+        ? `box-shadow:0 6px 26px -10px ${plRgba(c, (.34 + b * .3).toFixed(2))};`
+          + `border-color:${plRgba(c, (.16 + b * .14).toFixed(2))};background:rgba(255,255,255,.035)`
+        : "",
+      pip: `background:${plRgba(c, .95)};box-shadow:0 0 ${(5 + b * 13).toFixed(1)}px `
+        + `${(1 + b * 2.5).toFixed(1)}px ${plRgba(c, (.45 + b * .35).toFixed(2))}`,
+    };
+  },
+
+  _lightRow(l, open) {
+    const p = this._lightPaint(l);
+    const sub = this._lightSub(l);
     const dets = l.dimmable
-      ? [25, 50, 75].map((p) => `<span class="pl-det" style="left:${p}%"></span>`).join("")
+      ? [25, 50, 75].map((x) => `<span class="pl-det" style="left:${x}%"></span>`).join("")
       : "";
     return `<div class="pl-row${l.on ? " on" : ""}${l.gone ? " na" : ""}${open ? " open" : ""}"
-        data-light="${psEsc(l.id)}" data-dim="${l.dimmable ? 1 : 0}" data-guard="${this._lightGuarded(l.cfg) ? 1 : 0}">
-        <div class="pl-glow" style="background:${bg}"></div>${dets}
+        data-light="${psEsc(l.id)}" data-dim="${l.dimmable ? 1 : 0}" data-guard="${this._lightGuarded(l.cfg) ? 1 : 0}"
+        style="${p.lift}">
+        <div class="pl-glow" style="background:${p.bg}"></div>${dets}
         <div class="pl-face">
-          ${this._lightCluster(l, c)}
+          ${this._lightCluster(l, p.c)}
           <div class="pl-txt">
             <div class="pl-t1">${psEsc(l.name)}</div>
             ${sub ? `<div class="pl-t2">${psEsc(sub)}</div>` : ""}
@@ -9609,6 +9625,25 @@ Object.assign(PurdyShellCard.prototype, {
         </div>
         <div class="pl-more">${open ? this._lightMore(l) : ""}</div>
       </div>`;
+  },
+
+  /* Paint one row at a value, in place. No render, no reconciliation — the
+     element under the finger must survive the whole gesture. */
+  _paintLight(el, id, v) {
+    const cfg = this._lightCfg(id);
+    if (!cfg) return;
+    const l = this._lightOf(cfg);
+    l.bri = v; l.on = true;
+    const p = this._lightPaint(l);
+    el.classList.add("on");
+    el.setAttribute("style", p.lift);
+    const glow = el.querySelector(".pl-glow");
+    if (glow) glow.style.background = p.bg;
+    const kv = el.querySelector(".pl-kv");
+    if (kv) kv.textContent = v + "%";
+    /* The cluster is part of the picture: a group brightening with dark pips
+       would read as "the lamps are off but the room is lit". */
+    el.querySelectorAll(".pl-pip").forEach((pip) => { pip.style.cssText = p.pip; });
   },
 
   /* The hold panel: the members, then warmth. A fixture that reports no colour
@@ -9734,18 +9769,32 @@ Object.assign(PurdyShellCard.prototype, {
     this._hass.callService("light", "toggle", { entity_id: id });
   },
 
-  /* One service call for a burst of drag, with the last value — not one per
-     pointermove. The optimistic value carries the display in the meantime. */
+  /* The real lamp follows the finger.
+   *
+   * This debounced at 220ms and cleared the timer on every move, so it only
+   * ever fired 220ms after the drag STOPPED — the number on screen moved and
+   * the room did not. A throttle with a leading and a trailing edge sends
+   * immediately, then at most every `gap`, and the final value always lands.
+   * 150ms is about as fast as these bulbs act on; faster only queues calls.
+   */
   _lightSetBri(id, pct) {
     if (!this._briOpt) this._briOpt = {};
     this._briOpt[id] = { value: pct, until: Date.now() + 12000 };
-    clearTimeout(this._briSend && this._briSend[id]);
     if (!this._briSend) this._briSend = {};
-    this._briSend[id] = setTimeout(() => {
-      delete this._briSend[id];
-      if (!this._hass) return;
-      this._hass.callService("light", "turn_on", { entity_id: id, brightness: plByte(pct) });
-    }, 220);
+    const s = this._briSend[id] || (this._briSend[id] = {});
+    s.value = pct;
+    const gap = 150;
+    const fire = () => {
+      s.timer = null;
+      s.last = Date.now();
+      if (this._hass) {
+        this._hass.callService("light", "turn_on",
+          { entity_id: id, brightness: plByte(s.value) });
+      }
+    };
+    const since = s.last ? Date.now() - s.last : Infinity;
+    if (since >= gap) { fire(); return; }
+    if (!s.timer) s.timer = setTimeout(fire, gap - since);
   },
 
   _lightSetKelvin(id, k) {
@@ -9809,22 +9858,24 @@ Object.assign(PurdyShellCard.prototype, {
           if (el.dataset.dim !== "1") return;     /* a switch has nothing to drag */
           clearTimeout(hold); hold = null; moved = true;
           el.classList.add("dragging");
-          this._dragging = true;   /* a repaint mid-drag would rip the row away */
+          this._dragging = true;
         }
         const v = pct(ev.clientX);
         if (v == null) return;
+        /* Paint first, always — the row has to answer the finger even when the
+           value is only a preview. */
+        this._paintLight(el, id, v);
         if (el.dataset.guard === "1") {
-          /* Preview only — nothing is sent until the question is answered. */
-          el.dataset.preview = v;
-          const kv = el.querySelector(".pl-kv");
-          if (kv) kv.textContent = v + "%";
+          el.dataset.preview = v;   /* nothing is sent until the question is answered */
           return;
         }
         this._mood = null;
         this._lightSetBri(id, v);
-        this._dragging = false;                  /* let the optimistic value paint */
-        this._render();
-        this._dragging = true;
+        /* No _render() here. _dragging stays true for the whole gesture: a
+           patch would replace the sheet and detach `el`, after which
+           getBoundingClientRect() reads zero and every later move is silently
+           discarded. That is exactly why a drag used to do nothing until you
+           lifted off and started again. */
       };
 
       const finish = () => {
