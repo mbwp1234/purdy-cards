@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.42.0";
+const PC_VERSION = "1.43.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8740,9 +8740,13 @@ function psClock(t) {
  *  - door_min_sec    Mounting the sensor produced ten transitions in 34
  *                    seconds, five of them under 300ms. A magnet settling is
  *                    not a person; a person holds a door open for seconds.
- *  - door_merge_sec  Going in and coming out is one visit. Without this, every
- *                    intervention counts twice — in and out — which is the same
- *                    double-count the sock's 30-minute cooldown existed to stop.
+ *  - door_merge_sec  A bounce guard: two opens within a minute are one physical
+ *                    event. It is NOT what stops the in-and-out double count —
+ *                    it was given that job and could not do it (see below).
+ *  - visit_max_min   Going in and coming out is one visit, and a visit lasts as
+ *                    long as you stay. The open that follows a counted entry
+ *                    inside this window is that visit's exit, not a new
+ *                    intervention. Absorbs exactly one open, never a chain.
  *  - exit_window_min The put-down. Someone has to be IN the room to start the
  *                    Hatch, so the first door-open of a session is almost
  *                    always them leaving — and counting it made every session
@@ -8790,9 +8794,9 @@ function psNurserySessions(hatch, door, opts) {
      have been swallowed as the put-down and a short nap could never report an
      intervention at all. One set of thresholds cannot serve both. */
   const NAP = { min_session_min: 8, exit_window_min: 25, merge_gap_min: 5,
-    settle_max_min: 30 };
+    settle_max_min: 30, visit_max_min: 20 };
   const NIGHT = { min_session_min: 20, exit_window_min: 30, merge_gap_min: 20,
-    settle_max_min: 60 };
+    settle_max_min: 60, visit_max_min: 30 };
   const isNight = (t) => {
     const hr = new Date(t).getHours();
     return hr >= nightAfter || hr < morning;
@@ -8927,14 +8931,37 @@ function psNurserySessions(hatch, door, opts) {
       i += 1;
     }
 
+    /* An intervention is a VISIT, and a visit is two door-opens: going in and
+     * coming out again. Pairing them is the only way to count one.
+     *
+     * `door_merge_sec` was doing this job and could not. It merges opens within
+     * 60 seconds of each other, which assumes the visit is over almost as soon
+     * as it began — so any wake-up where someone actually settles him read as
+     * two. Observed 2026-08-07: in at 22:05:13, out at 22:17:22, **12 minutes**
+     * apart, counted twice. A visit is bounded by how long you STAY, not by how
+     * fast you come back.
+     *
+     * So the first open is the entry and is counted; the next open within
+     * `visit_max_min` is that visit's exit and is absorbed. It absorbs exactly
+     * ONE open, never a chain — that is what keeps it from swallowing a whole
+     * night the way an unbounded rule would, and it is the same asymmetry the
+     * settle chain needed a cap for.
+     *
+     * The failure mode is now an UNDERCOUNT — a genuine second wake-up inside
+     * the window reads as the first visit's exit. That is the better error:
+     * visits longer than a minute are the norm, two wake-ups inside half an
+     * hour are not. `door_merge_sec` stays as the bounce guard it always was.
+     */
+    const visitMax = rule(s.from, "visit_max_min");
     const events = [];
-    /* Seeded from the last settling event so a straight-back-in within the
-       merge window is part of leaving, not a first intervention. */
-    let lastCounted = hadExit ? inside[i - 1].from : -Infinity;
+    let lastOp = hadExit ? inside[i - 1].from : -Infinity;
+    let entryAt = null;   /* set while someone is in the room */
     inside.slice(i).forEach((op) => {
-      if (op.from - lastCounted < doorMerge) return;
+      if (op.from - lastOp < doorMerge) return;
       if (!s.active && s.to - op.from <= retrieval) return;   /* picking him up */
-      lastCounted = op.from;
+      lastOp = op.from;
+      if (entryAt != null && op.from - entryAt <= visitMax) { entryAt = null; return; }
+      entryAt = op.from;
       events.push(op.from);
     });
 
@@ -9095,9 +9122,17 @@ Object.assign(PurdyShellCard.prototype, {
     }
   },
 
+  /* One clock for the whole render path. Every nap fixture in the suite was
+     anchored to `Date.now() - 3h`, which is a NAP in the afternoon and a NIGHT
+     after nine — so six tests passed all day and failed every evening, and the
+     suite could not be trusted at exactly the hour the nursery card matters
+     most. An explicit seam is the fix; the fixtures set `_testNow`. */
+  _nowMs() { return this._testNow == null ? Date.now() : this._testNow; },
+
   _nurserySessions(sec) {
     const h = this._nursery || {};
-    return psNurserySessions(h[sec.hatch], h[sec.door], sec);
+    return psNurserySessions(h[sec.hatch], h[sec.door],
+      Object.assign({}, sec, { now: this._nowMs() }));
   },
 
   /* The night, scrubbable.
@@ -9215,7 +9250,7 @@ Object.assign(PurdyShellCard.prototype, {
         stroke="var(--ps-deep)" stroke-width="0.6" stroke-dasharray="1.6 1.4"/>`;
     })();
 
-    const nx = x(Date.now());
+    const nx = x(this._nowMs());
     return `<div class="ps-hyp">
         <div class="ps-hypt"><span class="ps-lbl">Today</span></div>
         <div class="ps-railbox">
@@ -9241,14 +9276,14 @@ Object.assign(PurdyShellCard.prototype, {
     const loaded = !!this._nursery;
     const err = this._nurseryErr;
     const sessions = loaded ? this._nurserySessions(sec) : [];
-    const stats = psNurseryStats(sessions, { now: Date.now(), days: sec.days || 7 });
+    const stats = psNurseryStats(sessions, { now: this._nowMs(), days: sec.days || 7 });
 
     const live = sessions.find((s) => s.active);
     const past = sessions.filter((s) => !s.active);
     const lastNight = [...past].reverse().find((s) => s.night) || null;
     const nightSession = live && live.night ? live : lastNight;
 
-    const todayKey = psDayKey(new Date());
+    const todayKey = psDayKey(new Date(this._nowMs()));
     const todayNaps = sessions.filter((s) => !s.night && s.day === todayKey);
     const napMins = todayNaps.reduce((a, s) => a + s.asleepMinutes, 0);
     const catnapUnder = sec.catnap_under_min == null ? 30 : sec.catnap_under_min;

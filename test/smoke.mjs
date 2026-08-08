@@ -2396,7 +2396,10 @@ check('mounting chatter does not become ten interventions', (() => {
   /* The real recorded burst, against the real session it fell inside: the
      Hatch ran 08:30:08 to 09:10:36, so these land 35 minutes in — past the
      nap exit window, so they are read as visits rather than a put-down.
-     Ten raw opens, three interventions. */
+     Ten raw opens. Two visits, not three: the 9:06:59 open is the exit of the
+     9:05:37 entry now that a visit is a PAIR of opens rather than anything
+     inside 60 seconds. The guarantee this test exists for — ten opens must not
+     become ten interventions — is unchanged. */
   const door = [
     { t: NT(9, 5, 37), s: 'on' }, { t: NT(9, 5, 41), s: 'off' },
     { t: NT(9, 5, 42), s: 'on' }, { t: NT(9, 5, 43), s: 'off' },
@@ -2414,7 +2417,7 @@ check('mounting chatter does not become ten interventions', (() => {
   const s = nsess(
     [{ t: NT(8, 30, 8), s: 'playing' }, { t: NT(10, 30), s: 'idle' }],
     door, { now: NT(11, 0) });
-  return s.length === 1 && s[0].interventions === 3;
+  return s.length === 1 && s[0].interventions === 2;
 })());
 
 check('a sub-second flicker alone is never an intervention', (() => {
@@ -2678,6 +2681,35 @@ check('the real 2026-08-07 night put-down is four trips of settling, not three',
     && s[0].settledAt === NT(19, 39, 0) && s[0].settleMinutes === 33;
 })());
 
+/* The real 2026-08-07 wake-up: in at 22:05:13, out at 22:17:22. Twelve minutes
+   apart, so `door_merge_sec` (60s) counted it twice — a visit is bounded by how
+   long you STAY, not by how fast you come back. Pinned. */
+check('going in and coming out twelve minutes later is ONE intervention', (() => {
+  const s = nsess(
+    [{ t: NT(19, 6, 19), s: 'playing' }],
+    [{ t: NT(19, 23, 19), s: 'on' }, { t: NT(19, 23, 23), s: 'off' },
+     { t: NT(19, 38, 51), s: 'on' }, { t: NT(19, 39, 0), s: 'off' },
+     { t: NT(22, 5, 13), s: 'on' }, { t: NT(22, 5, 19), s: 'off' },
+     { t: NT(22, 17, 22), s: 'on' }, { t: NT(22, 17, 32), s: 'off' }],
+    { now: NT(23, 30) });
+  return s.length === 1 && s[0].interventions === 1
+    && s[0].events.length === 1 && s[0].events[0] === NT(22, 5, 13);
+})());
+
+/* The pairing absorbs exactly ONE open, never a chain — otherwise a visit every
+   twenty minutes would swallow the night, which is the failure the settle chain
+   needed a cap for. */
+check('a third open is a new visit, not a second exit', (() => {
+  const s = nsess(
+    [{ t: NT(19, 0), s: 'playing' }],
+    [{ t: NT(22, 0), s: 'on' }, { t: NT(22, 0, 8), s: 'off' },
+     { t: NT(22, 12), s: 'on' }, { t: NT(22, 12, 8), s: 'off' },
+     { t: NT(22, 40), s: 'on' }, { t: NT(22, 40, 8), s: 'off' },
+     { t: NT(22, 52), s: 'on' }, { t: NT(22, 52, 8), s: 'off' }],
+    { now: NT(23, 30) })[0];
+  return s.interventions === 2;
+})());
+
 /* The brake. Chaining alone would let a visit every twenty minutes swallow a
    whole night, which is the failure mode a fixed window could not have. */
 check('settle_max_min stops the chain running away with the night', (() => {
@@ -2752,7 +2784,8 @@ check('no night recorded reads as no data, not as a zero-length night', (() => {
     hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   sh._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'off', attributes: {} } } };
-  const nap = Date.now() - 3 * 3600000;
+  sh._testNow = NT(15, 0);
+  const nap = NT(10, 30);
   sh._nursery = {
     'media_player.h': [{ t: nap, s: 'playing' }, { t: nap + 40 * 60000, s: 'idle' }],
     'binary_sensor.d': [],
@@ -2842,13 +2875,15 @@ const nurseryRendered = (() => {
   s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'off', attributes: {} } } };
   const HR = 3600000, MIN = 60000;
-  const d = new Date(); d.setHours(20, 10, 0, 0);
-  const bed = d.getTime() - 24 * HR;
+  /* A FIXED clock, injected. Anchoring the nap to `Date.now() - 3h` was meant
+     to stop the fixture depending on the hour the suite ran, and did the
+     opposite: three hours ago is a nap at 2pm and a NIGHT at 10pm, so six
+     tests passed all afternoon and failed every evening. `_testNow` pins the
+     card's clock to 3:00 PM and every session below is placed against it. */
+  s._testNow = NT(15, 0);
+  const bed = NT(20, 10) - 24 * HR;
   const wake = bed + 10.5 * HR;
-  /* Anchored to now, not to a clock hour: pinning the nap to 10:30 made the
-     fixture depend on what time the suite happened to run, and before 10:30
-     the nap sat in the future with a zero-length arc. */
-  const napStart = Date.now() - 3 * HR;
+  const napStart = NT(10, 30);
   s._nursery = {
     'media_player.h': [{ t: bed, s: 'playing' }, { t: wake, s: 'idle' },
       { t: napStart, s: 'playing' }, { t: napStart + 50 * MIN, s: 'idle' }],
@@ -2878,8 +2913,9 @@ check('a nap reading that crosses the hour asks for a smaller step', (() => {
     'binary_sensor.d': { state: 'off', attributes: {} } } };
   const MIN = 60000;
   /* Two naps, one either side of the hour: 44m and 1h19m — the pair on the
-     screenshot that showed the overhang. */
-  const a = Date.now() - 5 * 60 * MIN, b = Date.now() - 2.5 * 60 * MIN;
+     screenshot that showed the overhang. Both pinned inside the nap band. */
+  s._testNow = NT(15, 0);
+  const a = NT(10, 0), b = NT(12, 30);
   s._nursery = {
     'media_player.h': [{ t: a, s: 'playing' }, { t: a + 50 * MIN, s: 'idle' },
       { t: b, s: 'playing' }, { t: b + 85 * MIN, s: 'idle' }],
@@ -2971,7 +3007,8 @@ check('the door is not a chip state', (() => {
     hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   sh._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'on', attributes: {} } } };
-  const nap = Date.now() - 3 * 3600000;
+  sh._testNow = NT(15, 0);
+  const nap = NT(10, 30);
   sh._nursery = {
     'media_player.h': [{ t: nap, s: 'playing' }, { t: nap + 40 * 60000, s: 'idle' }],
     'binary_sensor.d': [],
