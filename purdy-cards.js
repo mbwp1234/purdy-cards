@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.47.0";
+const PC_VERSION = "1.48.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -10303,6 +10303,11 @@ Object.assign(PurdyShellCard.prototype, {
           image: (st && st.attributes.container_image) || "",
           port,
           on: this._optSw(c.id, pcState(this._hass, c.id)) === "on",
+          /* The agent publishes a restart button per container, keyed the same
+             way the switch is — so it costs nothing to offer and saves a
+             stop-wait-start round trip on a wedged container. */
+          restart: this._hass.states[`${d.restart_prefix || ""}${c.key}`] && d.restart_prefix
+            ? `${d.restart_prefix}${c.key}` : "",
         };
       });
   },
@@ -10396,7 +10401,7 @@ Object.assign(PurdyShellCard.prototype, {
        a good enough refresh for them and watching them would repaint the whole
        shell every time one ticks. */
     [s.status, s.uptime, s.version, s.registration, s.registration_type,
-      s.plugins, s.plugin_updates].forEach(add);
+      s.plugins, s.plugin_updates, s.update_available].forEach(add);
     (s.faults || []).forEach((f) => add(f.entity));
     (s.meters || []).forEach((m) => add(m.entity));
     (s.stats || []).forEach((m) => add(m.entity));
@@ -10552,6 +10557,11 @@ Object.assign(PurdyShellCard.prototype, {
     const ver = pcState(h, s.version);
     const plugins = pcState(h, s.plugins);
     const updates = pcNum(h, s.plugin_updates);
+    /* There is no update ACTION anywhere in this integration — no update.*
+       entity, no service — so an "Update" button would be a button that
+       cannot update anything. What exists is the knowledge that one is
+       waiting, so the row becomes a link to the page that does it. */
+    const osUpd = pcState(h, s.update_available) === "on";
     const reg = pcState(h, s.registration);
     const regBad = reg && ["expired", "invalid", "eguard"].indexOf(String(reg).toLowerCase()) >= 0;
 
@@ -10566,9 +10576,12 @@ Object.assign(PurdyShellCard.prototype, {
     const idBlock = `<div class="ps-sycard">
         <div class="ps-syid">
           ${up ? `<div data-info="${psEsc(s.uptime)}"><span class="ps-syk">Uptime</span><b>${psEsc(up)}</b></div>` : ""}
-          ${ver ? `<div data-info="${psEsc(s.version)}"><span class="ps-syk">Version</span><b>${psEsc(ver)}</b></div>` : ""}
-          ${plugins ? `<div data-info="${psEsc(s.plugins)}"><span class="ps-syk">Plugins</span><b>${psEsc(plugins)}${
-            updates ? ` <em>·${updates} update${updates > 1 ? "s" : ""}</em>` : ""}</b></div>` : ""}
+          ${ver ? `<div${osUpd ? ` data-syurl="${psEsc(s.update_url || s.url || "")}"` : ` data-info="${psEsc(s.version)}"`}>
+            <span class="ps-syk">Version</span><b>${psEsc(ver)}${
+              osUpd ? ` <em>·update ↗</em>` : ""}</b></div>` : ""}
+          ${plugins ? `<div${updates ? ` data-syurl="${psEsc(s.plugins_url || s.url || "")}"` : ` data-info="${psEsc(s.plugins)}"`}>
+            <span class="ps-syk">Plugins</span><b>${psEsc(plugins)}${
+            updates ? ` <em>·${updates} update${updates > 1 ? "s" : ""} ↗</em>` : ""}</b></div>` : ""}
         </div>
         ${regBad ? `<div class="ps-syreg" data-info="${psEsc(s.registration)}">
           <span class="ps-dotc warn"></span>Registration <b>${psEsc(reg)}</b>${
@@ -10713,6 +10726,10 @@ Object.assign(PurdyShellCard.prototype, {
           ${c.image || c.port ? `<span class="ps-symeta ps-trunc">${psEsc(c.image)}${
             c.image && c.port ? " · " : ""}${psEsc(c.port)}</span>` : ""}
         </span>
+        ${c.on && c.restart ? `<button class="ps-link" type="button" data-sybtn="${psEsc(c.restart)}"
+          aria-label="Restart ${psEsc(c.name)}">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/></svg>
+        </button>` : ""}
         ${c.url ? `<button class="ps-link" type="button" data-syurl="${psEsc(c.url)}" aria-label="Open ${psEsc(c.name)}">
           <svg viewBox="0 0 24 24" class="ps-ico"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
         </button>` : ""}
@@ -10849,12 +10866,26 @@ Object.assign(PurdyShellCard.prototype, {
     const ramSt = h.states[pf.ram];
     const ra = ramSt ? ramSt.attributes : {};
 
-    const fans = (pf.fans || []).map((id, i) => {
+    /* These entities are the PWM DUTY the controller is commanding, not a
+       measured speed — the state tracks `pwm_value`/255 exactly. Only a header
+       with a tach wire reports `rpm`, and a channel driven at 71% that reads
+       0 rpm is not a stopped fan, it is a fan nobody can hear back from. On
+       this box that is five of six. Printing "0 RPM" would be the same lie as
+       drawing a missing reading as zero. */
+    const fanRows = (pf.fans || []).map((id, i) => {
       const v = pcNum(h, id);
-      return v == null ? "" : `<span class="ps-syfk">${i + 1}</span>
-        <span class="ps-sybar" data-info="${psEsc(id)}"><i class="fan" style="width:${Math.max(0, Math.min(100, v))}%"></i></span>
-        <span class="ps-syfv">${Math.round(v)}%</span>`;
-    }).join("");
+      if (v == null) return null;
+      const st = h.states[id];
+      const rpm = st && Number.isFinite(Number(st.attributes.rpm)) ? Number(st.attributes.rpm) : null;
+      const mode = st && st.attributes.mode;
+      return { id, n: i + 1, duty: Math.max(0, Math.min(100, v)), rpm, mode };
+    }).filter(Boolean);
+    const tachs = fanRows.filter((f) => f.rpm > 0).length;
+    const fans = fanRows.map((f) => `<span class="ps-syfk">${f.n}</span>
+        <span class="ps-sybar" data-info="${psEsc(f.id)}"><i class="fan" style="width:${f.duty}%"></i></span>
+        <span class="ps-syfv">${Math.round(f.duty)}%${f.rpm > 0
+          ? ` <b>${f.rpm}</b>`
+          : f.duty > 0 ? ` <em>no tach</em>` : ""}</span>`).join("");
 
     const net = (pf.network || []).map((n) => {
       const rx = pcNum(h, n.rx), tx = pcNum(h, n.tx);
@@ -10890,7 +10921,11 @@ Object.assign(PurdyShellCard.prototype, {
         ${this._syCpuGraph(pf)}
       </div>
       ${cells ? `<div class="ps-vits two">${cells}</div>` : ""}
-      ${fans ? `<div class="ps-sycard"><span class="ps-lbl">Fans</span>
+      ${fans ? `<div class="ps-sycard">
+        <div class="ps-syrow"><span class="ps-lbl">Fans <i class="ps-syq2">duty</i></span>
+          <span class="ps-sysub">${tachs
+            ? `${tachs} of ${fanRows.length} reporting rpm`
+            : "no rpm feedback"}</span></div>
         <div class="ps-syfans">${fans}</div></div>` : ""}
       ${net ? `<div class="ps-sycard">
         <div class="ps-syrow"><span class="ps-lbl">Network</span><span class="ps-sysub">${psEsc(netUnit)}</span></div>
@@ -11986,7 +12021,12 @@ const PS_STYLES = `
 
       .ps-syfans { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; }
       .ps-syfk { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
-      .ps-syfv { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .ps-syfv { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums;
+                 white-space: nowrap; }
+      .ps-syfv b { color: var(--ps-text); font-weight: 640; }
+      /* A channel nobody can hear back from is not a stopped fan. */
+      .ps-syfv em { font-style: normal; color: var(--ps-dim); }
+      .ps-syq2 { font-style: normal; color: var(--ps-dim); letter-spacing: .06em; }
 
       .ps-syn { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; }
       .ps-syn + .ps-syn { border-top: 1px solid var(--ps-hair-soft); }
