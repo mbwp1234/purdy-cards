@@ -4592,6 +4592,107 @@ check('the viewport offset is config, not a baked number', (() => {
 
 /* --- history windows -------------------------------------------------------- */
 
+/* --- the server earns a panel; the music earns a strip -------------------- */
+
+const srvCfg = {
+  name: 'PurdyNAS', url: 'http://server/Dashboard',
+  status: 'sensor.nas_status', uptime: 'sensor.nas_uptime',
+  update_available: 'binary_sensor.nas_update',
+  faults: [
+    { entity: 'binary_sensor.parity', state: 'on', label: 'Parity', detail: 'invalid', severity: 'critical' },
+    { entity: 'sensor.smart', state_not: 'PASSED', label: 'Parity SMART', detail: 'not PASSED', severity: 'warn' },
+  ],
+  meters: [
+    { label: 'Array', entity: 'sensor.array', warn_above: 80, critical_above: 95 },
+    { label: 'RAM', entity: 'sensor.ram', warn_above: 85 },
+    { label: 'Cache', entity: 'sensor.cache_gone' },
+  ],
+  stats: [{ label: 'CPU', entity: 'sensor.cpu', unit: '%', digits: 1 }],
+  docker: { running: 'sensor.containers' },
+  perf: { cpu: 'sensor.cpu' },
+};
+
+const dsys = new DK();
+dsys.setConfig({
+  server: srvCfg,
+  sections: [
+    { type: 'systems', key: 'sys', title: 'Systems', zone: 'stage',
+      devices: [{ name: 'PurdyNAS', key: 'nas', icon: 'mdi:server' },
+                { name: 'Jeeves', key: 'floor', icon: 'mdi:robot-vacuum', chip: 'vacuum.j',
+                  meters: [{ label: 'Dirty water', entity: 'sensor.dirty', warn_above: 80 }] }] },
+    { type: 'nowplaying', key: 'np', title: 'Now playing', zone: 'dock', sheet: 'music' },
+    { type: 'music', key: 'music', sheet_only: true, default_player: 'media_player.lr',
+      players: [{ entity: 'media_player.lr', name: 'Living Room' }] },
+  ],
+});
+dsys._hass = { states: {
+  'sensor.nas_status': { state: 'online', attributes: {} },
+  'sensor.nas_uptime': { state: '12 days', attributes: {} },
+  'binary_sensor.parity': { state: 'on', attributes: {} },
+  'sensor.smart': { state: 'PASSED', attributes: {} },
+  'sensor.array': { state: '85.8', attributes: {} },
+  'sensor.ram': { state: '41.2', attributes: {} },
+  'sensor.cpu': { state: '3.1', attributes: {} },
+  'sensor.containers': { state: '4 of 11', attributes: {} },
+  'sensor.dirty': { state: '10', attributes: {} },
+  'vacuum.j': { state: 'docked', attributes: {} },
+  'binary_sensor.nas_update': { state: 'off', attributes: {} },
+  'media_player.lr': { state: 'idle', attributes: { app_id: 'music_assistant', media_title: 'stale', friendly_name: 'Living Room TV' } },
+} };
+dsys._history = {};
+
+check('the server block is watched, not just the sections',
+  dsys._watched.includes('sensor.array') && dsys._watched.includes('sensor.cpu')
+  && dsys._watched.includes('binary_sensor.parity'));
+
+const sysHtml = dsys._pnlSystems(dsys._config.sections[0]);
+check('systems on the stage names the server and its uptime',
+  /PurdyNAS/.test(sysHtml) && /12 days/.test(sysHtml));
+check('systems draws a bar per meter', (sysHtml.match(/pd-mbar/g) || []).length === 3);
+check('a meter with no reading draws an empty track, never a bar at zero', (() => {
+  const cache = sysHtml.slice(sysHtml.indexOf('Cache'));
+  const row = cache.slice(0, cache.indexOf('</div>', cache.indexOf('pd-mv2')));
+  return /pd-mbar"><\/span>/.test(row) && /—/.test(row);
+})());
+check('a meter over its warn line colours, one under it does not',
+  /width:85.8%;background:var\(--ps-warn\)/.test(sysHtml)
+  && /width:41.2%;background:var\(--ps-cool\)/.test(sysHtml));
+check('only the firing server faults are listed',
+  /Parity<\/div>/.test(sysHtml) && !/Parity SMART/.test(sysHtml));
+check('the fault chip counts and colours by the worst severity',
+  /pd-chip bad/.test(sysHtml) && /1 fault/.test(sysHtml));
+check('the CPU trend rides the existing history fetch',
+  dsys._historyEntities().includes('sensor.cpu'));
+check('the other systems devices are secondary, not absent',
+  /Jeeves/.test(sysHtml) && sysHtml.indexOf('PurdyNAS') < sysHtml.indexOf('Jeeves'));
+check('a systems panel with no server block falls back rather than rendering blank', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'systems', key: 's', zone: 'stage',
+    devices: [{ name: 'Jeeves', icon: 'mdi:robot-vacuum', chip: 'vacuum.j' }] }] });
+  d._hass = { states: { 'vacuum.j': { state: 'docked', attributes: {} } } };
+  return /Jeeves/.test(d._pnlSystems(d._config.sections[0]));
+})());
+check('a healthy server says so rather than showing an empty list', (() => {
+  dsys._hass.states['binary_sensor.parity'] = { state: 'off', attributes: {} };
+  const h = dsys._pnlSystems(dsys._config.sections[0]);
+  dsys._hass.states['binary_sensor.parity'] = { state: 'on', attributes: {} };
+  return /pd-chip good/.test(h) && /Healthy/.test(h) && /Nothing wrong with PurdyNAS/.test(h);
+})());
+
+const npHtml = dsys._dockNowplaying(dsys._config.sections[1]);
+check('the docked now-playing draws no transport when nothing plays',
+  /pd-npbar idle/.test(npHtml) && !/data-mp=/.test(npHtml));
+check('an idle player\'s stale title stays out of the dock', !/stale/.test(npHtml));
+check('the idle strip still opens the music sheet', /data-sheet="music"/.test(npHtml));
+dsys._hass.states['media_player.lr'] = { state: 'playing', attributes: {
+  app_id: 'music_assistant', media_title: 'Dance Mode', media_artist: 'Bluey', entity_picture_local: '/api/a.jpg' } };
+const npLive = dsys._dockNowplaying(dsys._config.sections[1]);
+check('the docked now-playing carries the track and a transport',
+  /Dance Mode/.test(npLive) && /data-mp="playpause"/.test(npLive) && /pd-tb/.test(npLive));
+check('the docked now-playing names the room from config',
+  /Living Room</.test(npLive) && !/Living Room TV/.test(npLive));
+check('the docked artwork uses the same-origin proxy', /\/api\/a\.jpg/.test(npLive));
+
 /* --- what only a screenshot showed --------------------------------------- */
 
 /* Six cells sharing one flex row came out ~72px each on a 1440 desktop and
