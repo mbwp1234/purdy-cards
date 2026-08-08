@@ -4592,6 +4592,59 @@ check('the viewport offset is config, not a baked number', (() => {
 
 /* --- history windows -------------------------------------------------------- */
 
+/* --- what only a screenshot showed --------------------------------------- */
+
+/* Six cells sharing one flex row came out ~72px each on a 1440 desktop and
+   truncated every label to "LIVIN…" / "Ligh…". A label that has lost the word
+   is not a smaller label, it is a missing one. */
+check('the dock strips wrap rather than squeezing their labels', (() => {
+  const rooms = /\.pd-rstrip \{[^}]*\}/.exec(dks)[0];
+  const quick = /\.pd-qstrip \{[^}]*\}/.exec(dks)[0];
+  return /display: grid/.test(rooms) && /auto-fit/.test(rooms) && /minmax\(/.test(rooms)
+    && /display: grid/.test(quick) && /auto-fit/.test(quick) && /minmax\(/.test(quick);
+})());
+check('a dock cell no longer fights its neighbours for width',
+  !/\.pd-rc \{[^}]*flex: 1;/.test(dks) && !/\.pd-qt \{[^}]*flex: 1;/.test(dks));
+
+/* Uncapped it grew to ~340px — a 24h trend line taking a third of the screen
+   height, which is not what the climate panel is about. */
+check('the temperature graph stretches but is capped',
+  /\.pd-graph \{[^}]*flex: 1 1 auto;[^}]*max-height: 240px/.test(dks));
+
+/* The chip already carries how long he has been up. */
+check('the status line does not repeat the awake time the chip carries', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'nursery', key: 'joel', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  d._nursery = {};
+  const line = d._nurseryStatus({}, null,
+    { wakeWindowMin: 120, wakeSince: Date.parse('2026-08-08T11:47:00'), bedMean: 1146 }, null, Date.now());
+  return /Since 11:47/.test(line) && !/2h/.test(line) && /usually down/.test(line);
+})());
+check('a live session still names its own elapsed time', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'nursery', key: 'joel', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  const now = Date.parse('2026-08-08T15:00:00');
+  d._nursery = {};
+  const live = { from: now - 3600000, settledAt: now - 3000000, active: true };
+  return /asleep/.test(d._nurseryStatus({}, live, {}, null, now));
+})());
+
+/* Weather states are slugs with no separator, so the generic humaniser could
+   only capitalise them: "Partlycloudy". */
+check('weather states read as words, not as slugs', (() => {
+  const d = new DK();
+  d.setConfig({ weather: 'weather.w', sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  d._hass = { states: { 'weather.w': { state: 'partlycloudy', attributes: { temperature: 90 } } } };
+  const html = d._zoneWeather();
+  return /Partly cloudy/.test(html) && !/Partlycloudy/.test(html);
+})());
+check('an unmapped weather state still falls back to the humaniser', (() => {
+  const d = new DK();
+  d.setConfig({ weather: 'weather.w', sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  d._hass = { states: { 'weather.w': { state: 'sunny', attributes: { temperature: 90 } } } };
+  return /Sunny/.test(d._zoneWeather());
+})());
+
 check('the desk adds no history call that could forget end_time',
   !/history\/period\//.test(deskSrc));
 

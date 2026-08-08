@@ -435,8 +435,12 @@ Object.assign(PurdyDeskCard.prototype, {
         psHM(Math.round((now - live.settledAt) / 60000))}`;
     }
     if (stats.wakeWindowMin == null) return "Nothing recorded yet.";
+    /* The CHIP carries how long he has been up; this line must not say it
+       again. Printing "Up 2h 0m" beside "Awake 2h 0m · since 11:47 AM" spends
+       the one free line on a number that is already on screen — when he is up,
+       what is not on screen is when he last went down and when he next will. */
     const bed = stats.bedMean != null ? ` · usually down ${psMinsToClock(stats.bedMean)}` : "";
-    return `Awake ${psHM(stats.wakeWindowMin)} · since ${pdClock(stats.wakeSince)}${bed}`;
+    return `Since ${pdClock(stats.wakeSince)}${bed}`;
   },
 
   /* The night as a plot with an axis, inside a box — a bare line on the card
