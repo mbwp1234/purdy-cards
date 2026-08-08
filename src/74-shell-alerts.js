@@ -221,6 +221,25 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }
 
+    /* Lights live in a sheet, not in the column. The section is `sheet_only`,
+       so this is the only path that renders it: a sheet slides over what is
+       already there instead of pushing it down, which is the same reason the
+       schedule and the music controls are sheets. Same body, same handlers —
+       only the header differs, and the sheet chrome names itself rather than
+       printing "Lights" twice. */
+    if (this._sheet === "lights") {
+      const sec = (this._config.sections || []).find((x) => x.type === "lights");
+      if (!sec) return "";
+      const lights = this._lightList(sec);
+      if (!lights.length) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          <div class="ps-sheeth"><span class="ps-lbl">Lights</span>
+            ${this._lightChip(lights)}${close}</div>
+          ${this._lightsBody(sec, lights)}
+        </div>`;
+    }
+
     /* Every control in this sheet acts on _activePlayer(). It used to act on
        `nowPlaying || default_player` while the room list highlighted the
        user's pick \u2014 so picking a room changed the highlight and nothing else,

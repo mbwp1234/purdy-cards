@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.44.0";
+const PC_VERSION = "1.45.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8563,6 +8563,25 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }
 
+    /* Lights live in a sheet, not in the column. The section is `sheet_only`,
+       so this is the only path that renders it: a sheet slides over what is
+       already there instead of pushing it down, which is the same reason the
+       schedule and the music controls are sheets. Same body, same handlers —
+       only the header differs, and the sheet chrome names itself rather than
+       printing "Lights" twice. */
+    if (this._sheet === "lights") {
+      const sec = (this._config.sections || []).find((x) => x.type === "lights");
+      if (!sec) return "";
+      const lights = this._lightList(sec);
+      if (!lights.length) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          <div class="ps-sheeth"><span class="ps-lbl">Lights</span>
+            ${this._lightChip(lights)}${close}</div>
+          ${this._lightsBody(sec, lights)}
+        </div>`;
+    }
+
     /* Every control in this sheet acts on _activePlayer(). It used to act on
        `nowPlaying || default_player` while the room list highlighted the
        user's pick \u2014 so picking a room changed the highlight and nothing else,
@@ -9637,8 +9656,11 @@ Object.assign(PurdyShellCard.prototype, {
       </button>`).join("")}</div>`;
   },
 
-  _secLights(sec) {
-    const lights = (sec.lights || [])
+  /* The lights of a section, resolved. Split out from the renderer because the
+     same list feeds the column and the sheet — the section is `sheet_only` on
+     Phone v2, so this is the only path that actually runs there. */
+  _lightList(sec) {
+    return (sec.lights || [])
       .filter((c) => {
         if (!c.hide_when_unavailable) return true;
         /* Christmas hid itself with a Bubble `styles` hack watching a sensor go
@@ -9647,25 +9669,35 @@ Object.assign(PurdyShellCard.prototype, {
         return pcReading(this._hass, c.hide_when_unavailable).ok;
       })
       .map((c) => this._lightOf(c));
-    if (!lights.length) return "";
+  },
 
+  /* The summary chip, shared by the section header and the sheet header. A
+     guarded light is neither "on" nor part of the total: it is not something
+     you are being asked to deal with. */
+  _lightChip(lights) {
     const counted = lights.filter((l) => !l.cfg.protect && !l.gone);
     const on = counted.filter((l) => l.on);
-    const chip = on.length
-      ? `<span class="ps-chip lit">${on.length} of ${counted.length} on</span>`
-      : lights.some((l) => l.on && l.cfg.protect)
-        ? `<span class="ps-chip">Night light only</span>`
-        : `<span class="ps-chip">All off</span>`;
+    if (on.length) return `<span class="ps-chip lit">${on.length} of ${counted.length} on</span>`;
+    if (lights.some((l) => l.on && l.cfg.protect)) return `<span class="ps-chip">Night light only</span>`;
+    return `<span class="ps-chip">All off</span>`;
+  },
 
+  /* Moods and rows, with no header — so the sheet chrome can name itself
+     rather than printing the title twice, the same reason a hosted card gets
+     its own title blanked. */
+  _lightsBody(sec, lights) {
     const rows = lights.map((l) => {
       let html = this._lightRow(l, this._lightOpen === l.id);
       if (this._lightAsk && this._lightAsk.id === l.id) html += this._lightAskHtml(l);
       return html;
     }).join("");
+    return `${this._lightMoodHtml(sec)}<div class="pl-rows">${rows}</div>`;
+  },
 
-    return `${this._head(sec, chip)}
-      ${this._lightMoodHtml(sec)}
-      <div class="pl-rows">${rows}</div>`;
+  _secLights(sec) {
+    const lights = this._lightList(sec);
+    if (!lights.length) return "";
+    return `${this._head(sec, this._lightChip(lights))}${this._lightsBody(sec, lights)}`;
   },
 
   /* The guard covers the LEVEL as well as the switch.

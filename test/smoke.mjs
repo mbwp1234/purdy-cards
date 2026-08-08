@@ -1870,6 +1870,12 @@ check('the sheet offers a tab per day', /data-sday="monday"/.test(schedH) && /da
 check('entries name their zone', /2nd Floor/.test(schedH));
 check('read-only scopes say why', /Read-only/.test(schedH));
 shs2._schedScope = null;
+/* Pinned to a weekday. The fixture mirrors the real install, where `weekend` is
+   EMPTY — so this assertion passed Monday to Friday and failed every Saturday
+   and Sunday, which is the same shape as the nursery fixtures that passed all
+   afternoon and failed every evening. `_schedDay` is the seam the code already
+   provides; a test about the base list must not also be a test about today. */
+shs2._schedDay = 'weekday';
 check('switching to the base shows the base list', shs2._schedEntries().length === 1 && shs2._schedEntries()[0].target_temp === 68);
 check('the base is editable', shs2._schedEditable(shs2._config.sections[0]) === true);
 shs2._schedDay = 'saturday';
@@ -3352,6 +3358,55 @@ check('a lamp on at the dimmest possible step still reads 1%, never 0%', (() => 
     supported_color_modes: ['brightness'] } } });
   const row = h.slice(h.indexOf('data-light="light.a"'));
   return /<div class="pl-kv">1%<\/div>/.test(row);
+})());
+
+/* Lights live in a SHEET, not in the column. A sheet slides over what is
+   already there instead of pushing it down — the same reason the schedule and
+   the music controls are sheets. */
+/* Going sheet_only strands anything that lived ONLY in the column — the music
+   presets had to be added back to the sheet in v1.25.1 for exactly this. The
+   moods are the equivalent here, so the sheet must carry them. */
+check('a sheet_only lights section still reaches its moods and rows', (() => {
+  const sh = lsh();
+  sh.setConfig({ sections: [Object.assign({}, LSEC, { sheet_only: true })] });
+  sh._hass = lsh()._hass;
+  sh._sheet = 'lights';
+  const h = sh._sheetHtml([]);
+  return /data-lmood="0"/.test(h) && /data-light="light\.a"/.test(h);
+})());
+check('the lights sheet renders the same rows as the section', (() => {
+  const sh = lsh();
+  sh._sheet = 'lights';
+  const h = sh._sheetHtml([]);
+  return /ps-sheet/.test(h) && /data-light="light\.a"/.test(h)
+    && /data-light="light\.night"/.test(h) && /data-lmood="0"/.test(h);
+})());
+check('the sheet names itself once, not twice', (() => {
+  const sh = lsh();
+  sh._sheet = 'lights';
+  const h = sh._sheetHtml([]);
+  /* the sheet chrome carries the title; the body must not repeat a header */
+  return (h.match(/>Lights</g) || []).length === 1 && !/ps-sh\b/.test(h);
+})());
+check('the sheet carries the same summary chip as the header', (() => {
+  const sh = lsh();
+  sh._sheet = 'lights';
+  return /1 of 2 on/.test(sh._sheetHtml([]));
+})());
+check('the guard prompt works inside the sheet too', (() => {
+  const sh = lsh();
+  sh._sheet = 'lights';
+  sh._lightAsk = { id: 'light.night', kind: 'level', value: 80 };
+  const h = sh._sheetHtml([]);
+  return /Joel is asleep/.test(h) && /Set it to 80%\?/.test(h);
+})());
+check('a lights sheet with every light hidden renders nothing at all', (() => {
+  const sh = lsh();
+  sh.setConfig({ sections: [{ type: 'lights', key: 'lights', title: 'Lights',
+    lights: [{ entity: 'light.xmas', hide_when_unavailable: 'sensor.xmas' }] }] });
+  sh._hass = lsh()._hass;
+  sh._sheet = 'lights';
+  return sh._sheetHtml([]) === '';
 })());
 
 /* The v1.31.1 lesson: a new section type must be in BOTH places or setConfig
