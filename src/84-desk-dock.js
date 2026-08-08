@@ -44,6 +44,7 @@ Object.assign(PurdyDeskCard.prototype, {
       rooms: () => this._dockRooms(sec),
       quick: () => this._dockQuick(sec),
       systems: () => this._dockSystems(sec),
+      nowplaying: () => this._dockNowplaying(sec),
       people: () => this._stripSection(sec),
     }[sec.type];
     return fn ? fn() : "";

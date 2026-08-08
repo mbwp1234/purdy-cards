@@ -622,6 +622,71 @@ const PD_STYLES = `
       .pd-qbar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--pc-fill-2); }
       .pd-qbar i { display: block; height: 100%; }
 
+      /* systems, on the stage */
+      .pd-srvhead { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; }
+      .pd-srvn { font-size: var(--pc-fs-lg); font-weight: 650; letter-spacing: -.012em; }
+      .pd-srvs {
+        font-size: var(--pc-fs-xs); color: var(--ps-muted);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pd-cpu { text-align: right; flex: 0 0 auto; }
+      .pd-cpuv {
+        display: block; font-size: var(--pd-fs-big); font-weight: 640;
+        letter-spacing: -.025em; font-variant-numeric: tabular-nums; line-height: 1;
+      }
+      .pd-cpuv small { font-size: var(--pc-fs-xs); font-weight: 500; color: var(--ps-muted); }
+      .pd-cpuk {
+        font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
+        color: var(--ps-dim); font-weight: 600;
+      }
+      .pd-spark.wide, .pd-spark.wide svg { width: 78px; height: 26px; }
+      .pd-meters { display: flex; flex-direction: column; gap: 5px; }
+      .pd-mrow { display: flex; align-items: center; gap: 9px; font-size: var(--pc-fs-xs); cursor: pointer; }
+      .pd-ml { color: var(--ps-muted); flex: 0 0 92px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pd-mbar {
+        flex: 1; height: 5px; border-radius: var(--pc-r-pill);
+        background: var(--pc-fill-2); overflow: hidden; min-width: 0;
+      }
+      .pd-mbar i { display: block; height: 100%; }
+      .pd-mv2 {
+        flex: 0 0 52px; text-align: right; font-weight: 650;
+        font-variant-numeric: tabular-nums; color: var(--ps-text);
+      }
+      .pd-sstats { display: flex; gap: 8px; flex-wrap: wrap; }
+      .pd-sstat {
+        flex: 1; min-width: 62px; background: var(--pc-fill-1);
+        border-radius: var(--pc-r-xs); padding: 6px 9px;
+      }
+      .pd-sv2 {
+        display: block; font-size: var(--pc-fs-lg); font-weight: 650;
+        font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+      }
+      .pd-sk {
+        font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
+        color: var(--ps-dim); font-weight: 600;
+      }
+      .pd-srow {
+        display: flex; align-items: center; gap: 9px;
+        font-size: var(--pc-fs-xs); color: var(--ps-muted);
+      }
+      .pd-srow b { margin-left: auto; color: var(--ps-text); font-variant-numeric: tabular-nums; }
+      .pd-srow a { margin-left: auto; text-decoration: none; }
+      .pd-xtra a.pd-mini-btn { align-self: flex-start; text-decoration: none; }
+
+      /* now playing, in the dock */
+      .pd-z-nowplaying { flex: 1.1; justify-content: center; }
+      .pd-npbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .pd-npbar .pd-th { cursor: pointer; }
+      .pd-npbar .pd-grow { cursor: pointer; }
+      .pd-npbar .pd-n { font-size: var(--pc-fs-sm); font-weight: 600; }
+      .pd-npbar .pd-s { font-size: var(--pc-fs-micro); color: var(--ps-dim); }
+      /* Nothing playing keeps the slot so the dock does not reflow, but draws
+         no transport — a row of buttons with nothing behind them is worse than
+         no row at all. */
+      .pd-npbar.idle { opacity: .55; cursor: pointer; }
+      .pd-npbar.idle:hover { opacity: .85; }
+
       .pd-z-systems { flex: .95; }
       .pd-sysrow { display: flex; align-items: center; gap: 9px; font-size: var(--pc-fs-xs); padding: 3px 0; }
       .pd-sysrow.tappable { cursor: pointer; }

@@ -40,10 +40,10 @@ Object.assign(PurdyDeskCard.prototype, {
       /* A section parked on the stage that has no stage renderer falls back to
          its dock treatment rather than vanishing — moving a section between
          tiers is a `zone:` edit and must never be a blank column. */
+      systems: () => this._pnlSystems(sec),
       people: () => `<div class="pd-pbody pd-full">${this._stripSection(sec)}</div>`,
       quick: () => `<div class="pd-pbody pd-full">${this._dockSection(sec)}</div>`,
       rooms: () => `<div class="pd-pbody pd-full">${this._dockSection(sec)}</div>`,
-      systems: () => `<div class="pd-pbody pd-full">${this._dockSection(sec)}</div>`,
     }[sec.type];
     return fn ? fn() : "";
   },
