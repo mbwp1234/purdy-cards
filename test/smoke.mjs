@@ -37,6 +37,11 @@ class MiniNode {
     this._hassCount = 0;            // doubles as a stand-in custom element
   }
   setConfig(c) { this._cfg = c; }
+  /* Real enough to be bound to. Without this every _bind pass throws the
+     moment a test gives the card a DOM worth rendering into. */
+  addEventListener() {}
+  querySelector() { return null; }
+  querySelectorAll() { return []; }
   set hass(h) { this._hassSet = true; this._hassCount++; this._h = h; }
   get hass() { return this._h; }
   get innerHTML() { return this._html; }
@@ -4049,6 +4054,551 @@ check('the systems page classes it renders all exist', (() => {
     'ps-syfans', 'ps-syn', 'ps-syhero', 'ps-sygraph', 'ps-db.home', 'ps-syb-bad'];
   return used.every((cl) => shs.includes('.' + cl));
 })());
+
+
+/* Block-scoped: the desk suite declares a lot of fixtures and must not
+   collide with the shell's. */
+{
+/* ==========================================================================
+ * purdy-desk-card — the desktop view as one element
+ * ======================================================================== */
+
+const DK = defined['purdy-desk-card'];
+const deskSrc = ['80-desk-core','81-desk-strip','82-desk-stage','83-desk-lights','84-desk-dock']
+  .map((f) => fs.readFileSync(new URL(`../src/${f}.js`, import.meta.url),'utf8'))
+  .join('\n');
+const deskStyleSrc = fs.readFileSync(new URL('../src/89-desk-styles.js', import.meta.url),'utf8');
+
+check('purdy-desk-card defined', names.includes('purdy-desk-card'));
+check('purdy-desk-card registered in customCards', window.customCards.some(c => c.type === 'purdy-desk-card'));
+
+const dks = DK.styles;
+check('desk styles carry the shared token block', dks.includes('--pc-panel:'));
+check('desk styles have no unresolved placeholder', !dks.includes('${'));
+check('desk has one gradient ground', dks.includes('.pd-ground'));
+check('desk is one glass sheet, not a stack', dks.includes('.pd-sheet') && dks.includes('backdrop-filter'));
+check('desk tiers divided by hairline, not by a gap', dks.includes('.pd-tier + .pd-tier { border-top'));
+check('desk zones divided by hairline, not by a gap', dks.includes('.pd-z + .pd-z { border-left'));
+check('desk paints its own background rather than borrowing the theme', dks.includes('linear-gradient(168deg'));
+
+/* A backtick inside the stylesheet terminates the template literal mid-file
+   and takes the whole bundle down with it. Exactly two: the open and close. */
+check('the desk stylesheet carries exactly two backticks',
+  (deskStyleSrc.match(/`/g) || []).length === 2);
+
+/* Pick a step, never a loose pixel. The one deliberate exception is 16px on a
+   form field — below that iOS Safari zooms the page on focus and never zooms
+   back — so it is allowed by name rather than by accident. */
+check('desk styles introduce no loose font-size beyond the field exception', (() => {
+  const loose = (dks.match(/font-size:\s*\d+(\.\d+)?px/g) || []);
+  return loose.length === 1 && loose[0] === 'font-size: 16px';
+})());
+check('the desk search field keeps 16px so iOS does not zoom', /\.pd-search \{[^}]*font-size: 16px/.test(dks));
+
+/* The smallest text must not also be the faintest: recompute the ratio rather
+   than string-matching the hex. */
+check('desk --ps-dim clears the 4.5:1 floor on the ground', (() => {
+  const hex = (dks.match(/--ps-dim:\s*(#[0-9a-f]{6})/i) || [])[1];
+  if (!hex) return false;
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const L = (h) => {
+    const r = lin(parseInt(h.slice(1, 3), 16)), g = lin(parseInt(h.slice(3, 5), 16)), b = lin(parseInt(h.slice(5, 7), 16));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const ratio = (L(hex) + 0.05) / (L('#080a12') + 0.05);
+  return ratio >= 4.5;
+})());
+
+/* --- config validation: the two-places rule ------------------------------ */
+
+let dkerr = null;
+try { new DK().setConfig({ sections: [{ type: 'nope' }] }); } catch (e) { dkerr = e.message; }
+check('desk rejects an unknown section type', /unknown section type/.test(dkerr || ''));
+let dkerr2 = null;
+try { new DK().setConfig({ weather: 'w.x' }); } catch (e) { dkerr2 = e.message; }
+check('desk requires sections', /'sections'/.test(dkerr2 || ''));
+let dkerr3 = null;
+try { new DK().setConfig({ sections: [{ type: 'climate', zone: 'nowhere' }] }); } catch (e) { dkerr3 = e.message; }
+check('desk rejects an unknown zone', /zone/.test(dkerr3 || ''));
+check('desk names the retired sock panel rather than rendering a blank',
+  !DK.helpers.sections.includes('sleep'));
+
+/* Every accepted type must have a renderer in the tier its default sends it
+   to. The list and the dispatch are two halves of the same fact, and either
+   half alone is a card replaced by "Configuration error". */
+check('every desk section type has a renderer in its default zone', (() => {
+  const proto = DK.prototype;
+  return DK.helpers.sections.every((t) => {
+    const zone = DK.helpers.zoneDefault[t];
+    if (zone === 'stage') return deskSrc.includes(`${t}: () => this._pnl`) || deskSrc.includes(`${t}: () =>`);
+    if (zone === 'dock') return new RegExp(`${t}: \\(\\) => this\\._dock`).test(deskSrc);
+    if (zone === 'strip') return proto._stripSection !== undefined;
+    return false;
+  });
+})());
+check('every desk section type has a default zone',
+  DK.helpers.sections.every((t) => DK.helpers.zones.includes(DK.helpers.zoneDefault[t])));
+
+/* --- borrowing rather than copying ---------------------------------------- */
+
+check('the desk borrows from the shell rather than copying it', DK.helpers.borrowed.length > 20);
+check('every borrowed name resolved', DK.helpers.borrowMissing.length === 0);
+check('borrowed methods are the SAME function, so a fix lands in both',
+  DK.prototype._raised === SH.prototype._raised &&
+  DK.prototype._optGoal === SH.prototype._optGoal &&
+  DK.prototype._nurserySessions === SH.prototype._nurserySessions);
+check('the desk writes its own markup rather than borrowing the phone column',
+  DK.prototype._resultsHtml !== SH.prototype._resultsHtml);
+/* The results container keeps the shell's id precisely so the borrowed
+   painter finds it — search-as-you-type must not go through _render. */
+check('the desk results container keeps the id the borrowed painter looks for',
+  deskSrc.includes('id="ps-res"'));
+
+/* --- the render model ------------------------------------------------------ */
+
+check('the desk patches rather than repainting', deskSrc.includes('_patchKeyed'));
+check('a drag or a focused field gates the repaint', /if \(this\._dragging\) return;/.test(deskSrc));
+check('handlers read this._hass live rather than closing over hass',
+  !/addEventListener\([^)]*\)\s*=>\s*\{[^}]*\bhass\b\s*\./.test(deskSrc));
+check('binding is claimed per element per selector', deskSrc.includes('this._each(') && deskSrc.includes('this._one('));
+
+/* The stage's grid-template-columns is the ONE animated property, and it is
+   safe only because the node carrying it is never replaced. */
+check('exactly one property transitions on the desk', (() => {
+  /* The reduced-motion block turns everything off and is not an animation. */
+  const t = (dks.match(/transition:[^;]+;/g) || []).filter((x) => !/none/.test(x));
+  return t.length === 1 && /grid-template-columns/.test(t[0]);
+})());
+check('the stage is mounted once, not rebuilt per render',
+  /id="pd-stage"/.test(deskSrc) && deskSrc.includes('stage.style.gridTemplateColumns'));
+check('the column widths are written as a style property, never into innerHTML',
+  !/gridTemplateColumns[^\n]*innerHTML/.test(deskSrc));
+/* Faces swap by display. An entry/exit animation on a patched node re-runs
+   from zero on every repaint — that is what made the lamp chips slide. */
+check('the three panel faces are display swaps, not animations',
+  /\.pd-panel\.is-min \.pd-mini \{ display: flex/.test(dks) &&
+  /\.pd-panel\.is-exp \.pd-xtra \{ display: flex/.test(dks) &&
+  !/\.pd-(mini|xtra|full)[^{]*\{[^}]*(max-height|transition)/.test(dks));
+check('folding a panel keeps it legible rather than hiding it', dks.includes('.pd-panel.is-min .pd-mini'));
+
+/* Regression: a capture-phase closer on the strip runs before the chip's own
+   handler, repaints, and detaches the chip mid-dispatch — so it could never
+   be opened at all. */
+check('the strip popover closer does not run in the capture phase',
+  !/addEventListener\("click",[\s\S]{0,200}?\}, true\)/.test(deskSrc));
+
+/* --- zone routing + reconciliation ---------------------------------------- */
+
+const savedDoc2 = globalThis.document;
+globalThis.document = { createElement: () => new MiniNode() };
+
+const dcard = new DK();
+dcard.setConfig({
+  weather: 'weather.kcho',
+  occupancy: 'input_select.house_occupancy',
+  attention: [{ key: 'litter', entity: 'vacuum.litter', state: 'error', severity: 'critical', title: 'Litter box', detail: 'Error' }],
+  now_playing: { players: [{ entity: 'media_player.living', name: 'Living Room' }] },
+  links: [{ icon: 'mdi:television', name: 'TV', sheet: 'tv' },
+          { icon: 'mdi:bell', name: 'Alerts', alert_when_faults: true }],
+  sheets: { tv: { title: 'Televisions', card: { type: 'custom:purdy-remote-card' } } },
+  sections: [
+    { type: 'climate', key: 'clim', title: 'Climate', thermostat: 'climate.t6', goal: 'climate.gttc',
+      ring: { min: 60, max: 80 },
+      outside: { temp: 'sensor.out_t', humidity: 'sensor.out_h' },
+      graph: { inside: 'sensor.in_t', outside: 'sensor.out_t' },
+      zones: { select: 'select.zone', options: [{ label: '1st Floor', option: '1st floor', temp: 'sensor.z1' }] },
+      rooms: [{ name: "Joel's Room", temp: 'sensor.joel_t', humidity: 'sensor.joel_h' }],
+      hold: { remaining: 'sensor.hold', cancel_service: 'gttc.cancel_override' } },
+    { type: 'nursery', key: 'joel', title: 'Joel', hatch: 'media_player.hatch', door: 'binary_sensor.door', days: 7 },
+    { type: 'music', key: 'music', title: 'Music', config_entry: 'ENTRY', default_player: 'media_player.living',
+      players: [{ entity: 'media_player.living', name: 'Living Room' }],
+      presets: [{ name: 'Liked Songs', uri: 'library://playlist/7', icon: 'mdi:heart' }] },
+    { type: 'calendar', key: 'ahead', title: 'Ahead', days: 5, entities: [{ entity: 'calendar.x', color: '#BB1C77' }] },
+    { type: 'lights', key: 'lights', title: 'Lights',
+      moods: [{ name: 'All off', icon: 'mdi:power', set: {}, off: ['light.living', 'light.night'] }],
+      lights: [{ entity: 'light.living', name: 'Living Room', members: ['light.lamp'] },
+               { entity: 'light.night', name: 'Night light',
+                 protect: { when: 'media_player.hatch', state: 'playing', ask: 'Joel is asleep', detail: 'His night light.' } }] },
+    { type: 'people', key: 'people', people: [{ entity: 'person.b', name: 'Brian', battery: 'sensor.bb', steps: 'sensor.bs' }] },
+    /* No rooms of its own: the strip must fall back to the climate section's
+       list rather than needing the same rooms written twice. */
+    { type: 'rooms', key: 'rooms' },
+    { type: 'quick', key: 'quick', tiles: [{ entity: 'light.living', name: 'Lights', icon: 'mdi:lightbulb', tap_action: { action: 'toggle' } }] },
+    { type: 'systems', key: 'sys', devices: [{ name: 'PurdyNAS', icon: 'mdi:server', meters: [{ label: 'Array', entity: 'sensor.array', warn_above: 80 }] }] },
+  ],
+});
+
+check('desk routes sections to their default tiers', (() => {
+  const stage = dcard._zone('stage').map((s) => s.key).join(',');
+  return stage === 'clim,joel,music,ahead,lights'
+    && dcard._zone('strip').map((s) => s.key).join(',') === 'people'
+    && dcard._zone('dock').map((s) => s.key).join(',') === 'rooms,quick,sys';
+})());
+check('desk keeps sections in config order', dcard._zone('stage')[0].key === 'clim');
+check('desk watches nested section entities',
+  dcard._watched.includes('sensor.z1') && dcard._watched.includes('sensor.bb') && dcard._watched.includes('binary_sensor.door'));
+check('desk getCardSize is full-view sized', dcard.getCardSize() === 30);
+
+/* column widths */
+const three = [{ key: 'a' }, { key: 'b' }, { key: 'c', weight: 2 }];
+check('balanced columns follow the configured weights', dcard._stageCols(three) === '1fr 1fr 2fr');
+dcard._open = 'b';
+check('an expanded panel takes the width and the rest fold', dcard._stageCols(three) === '0.62fr 2.9fr 0.62fr');
+dcard._open = null;
+
+/* reconciliation */
+const stageNode = new MiniNode();
+dcard._patchKeyed(stageNode, [
+  { key: 'a', html: '<i>A</i>', cls: ['pd-panel'] },
+  { key: 'b', html: '<i>B</i>', cls: ['pd-panel'] },
+], 'pd-panelwrap');
+check('desk panels mount in config order', stageNode.kids.map((n) => n.dataset.pkey).join(',') === 'a,b');
+const [pA, pB] = stageNode.kids;
+const wA = pA.writes;
+dcard._patchKeyed(stageNode, [
+  { key: 'a', html: '<i>A</i>', cls: ['pd-panel'] },
+  { key: 'b', html: '<i>B2</i>', cls: ['pd-panel', 'is-exp'] },
+], 'pd-panelwrap');
+check('an unchanged desk panel is not rewritten', pA.writes === wA);
+check('a changed desk panel is rewritten in place', pB._html === '<i>B2</i>' && stageNode.kids[1] === pB);
+check('the expand class follows the open key', pB.className === 'pd-panelwrap pd-panel is-exp');
+dcard._patchKeyed(stageNode, [{ key: 'b', html: '<i>B2</i>', cls: ['pd-panel'] }], 'pd-panelwrap');
+check('a desk panel that stops rendering is removed', stageNode.kids.length === 1 && stageNode.kids[0] === pB);
+
+/* --- a full render against a realistic state ------------------------------ */
+
+const dslots = { 'pd-strip': new MiniNode(), 'pd-dock': new MiniNode(), 'pd-sheetslot': new MiniNode(),
+                'pd-stage': new MiniNode(), 'ps-host': new MiniNode() };
+dslots['pd-stage'].style = {};
+const dkr = dcard;
+dkr._mounted = true;
+dkr.shadowRoot = {
+  innerHTML: '',
+  getElementById: (id) => dslots[id] || null,
+  querySelectorAll: () => [],
+  querySelector: () => null,
+};
+
+const nowMs = Date.parse('2026-08-07T15:00:00-04:00');
+dkr._testNow = nowMs;
+dkr._hass = {
+  connected: true,
+  callApi: () => Promise.resolve([]),
+  callService: () => {},
+  states: {
+    'weather.kcho': { state: 'partlycloudy', attributes: { temperature: 77, friendly_name: 'KCHO' } },
+    'input_select.house_occupancy': { state: 'Home', attributes: {} },
+    'climate.t6': { state: 'cool', attributes: { current_temperature: 72.4, temperature: 70, hvac_action: 'cooling' } },
+    'climate.gttc': { state: 'cool', attributes: { temperature: 70, current_schedule_entry: { start: '8:00 PM', heat_temp: 68, cool_temp: 70 } } },
+    'select.zone': { state: '1st floor', attributes: {} },
+    'sensor.z1': { state: '72.0', attributes: {} },
+    'sensor.out_t': { state: '79.9', attributes: {} },
+    'sensor.out_h': { state: '76.9', attributes: {} },
+    'sensor.in_t': { state: '73.8', attributes: {} },
+    'sensor.joel_t': { state: '69.4', attributes: {} },
+    'sensor.joel_h': { state: '51.6', attributes: {} },
+    'sensor.hold': { state: '0', attributes: {} },
+    'media_player.hatch': { state: 'idle', attributes: {} },
+    'binary_sensor.door': { state: 'off', attributes: {} },
+    'media_player.living': { state: 'playing', attributes: { app_id: 'music_assistant', media_title: 'Dance Mode', media_artist: 'Bluey', entity_picture_local: '/api/x.jpg' } },
+    'light.living': { state: 'on', attributes: { brightness: 128, color_temp_kelvin: 2700 } },
+    'light.lamp': { state: 'on', attributes: {} },
+    'light.night': { state: 'off', attributes: {} },
+    'person.b': { state: 'home', attributes: { friendly_name: 'Brian' } },
+    'sensor.bb': { state: '100', attributes: {} },
+    'sensor.bs': { state: '4293', attributes: {} },
+    'sensor.array': { state: '85.6', attributes: {} },
+    'vacuum.litter': { state: 'error', attributes: { friendly_name: 'Litter box' } },
+  },
+};
+dkr._nursery = {};                 // the recorder answered, with nothing in it
+dkr._history = {};
+
+let renderErr = null;
+try { dkr._render(); } catch (e) { renderErr = e; }
+check('the desk renders without throwing', renderErr === null);
+if (renderErr) console.log('    ' + renderErr.stack.split('\n').slice(0, 3).join('\n    '));
+
+const stripHtml = dslots['pd-strip']._html;
+const dockHtml = dslots['pd-dock']._html;
+const stageKids = dslots['pd-stage'].kids.map((n) => n.dataset.pkey);
+
+check('the strip carries the greeting, the clock and the weather',
+  /pd-z-id/.test(stripHtml) && /pd-time/.test(stripHtml) && /pd-z-wx/.test(stripHtml));
+check('the strip carries the HVAC summary rather than a whole climate card',
+  /Cooling to/.test(stripHtml) && /pd-zc/.test(stripHtml));
+check('people land in the strip', /pd-ppl/.test(stripHtml) && /Brian/.test(stripHtml));
+check('the attention band is a chip, not a band', /id="pd-alert"/.test(stripHtml) && /1 needs attention/.test(stripHtml));
+check('the fault chip colours by the worst severity', /pd-chip bad/.test(stripHtml));
+
+check('the stage renders every configured panel', stageKids.join(',') === 'clim,joel,music,ahead,lights');
+check('the stage columns are written to the surviving node',
+  dslots['pd-stage'].style.gridTemplateColumns === '1fr 1fr 1fr 1fr 1fr');
+
+const climHtml = dslots['pd-stage'].kids[0]._html;
+check('climate draws its ring and its goal', /pd-ring/.test(climHtml) && /pd-goal/.test(climHtml));
+check('climate shows the live temperature, not the goal, in the ring', /72\.4°/.test(climHtml));
+check('climate names the schedule window it is holding', /8:00 PM window/.test(climHtml));
+check('a hold that is not running draws no cancel row', !/Cancel hold/.test(climHtml));
+check('the room list rides the expanded block', /pd-xtra/.test(climHtml) && /Joel&#39;s Room/.test(climHtml));
+
+const joelHtml = dslots['pd-stage'].kids[1]._html;
+check('a night that has not happened reads as absent, never as zero',
+  /no night yet/.test(joelHtml) && !/0m<\/b>/.test(joelHtml));
+check('no naps yet says so rather than drawing an empty ring', /No naps yet today/.test(joelHtml));
+
+const musHtml = dslots['pd-stage'].kids[2]._html;
+check('music shows the target room track', /Dance Mode/.test(musHtml));
+check('music artwork uses the same-origin proxy, never the MA host',
+  /entity_picture_local|\/api\/x\.jpg/.test(musHtml) && !/8095/.test(musHtml));
+
+const litHtml = dslots['pd-stage'].kids[4]._html;
+check('a lit row glows rather than filling', /pd-lglow/.test(litHtml) && !/pd-lfill/.test(litHtml));
+check('an off light reads off, not 0%', /&gt;off&lt;|>off</.test(litHtml.replace(/&gt;/g, '>')));
+check('a group draws one dot per member', /pd-mdot/.test(litHtml));
+
+check('the dock carries the quick tiles and the systems rows',
+  /pd-qstrip/.test(dockHtml) && /pd-sysrow/.test(dockHtml));
+check('the dock room strip falls back to the climate rooms',
+  /pd-rstrip/.test(dockHtml) && /Outside/.test(dockHtml));
+check('a link with a sheet of its own keeps it even while faults are raised',
+  /data-sheet="tv"/.test(dockHtml));
+check('a link with nothing of its own becomes the fault destination while faults are raised',
+  /data-sheet="alerts"/.test(dockHtml));
+check('the fault badge counts', /pd-badge">1</.test(dockHtml));
+
+/* expanding is what buys detail — no navigation, no overlay */
+dkr._open = 'clim';
+dkr._render();
+check('expanding widens the panel and folds the others',
+  dslots['pd-stage'].style.gridTemplateColumns === '2.9fr 0.62fr 0.62fr 0.62fr 0.62fr');
+const foldedJoel = dslots['pd-stage'].kids[1];
+check('a folded panel still renders its headline', /pd-mini/.test(foldedJoel._html));
+dkr._open = null;
+
+/* A panel that has nothing to say takes its divider with it — that is how
+   now-playing disappears when the house is quiet rather than leaving an empty
+   column with a title in it. */
+dkr._config.sections.push({ type: 'nowplaying', key: 'tv', tvs: [{ name: 'Living Room', media_player: 'media_player.tv_off' }] });
+dkr._render();
+check('now playing renders while music is on',
+  dslots['pd-stage'].kids.some((n) => n.dataset.pkey === 'tv'));
+const savedLiving = dkr._hass.states['media_player.living'];
+dkr._hass.states['media_player.living'] = { state: 'idle', attributes: { app_id: 'music_assistant' } };
+dkr._render();
+check('a panel with nothing on is dropped entirely, divider and all',
+  !dslots['pd-stage'].kids.some((n) => n.dataset.pkey === 'tv'));
+dkr._hass.states['media_player.living'] = savedLiving;
+dkr._config.sections.pop();
+dkr._render();
+
+/* --- zero versus missing --------------------------------------------------- */
+
+const dkz = new DK();
+dkz.setConfig({ sections: [{ type: 'climate', key: 'c', thermostat: 'climate.gone', goal: 'climate.gone',
+  ring: { min: 60, max: 80 }, graph: {} }] });
+dkz._hass = { connected: true, states: {}, callService: () => {} };
+dkz._history = {};
+const goneHtml = dkz._pnlClimate(dkz._config.sections[0]);
+check('a thermostat that has dropped off draws an empty ring, not a ring at zero',
+  /no reading/.test(goneHtml) && !/>0°</.test(goneHtml));
+check('a graph with no history says which kind of nothing it has',
+  /No history yet/.test(goneHtml));
+dkz._histErr = 'boom';
+check('a recorder that did not answer says so rather than drawing a flat line',
+  /Recorder did not answer/.test(dkz._pnlClimate(dkz._config.sections[0])));
+
+/* --- lights: level guard, throttle, optimism ------------------------------- */
+
+check('a light that is off reports no level rather than zero', dcard._lightPct('light.night') === null);
+check('a lit light reports its percentage', dcard._lightPct('light.living') === 50);
+check('the optimistic level is what the display and the NEXT drag both read', (() => {
+  dcard._briOpt['light.living'] = { value: 80, until: Date.now() + 12000 };
+  const v = dcard._lightPct('light.living');
+  delete dcard._briOpt['light.living'];
+  return v === 80;
+})());
+check('the optimistic level expires rather than standing unbacked', (() => {
+  dcard._briOpt['light.living'] = { value: 80, until: Date.now() - 1 };
+  const v = dcard._lightPct('light.living');
+  delete dcard._briOpt['light.living'];
+  return v === 50;
+})());
+/* A debounce only fires after the drag stops — the number moves and the room
+   does not. The send must lead. */
+check('the brightness send leads rather than waiting for the drag to stop', (() => {
+  const calls = [];
+  const saved = dcard._hass.callService;
+  dcard._hass.callService = (d, s, data) => calls.push(data.brightness_pct);
+  dcard._briSend = {};
+  dcard._lightSetBri('light.living', 40);
+  dcard._hass.callService = saved;
+  return calls.length === 1 && calls[0] === 40;
+})());
+check('the brightness send is a throttle, not a debounce',
+  deskSrc.includes('THROTTLE, not a debounce') && /150 - gap/.test(deskSrc));
+
+/* The guard is gated on the session, not on the light: a guard that fires at
+   noon is one people learn to click through. */
+check('the protect guard is silent while the session is not running',
+  dcard._protectOf('light.night') === null);
+dcard._hass.states['media_player.hatch'] = { state: 'playing', attributes: {} };
+check('the protect guard speaks while he is asleep',
+  (dcard._protectOf('light.night') || {}).ask === 'Joel is asleep');
+check('the guard covers the level, not just the switch',
+  deskSrc.includes('covers the LEVEL') && /Set \$\{pcName/.test(deskSrc));
+check('a mood never touches a guarded light', /if \(this\._protectOf\(id\)\) return;/.test(deskSrc));
+dcard._hass.states['media_player.hatch'] = { state: 'idle', attributes: {} };
+
+/* --- the optimistic setpoint ----------------------------------------------- */
+
+check('the goal reads from the optimistic value, not the round trip', (() => {
+  dcard._goalOpt = { id: 'climate.gttc', value: 73, until: Date.now() + 12000 };
+  const v = dcard._optGoal('climate.gttc', 70);
+  dcard._goalOpt = null;
+  return v === 73;
+})());
+check('a burst of taps sends one call carrying the last value',
+  /clearTimeout\(this\._goalSend\)/.test(deskSrc) && /this\._goalSend = setTimeout/.test(deskSrc));
+check('the optimistic setpoint expires so a lost call shows the truth',
+  /until: Date\.now\(\) \+ 12000/.test(deskSrc));
+
+/* --- what only real data showed -------------------------------------------
+ *
+ * Each of these passed a hand-written fixture and was wrong against the house.
+ */
+
+/* GTTC's window is {time_start, time_end, target_temp, cooling_temp}, not the
+   {start, heat_temp, cool_temp} shape a reasonable person would guess. The
+   guess produced no error — the branch fell through and the panel printed
+   "HVAC is cooling" forever instead of the window. */
+check('the climate note reads GTTC\'s real schedule-entry shape', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'climate', key: 'c', goal: 'climate.gttc', graph: {} }] });
+  d._hass = { states: { 'climate.gttc': { state: 'cool', attributes: { temperature: 74,
+    current_schedule_entry: { time_start: '06:00', time_end: '17:59', target_temp: 71, cooling_temp: 74 } } } } };
+  return d._climateNote(d._config.sections[0], 'cooling') === 'Holding the 6:00 AM–5:59 PM window. 71° heat / 74° cool.';
+})());
+check('the climate note still reads the generic shape', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'climate', key: 'c', goal: 'climate.g', graph: {} }] });
+  d._hass = { states: { 'climate.g': { state: 'heat', attributes: {
+    current_schedule_entry: { start: '8:00 PM', heat_temp: 68, cool_temp: 70 } } } } };
+  return /Holding the 8:00 PM window\. 68° heat \/ 70° cool\./.test(d._climateNote(d._config.sections[0], 'heating'));
+})());
+
+/* An idle MA player keeps its media_title and artwork for hours. Reading the
+   attribute without the state grows a now-playing row in a silent house. */
+check('an idle player with a stale title reads as nothing playing', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'music', key: 'm', default_player: 'media_player.lr',
+    players: [{ entity: 'media_player.lr', name: 'Living Room' }] }] });
+  d._hass = { states: { 'media_player.lr': { state: 'idle', attributes: {
+    app_id: 'music_assistant', media_title: 'Bluey Theme Tune', media_artist: 'Bluey',
+    entity_picture_local: '/api/x.jpg', friendly_name: 'Living Room TV' } } } };
+  const html = d._pnlMusic(d._config.sections[0]);
+  return /Nothing playing/.test(html) && !/Bluey Theme Tune/.test(html) && !/\/api\/x\.jpg/.test(html);
+})());
+/* The MA mirror answers to the SOURCE DEVICE's name — the living room speaker
+   is "Living Room TV", which is both wrong and confusing beside a TV row. */
+check('a room is named by config, not by the MA mirror\'s friendly name', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'music', key: 'm', default_player: 'media_player.lr',
+    players: [{ entity: 'media_player.lr', name: 'Living Room' }] }] });
+  d._hass = { states: { 'media_player.lr': { state: 'idle', attributes: { friendly_name: 'Living Room TV' } } } };
+  const html = d._pnlMusic(d._config.sections[0]);
+  return /Living Room</.test(html) && !/Living Room TV/.test(html);
+})());
+
+/* A chip that asked for a value and did not get one is a question with no
+   answer. GTTC's active_preset is null whenever it picks one situationally. */
+check('a chip with no answer is dropped rather than printing its label', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'climate', key: 'c', goal: 'climate.g', graph: {},
+    chips: [{ name: 'Running:', source: 'schedule_preset' }, { name: 'Season:', entity: 'select.s', show_state: true }] }] });
+  d._hass = { states: { 'climate.g': { state: 'cool', attributes: {} }, 'select.s': { state: 'Cooling', attributes: {} } } };
+  const html = d._climateChips(d._config.sections[0]);
+  return !/Running:/.test(html) && /Season: Cooling/.test(html);
+})());
+
+/* --- a sheet can host one of our own sections ------------------------------ */
+
+check('a sheet can host a section, not only a foreign card', (() => {
+  const d = new DK();
+  d.setConfig({
+    sections: [{ type: 'lights', key: 'lights', sheet_only: true,
+      lights: [{ entity: 'light.a', name: 'Living Room' }],
+      moods: [{ name: 'All off', set: {}, off: ['light.a'] }] }],
+    sheets: { lights: { title: 'Lights', section: 'lights' } },
+  });
+  d._hass = { states: { 'light.a': { state: 'on', attributes: { brightness: 128 } } } };
+  d._sheet = 'lights';
+  const html = d._sheetHtml([]);
+  return /pd-lrow/.test(html) && /All off/.test(html);
+})());
+check('a sheet_only section takes no column on the stage', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'lights', key: 'lights', sheet_only: true, lights: [] }] });
+  return d._zone('stage').length === 0;
+})());
+/* The chrome already names itself beside the close button — a second title
+   printed the name twice on the phone and would here too. */
+check('a section hosted in a sheet draws no header of its own', (() => {
+  const d = new DK();
+  d.setConfig({ sections: [{ type: 'lights', key: 'lights', sheet_only: true, title: 'Lights',
+    lights: [{ entity: 'light.a', name: 'Living Room' }] }],
+    sheets: { lights: { title: 'Lights', section: 'lights' } } });
+  d._hass = { states: { 'light.a': { state: 'off', attributes: {} } } };
+  d._sheet = 'lights';
+  const html = d._sheetHtml([]);
+  /* Visible text only — the accessible name on the dialog is not a heading. */
+  return (html.match(/>Lights</g) || []).length === 1 && !/pd-ph/.test(html);
+})());
+check('a hosted section shows everything, having nothing to fold against',
+  /\.pd-sheet-body \.pd-xtra \{ display: flex/.test(dks));
+
+/* --- scrub: the readout has to be REACHABLE, not merely present ------------ */
+
+check('the night rail carries a crosshair inside its scrub box', (() => {
+  const rail = dkr._nightRail({}, { from: 1, to: 2, settledAt: 1, events: [], active: false }, true, null);
+  return /data-scrub="night"[\s\S]*?pd-cross/.test(rail);
+})());
+/* Regression: the rail is 26px tall and its caption belongs in the header
+   above it, so a readout lookup confined to the scrub box finds nothing and
+   returns early — a rail that is wired and silently never scrubs. */
+check('the night rail readout sits outside the scrub box', (() => {
+  const rail = dkr._nightRail({}, { from: 1, to: 2, settledAt: 1, events: [], active: false }, true, null);
+  const box = rail.slice(rail.indexOf('data-scrub="night"'));
+  return !/data-readout/.test(box) && /data-readout/.test(rail);
+})());
+check('the scrub falls back to the parent when the readout is not inside',
+  /parentNode[\s\S]{0,120}querySelector\("\[data-readout\]"\)/.test(deskSrc));
+
+/* --- the fixed sheet ------------------------------------------------------- */
+
+check('the sheet is sized to the viewport, not to its content',
+  /height: calc\(100dvh - var\(--pd-off/.test(dks));
+check('the viewport offset is config, not a baked number', (() => {
+  const d = new DK();
+  d.setConfig({ viewport_offset: 120, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  const set = {};
+  d.style = { setProperty: (k, v) => { set[k] = v; } };
+  d._mounted = true;
+  d.shadowRoot = { getElementById: () => null, querySelectorAll: () => [], querySelector: () => null };
+  d._hass = { states: {}, connected: true };
+  d._render();
+  return set['--pd-off'] === '120px';
+})());
+
+/* --- history windows -------------------------------------------------------- */
+
+check('the desk adds no history call that could forget end_time',
+  !/history\/period\//.test(deskSrc));
+
+globalThis.document = savedDoc2;
+
+
+}
 
 // double-define guard: a second load must warn, not throw
 let warned = '';

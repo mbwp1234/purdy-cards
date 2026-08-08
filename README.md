@@ -15,6 +15,8 @@ One bundle, one HACS entry, one version number — a pair of custom Lovelace car
 | `purdy-remote-card` | Android TV remote with a device selector, brand app grid and circular d-pad. |
 | `purdy-devices-card` | Collapsible device groups with summary lines; faults stay visible while collapsed. |
 | `purdy-music-card` | Music Assistant now-playing with transport, room switching and playlist presets. Plus a **`compact`** mode that hides itself when the house is quiet. |
+| `purdy-shell-card` | **The whole phone view as one element** — gradient ground, one glass column of expanding sections, fixed dock. |
+| `purdy-desk-card` | **The whole desktop view as one element** — one glass sheet that never scrolls, a status strip, a stage of panels that expand sideways, and a dock. |
 
 No build step, no dependencies — plain web components.
 
@@ -117,7 +119,11 @@ Numeric filename prefixes define concatenation order — `00-core.js` first (ver
 node test/smoke.mjs
 ```
 
-Runs the bundle against DOM stubs and asserts both elements register, the shared tokens resolve into each card's stylesheet, the compact and ribbon paths exist, the split-bar maths is right, and a duplicate load warns instead of throwing.
+950 assertions against DOM stubs — registration, token resolution, the compact and ribbon paths, the split-bar maths, music search and history, section reconciliation, the bind-once guards, failure states, and a duplicate load warning instead of throwing. The shell and the desk each carry a **mini-DOM**, because the plain stub answers `null` to everything and would pass every patching assertion vacuously.
+
+Run it before every release.
+
+`test/` covers the shapes. What it cannot cover is whether the *data* is the shape you assumed — so the desk card was also rendered against a dump of real states before shipping, which is how it was found that GTTC's `current_schedule_entry` is `{time_start, time_end, target_temp, cooling_temp}` rather than the `{start, heat_temp, cool_temp}` the code first guessed, and that an idle Music Assistant player keeps its `media_title` for hours. Both had passed a hand-written fixture. Both are now regression tests.
 
 ## Shared tokens
 
@@ -534,3 +540,87 @@ docker:
   containers_prefix: switch.myserver_container_
   restart_prefix: button.myserver_restart_
 ```
+
+## `purdy-desk-card` — the desktop view
+
+The desktop counterpart to `purdy-shell-card`, and a **second element rather than a `wide:` flag on the first**, because the two views disagree about the thing the shell is built around. The shell is one column you scroll, where detail is bought by pushing everything below you further down. The desk is one sheet that never scrolls, where **detail is bought with width**: a panel expands sideways and its neighbours fold to a headline. A flag cannot straddle that — every layout rule and every "what does collapsed mean" inverts.
+
+What it is *not* is a port. The phone's rule was *every pop-up leaves its headline on the home screen*. The desk inverts it: **inline what you look at, sheet what you fiddle with.** Climate, Joel, music and the calendar are on the glass. The TV remote, the notification log, the vacuum map and the light rows stay behind sheets, because a d-pad is a task and a log is read on demand.
+
+### Three tiers on one sheet
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ greeting · clock · weather · HVAC · people          [ All clear ]    │  strip
+├──────────────────────────────────────────────────────────────────────┤
+│  Climate  │      Joel      │    Music    │        Ahead              │  stage
+│           │                │             │                           │
+├──────────────────────────────────────────────────────────────────────┤
+│ rooms          │ quick tiles        │ systems     │ Lights TV Alerts │  dock
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+Every card's own background and radius comes off. The whole thing is a single translucent pane over one gradient, subdivided by 1px hairlines — nothing reads as a stacked row because nothing has its own edge.
+
+### The same config language as the shell
+
+`sections:` takes the **same per-type bodies** `purdy-shell-card` does, so a section written for the phone pastes in unchanged. The only addition is `zone:` — `strip`, `stage` or `dock` — which defaults sensibly per type, plus `weight:` for the balanced column widths.
+
+```yaml
+type: custom:purdy-desk-card
+weather: weather.home
+occupancy: input_select.house_occupancy
+viewport_offset: 88          # what the HA header + view padding take off 100dvh
+sections:
+  - { type: climate, key: clim, zone: stage, weight: 1.15, ... }
+  - { type: nursery, key: joel, zone: stage, weight: 1.25, ... }
+  - { type: music,   key: music, zone: stage, ... }
+  - { type: calendar, key: ahead, zone: stage, weight: 0.85, ... }
+  - { type: people,  key: people, zone: strip, ... }
+  - { type: rooms,   key: rooms, zone: dock }      # falls back to climate's rooms
+  - { type: quick,   key: quick, zone: dock, ... }
+  - { type: systems, key: sys,   zone: dock, ... }
+  - { type: lights,  key: lights, sheet_only: true, ... }
+links:
+  - { icon: mdi:lightbulb, name: Lights, sheet: lights }
+  - { icon: mdi:bell-outline, name: Alerts, alert_when_faults: true, sheet: notifications }
+sheets:
+  lights: { title: Lights, section: lights }       # a sheet can host a SECTION
+  tv:     { title: Televisions, card: { type: custom:purdy-remote-card, ... } }
+```
+
+Accepted types: `climate` · `nursery` · `music` · `calendar` · `lights` · `people` · `quick` · `rooms` · `systems` · `nowplaying`. A type must be added to `PD_SECTIONS` **and** to the renderer dispatch — a test asserts the two halves name the same set, because missing the list is not a broken section, it is the whole card replaced by "Configuration error".
+
+### Three faces per panel
+
+| Face | When |
+|------|------|
+| `full` | the balanced state — nothing is expanded |
+| `xtra` | revealed under `full` when **this** panel is the expanded one |
+| `mini` | the folded headline, when a **different** panel is expanded |
+
+`mini` is why this is folding and not hiding. Opening climate must not make Joel disappear — it makes him a number you can still read.
+
+All three are `display` swaps. **Exactly one property on the whole screen transitions**: the stage's `grid-template-columns`, on a node the renderer never replaces. An entry/exit animation on a patched node re-runs from zero on every state change.
+
+### It borrows from the shell rather than copying it
+
+`PD_BORROW` names ~35 methods taken live off `PurdyShellCard.prototype` — the recorder fetches, the fault engine and its dismissal store, the nursery derivation, the music target resolution, the optimistic setpoint, the bind-once guards, and the ring and sparkline geometry. They are about data, not markup, so they do not care which view is asking, and a fix lands in both. The borrow warns loudly if a name stops resolving, and a test asserts nothing was silently lost.
+
+The markup-emitting cousins are deliberately **not** borrowed: `_secClimate` and `_resultsHtml` describe a phone column. The desk writes its own, and declares the shell's `--ps-*` palette **names** so that the two rings can be one function.
+
+### Sheets
+
+A sheet hosts either a foreign card (`card:`) or one of our own sections (`section:`). A hosted card gets `bare: true` and a blanked `title` by default — the sheet chrome already names itself beside the close button, and left set it printed the name twice. `dim:` is for a hosted card that hardcodes a light surface and never reads HA's card variables; it is opt-in per sheet.
+
+### The rules that shaped it
+
+- **A zero and a missing reading must never look the same.** A thermostat that has dropped off draws an empty ring, not a ring at zero. A night that has not happened reads `—`, never `0m`. The graph says whether the recorder failed or simply has nothing yet.
+- **It patches, it does not repaint.** No handler closes over `hass` or `config`; binding is claimed per element per selector; the rendered string is the cache key.
+- **A control something physical is following throttles, it does not debounce.** A debounce only fires after the drag stops — the number moves and the room does not.
+- **A drag cannot go through `_render()`.** Re-rendering mid-gesture detaches the row under the pointer, and every later move is silently discarded.
+- **A setpoint moves on the tap, not on the round trip** — and the *next* tap reads the optimistic value, or a burst of taps computes the same number three times.
+
+### Folding down
+
+One definition, three widths. Above 1180px it is the fixed three-tier sheet. Below that the strip wraps and the stage becomes two columns, then one, and the sheet stops being viewport-height. It never tries to become the phone view — that already exists.
