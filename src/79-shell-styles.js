@@ -719,8 +719,21 @@ const PS_STYLES = `
                 background: rgba(255,255,255,.16); opacity: 0; transition: opacity .18s; }
       .pl-row.dragging .pl-det { opacity: 1; }
 
-      .pl-more { position: relative; max-height: 0; overflow: hidden; transition: max-height .3s ease; }
-      .pl-row.open .pl-more { max-height: 150px; }
+      /* No height transition, and no height CAP.
+       *
+       * A max-height 0 -> 150px with a .3s transition looked right in the
+       * mockup and was wrong in the card: the shell PATCHES, so every repaint
+       * replaces this node and the transition restarts from zero. The panel
+       * re-animated on every state change, the chips slid vertically under the
+       * thumb, and a tap aimed at a lamp landed on the row behind it — which
+       * toggles the whole GROUP. That is the "clicking a light turns them all
+       * off" report; both members moving within 25ms in the recorder is the
+       * signature of the group call.
+       *
+       * The cap was a second bug on its own: Basement has five members, so the
+       * chips wrap past 150px and the warmth track was simply cut off. */
+      .pl-more { position: relative; display: none; }
+      .pl-row.open .pl-more { display: block; }
       .pl-mb { padding: 0 14px 13px; display: flex; flex-direction: column; gap: 11px; }
       .pl-kids { display: flex; flex-wrap: wrap; gap: 5px; }
       .pl-kid { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px;

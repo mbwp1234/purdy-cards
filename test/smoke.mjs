@@ -3432,6 +3432,35 @@ check('a lights sheet with every light hidden renders nothing at all', (() => {
   return sh._sheetHtml([]) === '';
 })());
 
+/* The expanded panel must not animate its height. The shell patches, so every
+   repaint replaces the node and a max-height transition restarts from zero —
+   the chips slid under the thumb on every state change, and a tap that missed
+   a lamp landed on the row behind it and toggled the whole group. */
+check('the detail panel does not animate its height', (() => {
+  const rule = /\.pl-more \{[^}]*\}/.exec(SH.styles);
+  return !!rule && !/transition/.test(rule[0]) && !/max-height/.test(rule[0]);
+})());
+check('the detail panel is not height-capped', (() => {
+  /* Basement has five members: the chips wrap past 150px and the warmth track
+     was cut off entirely. */
+  const open = /\.pl-row\.open \.pl-more \{[^}]*\}/.exec(SH.styles);
+  return !!open && !/max-height/.test(open[0]);
+})());
+check('missing a chip cannot toggle the group behind it', (() => {
+  const bind = src.slice(src.indexOf('_bindLights() {'), src.indexOf('_lightCfg(id) {'));
+  const down = bind.slice(bind.indexOf('pointerdown'));
+  return /\.pl-more/.test(down.slice(0, down.indexOf('hold = setTimeout')));
+})());
+
+/* The stylesheet is one template literal, so a backtick anywhere inside it —
+   including in a comment quoting a CSS property — silently terminates the
+   string and takes the whole bundle with it. It happened while fixing the
+   above. */
+check('the shell stylesheet contains no stray backtick', (() => {
+  const f = fs.readFileSync(new URL('../src/79-shell-styles.js', import.meta.url), 'utf8');
+  return (f.match(/`/g) || []).length === 2;
+})());
+
 /* The v1.31.1 lesson: a new section type must be in BOTH places or setConfig
    throws and Lovelace replaces the entire card. */
 check('setConfig accepts a lights section', (() => {

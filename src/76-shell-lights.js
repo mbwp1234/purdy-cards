@@ -457,7 +457,12 @@ Object.assign(PurdyShellCard.prototype, {
       const onCancel = () => { finish(); id = null; moved = false; this._render(); };
 
       el.addEventListener("pointerdown", (e) => {
-        if (e.target.closest("[data-lkid],[data-lask],[data-lwarm]")) return;
+        /* The whole expanded panel is a no-toggle zone, not just its controls.
+           A tap that misses a lamp chip by a few pixels must do NOTHING —
+           landing on the row behind it toggles the entire group, which is how
+           "I tapped one lamp and they all went off" happened. Missing a
+           control should never be the same as pressing a bigger one. */
+        if (e.target.closest("[data-lkid],[data-lask],[data-lwarm],.pl-more")) return;
         id = el.dataset.light; moved = false; x0 = e.clientX;
         this.shadowRoot.addEventListener("pointermove", onMove);
         this.shadowRoot.addEventListener("pointerup", onUp);
