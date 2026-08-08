@@ -332,7 +332,14 @@ const PD_STYLES = `
       .pd-goal span { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
       .pd-cnote { font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 8px; line-height: 1.45; }
 
-      .pd-graph { position: relative; flex: 1 1 auto; min-height: 110px; display: flex; flex-direction: column; }
+      /* Stretches into the space it is given, but only so far. Uncapped it grew
+         to ~340px on a 1440 desktop — a 24-hour trend line taking a third of
+         the screen height, which is not what the panel is about. */
+      .pd-graph {
+        position: relative; flex: 1 1 auto;
+        min-height: 110px; max-height: 240px;
+        display: flex; flex-direction: column;
+      }
       .pd-wavesvg { width: 100%; flex: 1; min-height: 60px; display: block; }
       .pd-nohist {
         font-size: var(--pc-fs-xs); color: var(--ps-dim);
@@ -559,9 +566,18 @@ const PD_STYLES = `
       /* ---------------------------------------------------- tier 3 · dock --*/
 
       .pd-z-rooms { flex: 1.5; }
-      .pd-rstrip { display: flex; gap: 7px; }
+      /* Wraps rather than squeezing.
+         Six cells sharing one flex row came out ~72px each on a 1440 desktop,
+         which truncated every room to "LIVIN…" / "KITC…" / "BEDR…" — a label
+         that has lost the word is not a smaller label, it is a missing one.
+         auto-fit + a floor means the strip is one row when it fits and two when
+         it does not; the dock is auto-height, so it simply grows. */
+      .pd-rstrip {
+        display: grid; gap: 7px;
+        grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+      }
       .pd-rc {
-        flex: 1; background: var(--pc-fill-1); border-radius: var(--pc-r-sm);
+        background: var(--pc-fill-1); border-radius: var(--pc-r-sm);
         padding: 6px 10px; min-width: 0; cursor: pointer;
       }
       .pd-rc:hover { background: var(--pc-fill-2); }
@@ -578,9 +594,14 @@ const PD_STYLES = `
       .pd-rh { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
 
       .pd-z-quick { flex: 1.2; }
-      .pd-qstrip { display: flex; gap: 7px; }
+      /* Same reason as the room strip: six tiles in a shared flex row clipped
+         every name to "Ligh…" / "Occ…" / "Was…". */
+      .pd-qstrip {
+        display: grid; gap: 7px;
+        grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+      }
       .pd-qt {
-        flex: 1; background: var(--pc-fill-1); border-radius: var(--pc-r-sm);
+        background: var(--pc-fill-1); border-radius: var(--pc-r-sm);
         padding: 7px 8px 9px; display: flex; flex-direction: column; gap: 4px;
         align-items: flex-start; min-width: 0; position: relative; overflow: hidden; text-align: left;
       }

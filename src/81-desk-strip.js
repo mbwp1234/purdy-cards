@@ -15,6 +15,16 @@
  * clear, red with a count when not, and the list itself lives in a popover.
  * ========================================================================== */
 
+/* Weather states are slugs with no separator to split on, so the generic
+   humaniser can only capitalise them: `partlycloudy` came out "Partlycloudy",
+   and `clear-night` would have come out "Clear-night". These are a closed set
+   published by HA, so they are named rather than transformed. */
+const PD_WX_TEXT = {
+  "clear-night": "Clear", partlycloudy: "Partly cloudy", "lightning-rainy": "Thunderstorms",
+  "snowy-rainy": "Sleet", "windy-variant": "Windy", exceptional: "Severe",
+  pouring: "Heavy rain", hail: "Hail", lightning: "Lightning",
+};
+
 const PD_WX = {
   rainy: "mdi:weather-rainy", pouring: "mdi:weather-pouring", sunny: "mdi:weather-sunny",
   clear: "mdi:weather-night", "clear-night": "mdi:weather-night", cloudy: "mdi:weather-cloudy",
@@ -78,7 +88,7 @@ Object.assign(PurdyDeskCard.prototype, {
           <ha-icon icon="${PD_WX[st.state] || "mdi:weather-partly-cloudy"}"></ha-icon>
           <div>
             <div class="pd-wxt">${temp == null ? "—" : Math.round(temp) + "°"}</div>
-            <div class="pd-wxs">${psEsc(this._humanize(st.state))}</div>
+            <div class="pd-wxs">${psEsc(PD_WX_TEXT[st.state] || this._humanize(st.state))}</div>
           </div>
         </div>
         <div class="pd-wxout">
