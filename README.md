@@ -506,3 +506,31 @@ The pages were covered by tests and by a fixture modelled on the real entities, 
 - **A share's entity id is slugified** (`appdatabackups`, `mslady_drive`); the real name is in `share_name`.
 - **"84.1%" of what?** Nearly every one of these sensors carries `used_size`/`total_size` (or `ram_used`/`ram_total`), so the meter sub-line is derived. A size typed into config is one that goes stale silently.
 - **`Notice [HOSTNAME] - `** opens every notification subject, saying what the severity dot already says and pushing the actual subject off the end of the line.
+
+### Fans are a duty cycle, and most channels have no tachometer
+
+`number.*_fan_N_speed` is the **PWM duty the controller is commanding** — the state tracks `pwm_value / 255` exactly — not a measured speed. Only a header with a tach wire reports `rpm`, and the integration creates an RPM *sensor* only for those.
+
+A channel driven at 71% that reports `rpm: 0` is not a stopped fan; it is a fan nobody can hear back from. Printing "0 RPM" there is the same lie as drawing a missing reading as zero, so the row says **`no tach`** instead, and the block's header counts how many channels actually report (`1 of 6 reporting rpm` on the box this was written against). The measured RPM is shown in full strength beside the duty wherever it exists.
+
+### There is no update action, so there is no update button
+
+The integration publishes **no `update.*` entity and registers no services** — nothing to call. A button labelled "Update" would be a button that cannot update anything.
+
+What it does publish is the *knowledge* that one is waiting: `binary_sensor.*_update_available` for the OS and a plugins-with-updates count. So the Overview identity rows become **links** when something is pending — `update_url` and `plugins_url` point at the pages that perform it — and stay plain more-info rows when nothing is.
+
+```yaml
+update_available: binary_sensor.myserver_update_available
+update_url: http://<server-host>/Tools/Update
+plugins_url: http://<server-host>/Plugins
+```
+
+### Per-container restart
+
+The agent publishes a restart button per container, keyed exactly as the switch is, so `restart_prefix` is all it takes. It is offered only on a **running** container — restarting a stopped one is just starting it, which the toggle already does.
+
+```yaml
+docker:
+  containers_prefix: switch.myserver_container_
+  restart_prefix: button.myserver_restart_
+```

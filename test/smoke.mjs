@@ -3547,6 +3547,10 @@ const SRV = {
   version: 'sensor.purdynas_unraid_version',
   registration: 'sensor.purdynas_registration_state',
   registration_type: 'sensor.purdynas_registration_type',
+  plugins: 'sensor.purdynas_installed_plugins',
+  plugin_updates: 'sensor.purdynas_plugins_with_updates',
+  update_available: 'binary_sensor.purdynas_update_available',
+  update_url: 'http://nas/Tools/Update', plugins_url: 'http://nas/Plugins',
   faults: [{ entity: 'sensor.purdynas_disk_disk1_usage', above: 90, label: 'Disk 1', detail: 'low on space', severity: 'critical' }],
   meters: [{ label: 'Array', entity: 'sensor.purdynas_array_usage' }],
   stats: [{ label: 'CPU', entity: 'sensor.purdynas_cpu_usage', unit: '%' }],
@@ -3558,6 +3562,7 @@ const SRV = {
     vdisk: 'sensor.purdynas_docker_vdisk_usage', conflicts: 'sensor.purdynas_docker_port_conflicts',
     running: 'sensor.purdynas_containers_running',
     containers_prefix: 'switch.purdynas_container_', vms: ['switch.purdynas_vm_home_assistant'],
+    restart_prefix: 'button.purdynas_restart_',
     names: { binhex_jellyfin: { name: 'Jellyfin', icon: 'mdi:movie-play' } } },
   storage: { array: 'sensor.purdynas_array_usage', text: 'sensor.purdynas_storage_text',
     disks_prefix: 'sensor.purdynas_disk_', shares_prefix: 'sensor.purdynas_share_',
@@ -3565,7 +3570,7 @@ const SRV = {
   perf: { cpu: 'sensor.purdynas_cpu_usage', ram: 'sensor.purdynas_ram_usage',
     gpu_util: 'sensor.purdynas_gpu_utilization', gpu_temp: 'sensor.purdynas_gpu_temperature',
     board_temp: 'sensor.purdynas_motherboard_temperature', governor: 'sensor.purdynas_cpu_governor',
-    fans: ['number.purdynas_fan_1'],
+    fans: ['number.purdynas_fan_1', 'number.purdynas_fan_2'],
     network: [{ name: 'br0', rx: 'sensor.purdynas_network_br0_rx', tx: 'sensor.purdynas_network_br0_tx' }],
     power: { watts: 'sensor.purdynas_power', voltage: 'sensor.purdynas_voltage',
       daily: 'sensor.purdynas_energy_daily', monthly: 'sensor.purdynas_energy_monthly' } },
@@ -3580,6 +3585,8 @@ const sysHass = { states: {
   'sensor.purdynas_unraid_version': num('7.2.3'),
   'sensor.purdynas_registration_state': num('expired'),
   'sensor.purdynas_registration_type': num('plus'),
+  'sensor.purdynas_installed_plugins': num(15),
+  'sensor.purdynas_plugins_with_updates': num(0),
   'sensor.purdynas_array_usage': num(85.8, { total_capacity: '16.4 TB', free_space: '2.3 TB',
     num_data_disks: 3, num_parity_disks: 1, array_state: 'STARTED' }),
   'sensor.purdynas_storage_text': num('15.44 TB / 18 TB'),
@@ -3589,13 +3596,16 @@ const sysHass = { states: {
   'sensor.purdynas_ram_usage': num(15.9, { ram_used: '10.0 GB', ram_total: '62.7 GB', ram_cached: '51.2 GB' }),
   'sensor.purdynas_gpu_utilization': num(0), 'sensor.purdynas_gpu_temperature': num(32, { unit_of_measurement: '°C' }),
   'sensor.purdynas_motherboard_temperature': num(34, { unit_of_measurement: '°C' }),
-  'number.purdynas_fan_1': num(84),
+  'number.purdynas_fan_1': num(71, { rpm: 0, pwm_value: 183, mode: 'automatic' }),
+  'number.purdynas_fan_2': num(44, { rpm: 997, pwm_value: 113, mode: 'automatic' }),
   'sensor.purdynas_network_br0_rx': num(104.5, { unit_of_measurement: 'kbit/s' }),
   'sensor.purdynas_network_br0_tx': num(100.7, { unit_of_measurement: 'kbit/s' }),
   'sensor.purdynas_power': num(145.7), 'sensor.purdynas_voltage': num(118.5),
   'sensor.purdynas_energy_daily': num(1.162), 'sensor.purdynas_energy_monthly': num(23.56),
   'binary_sensor.purdynas_parity_valid': num('off', { device_class: 'problem' }),
   'binary_sensor.purdynas_parity_check_running': num('off'),
+  'binary_sensor.purdynas_update_available': num('off', { device_class: 'update' }),
+  'button.purdynas_restart_pihole': num('unknown'),
   'sensor.purdynas_parity_check_progress': num(0),
   'sensor.purdynas_last_parity_check': num('2026-03-01T15:17:52+00:00'),
   'sensor.purdynas_next_parity_check': num('2026-09-01T05:30:00+00:00'),
@@ -3831,6 +3841,44 @@ check('perf names the CPU without the marketing suffix',
 check('perf reports threads and governor', /16 threads/.test(pf) && /powersave/.test(pf));
 check('perf shows no per-core bars, because there is no per-core data',
   !/core-?\d/i.test(pf));
+/* These entities are the PWM DUTY the controller commands, not a measured
+   speed, and only a header with a tach wire reports rpm. A channel driven at
+   71% reading 0 rpm is not a stopped fan — printing "0 RPM" is the same lie as
+   drawing a missing reading as zero. Five of six on the real box. */
+check('a fan with a tachometer shows its rpm', /<b>997<\/b>/.test(pf));
+check('a driven fan with no tachometer says so rather than claiming 0 rpm',
+  /no tach/.test(pf) && !/\b0 ?rpm/i.test(pf));
+check('the fan header says how many channels actually report',
+  /1 of 2 reporting rpm/.test(pf));
+
+/* There is no update ACTION in this integration — no update.* entity, no
+   service — so a button would be one that cannot update anything. The row
+   links to the page that can. */
+check('nothing pretends to perform an update', (() => {
+  const sysSrc = fs.readFileSync(new URL('../src/77-shell-systems.js', import.meta.url), 'utf8');
+  return !/update['\"]?\s*\)|\bupdate_service|install_update/.test(sysSrc);
+})());
+check('an available OS update turns the version row into a link', (() => {
+  const p2 = new SH();
+  p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p2._hass = { states: { ...sysHass.states,
+    'binary_sensor.purdynas_update_available': num('on', { device_class: 'update' }) } };
+  const out = p2._syOverview(SRV);
+  return /data-syurl="http:\/\/nas\/Tools\/Update"/.test(out) && /update ↗/.test(out);
+})());
+check('no update available leaves the version row a plain more-info row',
+  /data-info="sensor\.purdynas_unraid_version"/.test(sy._syOverview(SRV)));
+check('a running container offers its restart button',
+  /data-sybtn="button\.purdynas_restart_pihole"/.test(sy._syDocker(SRV)));
+check('a stopped container does not offer restart', (() => {
+  const p2 = new SH();
+  p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p2._hass = { states: { ...sysHass.states,
+    'switch.purdynas_container_pihole': num('off', { friendly_name: 'PurdyNAS Container pihole' }) } };
+  return !/data-sybtn="button\.purdynas_restart_pihole"/.test(p2._syDocker(SRV));
+})());
+check('a container with no restart button published gets none',
+  !/data-sybtn="button\.purdynas_restart_binhex_jellyfin"/.test(sy._syDocker(SRV)));
 check('perf prints the network unit once rather than per row', (pf.match(/kbit\/s/g) || []).length === 1);
 check('perf converts monthly energy without inventing a cost',
   /23\.6 kWh/.test(pf) && !/\$/.test(pf));

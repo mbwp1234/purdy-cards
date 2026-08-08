@@ -845,7 +845,12 @@ const PS_STYLES = `
 
       .ps-syfans { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; }
       .ps-syfk { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
-      .ps-syfv { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .ps-syfv { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums;
+                 white-space: nowrap; }
+      .ps-syfv b { color: var(--ps-text); font-weight: 640; }
+      /* A channel nobody can hear back from is not a stopped fan. */
+      .ps-syfv em { font-style: normal; color: var(--ps-dim); }
+      .ps-syq2 { font-style: normal; color: var(--ps-dim); letter-spacing: .06em; }
 
       .ps-syn { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; }
       .ps-syn + .ps-syn { border-top: 1px solid var(--ps-hair-soft); }
