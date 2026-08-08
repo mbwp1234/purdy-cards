@@ -19,7 +19,7 @@
    "Configuration error" — not just the one section. */
 const PS_SECTIONS = [
   "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
-  "nowplaying", "nursery",
+  "nowplaying", "nursery", "lights",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
@@ -234,6 +234,14 @@ class PurdyShellCard extends PcBaseCard {
       }
       if (s.type === "nursery") {
         push(s.hatch); push(s.door); push(s.hatch_wifi); push(s.light);
+      }
+      if (s.type === "lights") {
+        (s.lights || []).forEach((x) => {
+          push(x.entity); push(x.hide_when_unavailable);
+          push((x.protect || {}).when);
+          (x.members || []).forEach(push);
+          (x.extras || []).forEach(push);
+        });
       }
       if (s.type === "tv" || s.type === "nowplaying") {
         (s.tvs || []).forEach((t) => { push(t.media_player); push(t.app_sensor); push(t.remote); });
@@ -544,6 +552,7 @@ class PurdyShellCard extends PcBaseCard {
         tv: () => this._secTv(sec),
         nowplaying: () => this._secNowplaying(sec),
         nursery: () => this._secNursery(sec),
+        lights: () => this._secLights(sec),
       }[sec.type]();
       if (!body) return;   // a self-hiding section takes its divider with it
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
@@ -600,6 +609,7 @@ class PurdyShellCard extends PcBaseCard {
 
     this._bind();
     this._bindScrub();
+    this._bindLights();
     this._reserve();
     /* Only while the music sheet is open, and only when the answer could have
        changed — see _syncQueue. Kicked from the tail of the render so it

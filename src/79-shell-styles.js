@@ -666,6 +666,101 @@ const PS_STYLES = `
       .ps-schedfail { padding: 4px 2px 8px; }
       .ps-schedfail p { margin: 8px 0 10px; font-size: var(--pc-fs-md); color: var(--ps-dim); }
 
+      /* lights — the row is a lit room, not a progress bar. There is no fill
+         and no track: a glow starts at the bulb and falls off, and an off
+         light is dark rather than zero percent. */
+      .pl-moods { display: flex; gap: 6px; margin-bottom: 9px; }
+      .pl-mood { flex: 1; padding: 9px 4px 8px; border-radius: var(--pc-r-sm);
+                 background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                 color: var(--ps-muted); display: flex; flex-direction: column;
+                 align-items: center; gap: 5px; transition: .18s; }
+      .pl-mood ha-icon { --mdc-icon-size: 17px; }
+      .pl-mood span { font-size: var(--pc-fs-micro); font-weight: 650; letter-spacing: .02em; }
+      .pl-mood.on { background: rgba(255,199,125,.14); border-color: rgba(255,199,125,.34);
+                    color: #FFC77D; }
+
+      .pl-rows { display: flex; flex-direction: column; gap: 5px; }
+      /* pan-y, never none: the page has to keep scrolling until a deliberate
+         horizontal drag starts, and a gesture cannot be reclaimed once the
+         browser has decided it is a scroll. */
+      .pl-row { position: relative; border-radius: var(--pc-r-md); overflow: hidden;
+                background: rgba(255,255,255,.026); border: 1px solid rgba(255,255,255,.06);
+                touch-action: pan-y; user-select: none; -webkit-user-select: none;
+                transition: border-color .3s, box-shadow .3s, background .3s; }
+      .pl-glow { position: absolute; inset: 0; opacity: 0; transform: scale(.94);
+                 transform-origin: 22px 50%;
+                 transition: opacity .32s cubic-bezier(.2,.7,.3,1),
+                             transform .32s cubic-bezier(.2,.7,.3,1), background .25s; }
+      .pl-row.on .pl-glow { opacity: 1; transform: none; }
+      .pl-row.dragging .pl-glow { transition: background .05s; }
+      .pl-face { position: relative; display: flex; align-items: center; gap: 12px;
+                 padding: 0 14px; height: 58px; }
+      .pl-clus { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; width: 26px; }
+      .pl-pip { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.13);
+                transition: background .3s, box-shadow .35s; }
+      .pl-clus.solo .pl-pip { width: 11px; height: 11px; }
+      .pl-txt { flex: 1; min-width: 0; }
+      .pl-t1 { font-size: var(--pc-fs-md); font-weight: 620; letter-spacing: -.01em;
+               color: var(--ps-muted); transition: color .3s;
+               text-shadow: 0 1px 4px rgba(0,0,0,.6); }
+      .pl-row.on .pl-t1 { color: var(--ps-text); }
+      .pl-t2 { font-size: var(--pc-fs-micro); margin-top: 3px; letter-spacing: .05em;
+               color: var(--ps-dim); text-shadow: 0 1px 4px rgba(0,0,0,.6); }
+      .pl-row.on .pl-t2 { color: rgba(255,255,255,.6); }
+      /* small at rest so the name leads, large while adjusting so it is precise */
+      .pl-kv { font-size: var(--pc-fs-sm); font-weight: 660; font-variant-numeric: tabular-nums;
+               color: rgba(255,255,255,.9); text-shadow: 0 1px 4px rgba(0,0,0,.7);
+               opacity: 0; transition: opacity .3s, font-size .18s; }
+      .pl-row.on .pl-kv { opacity: 1; }
+      .pl-row.dragging .pl-kv { font-size: var(--pc-fs-2xl); letter-spacing: -.03em; }
+      .pl-row.dragging .pl-txt { opacity: .35; transition: opacity .18s; }
+      .pl-row.na { opacity: .4; }
+      .pl-det { position: absolute; top: 0; bottom: 0; width: 1px;
+                background: rgba(255,255,255,.16); opacity: 0; transition: opacity .18s; }
+      .pl-row.dragging .pl-det { opacity: 1; }
+
+      .pl-more { position: relative; max-height: 0; overflow: hidden; transition: max-height .3s ease; }
+      .pl-row.open .pl-more { max-height: 150px; }
+      .pl-mb { padding: 0 14px 13px; display: flex; flex-direction: column; gap: 11px; }
+      .pl-kids { display: flex; flex-wrap: wrap; gap: 5px; }
+      .pl-kid { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px;
+                border-radius: var(--pc-r-pill); font-size: var(--pc-fs-xs); font-weight: 600;
+                background: rgba(255,255,255,.07); border: 1px solid var(--pc-edge);
+                color: var(--ps-muted); }
+      .pl-kid.on { background: rgba(255,199,125,.18); border-color: rgba(255,199,125,.34);
+                   color: #FFC77D; }
+      .pl-kid.na { opacity: .42; text-decoration: line-through; }
+      .pl-warmrow { display: flex; align-items: center; gap: 10px; }
+      .pl-warm { flex: 1; height: 14px; border-radius: var(--pc-r-pill); position: relative;
+                 touch-action: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.28);
+                 background: linear-gradient(90deg,#FF9536,#FFC489,#FFF0DC,#E4EFFF,#C6DDFF); }
+      .pl-g { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 16px;
+              height: 16px; border-radius: 50%; background: #fff;
+              box-shadow: 0 1px 6px rgba(0,0,0,.7); }
+      .pl-warmrow em { font-style: normal; font-size: var(--pc-fs-micro);
+                       color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums;
+                       min-width: 42px; text-align: right; letter-spacing: .03em; }
+      .pl-warmrow em.pl-none { min-width: 0; text-align: left; color: var(--ps-dim); }
+
+      /* the guard. Covers the LEVEL as well as the switch — a thumb dragging a
+         guarded light to 80% at 2am is the likelier accident of the two. */
+      .pl-row.on[data-guard="1"] { border-color: rgba(239,106,106,.32); }
+      .pl-ask { margin-top: 5px; border-radius: var(--pc-r-md); overflow: hidden;
+                background: rgba(239,106,106,.09); border: 1px solid rgba(239,106,106,.36); }
+      .pl-ab { padding: 12px 14px 10px; display: flex; gap: 11px; }
+      .pl-amk { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; display: grid;
+                place-items: center; background: rgba(239,106,106,.2); color: var(--ps-bad); }
+      .pl-amk ha-icon { --mdc-icon-size: 16px; }
+      .pl-ask b { display: block; font-size: var(--pc-fs-sm); font-weight: 660; color: #FFB4B4; }
+      .pl-ask p { margin: 4px 0 0; font-size: var(--pc-fs-xs); line-height: 1.5;
+                  color: rgba(255,255,255,.66); }
+      .pl-arow { display: flex; gap: 7px; padding: 0 14px 12px; }
+      .pl-abtn { flex: 1; padding: 9px; border-radius: var(--pc-r-sm); font-size: var(--pc-fs-xs);
+                 font-weight: 650; border: 1px solid var(--pc-edge); background: var(--pc-fill-2);
+                 color: var(--ps-text); }
+      .pl-abtn.go { background: rgba(239,106,106,.2); border-color: rgba(239,106,106,.44);
+                    color: #FFC2C2; }
+
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
     `;
 

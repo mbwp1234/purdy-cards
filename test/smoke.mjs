@@ -3153,6 +3153,217 @@ check('an optimistic goal for one entity does not leak onto another', (() => {
   return sh._optGoal('climate.other', 68) === 68;
 })());
 
+/* ============================ lights ============================
+   The row is a lit room, not a progress bar — and the guard on Joel's night
+   light has to cover the LEVEL as well as the switch. */
+const LSEC = {
+  type: 'lights', key: 'lights', title: 'Lights',
+  moods: [{ name: 'Evening', set: { 'light.a': { brightness: 55, kelvin: 2700 } },
+            off: ['light.b', 'light.night'] }],
+  lights: [
+    { entity: 'light.a', name: 'Living Room',
+      members: ['light.a1', 'light.a2'], extras: ['switch.scent'] },
+    { entity: 'light.b', name: 'Kitchen' },
+    { entity: 'light.night', name: 'Night light',
+      protect: { when: 'media_player.hatch', state: 'playing', ask: 'Joel is asleep' } },
+    { entity: 'light.xmas', name: 'Christmas', hide_when_unavailable: 'sensor.xmas' },
+  ],
+};
+function lsh(over) {
+  const sh = new SH();
+  sh.setConfig({ sections: [LSEC] });
+  sh._hass = { states: Object.assign({
+    'light.a': { state: 'on', attributes: { brightness: 158, color_temp_kelvin: 2900,
+      min_color_temp_kelvin: 2202, max_color_temp_kelvin: 6535,
+      supported_color_modes: ['color_temp'] } },
+    'light.a1': { state: 'on', attributes: {} },
+    'light.a2': { state: 'on', attributes: {} },
+    'switch.scent': { state: 'off', attributes: {} },
+    'light.b': { state: 'off', attributes: { supported_color_modes: ['brightness'] } },
+    'light.night': { state: 'on', attributes: { brightness: 13, rgb_color: [255, 0, 0],
+      supported_color_modes: ['rgb'] } },
+    'light.xmas': { state: 'unavailable', attributes: {} },
+    'media_player.hatch': { state: 'playing', attributes: {} },
+  }, over || {}), callService() {} };
+  return sh;
+}
+const lhtml = (over) => lsh(over)._secLights(LSEC);
+
+check('the lights section renders its rows', (() => {
+  const h = lhtml();
+  return /data-light="light\.a"/.test(h) && /Living Room/.test(h) && /Kitchen/.test(h);
+})());
+
+/* The whole point of rejecting the tile card: no fill, no track, no 0%. */
+check('no fill bar or track is drawn — the row is lit, not filled', (() => {
+  const h = lhtml();
+  return !/pl-fill|pl-track/.test(h) && /pl-glow/.test(h);
+})());
+check('an off light is dark, not zero percent', (() => {
+  const h = lhtml();
+  const row = h.slice(h.indexOf('data-light="light.b"'));
+  return !/>0%</.test(row.slice(0, row.indexOf('</div></div>') + 12));
+})());
+
+/* Warmth is a reading. A fixture that reports none must not get an invented
+   one, and must not get a dead slider either. */
+check('the glow colour comes from the reported kelvin', (() => {
+  const h = lhtml();
+  const row = h.slice(h.indexOf('data-light="light.a"'));
+  /* 2900K interpolates warm — red pinned, green well under blue-white */
+  return /rgba\(255,17[0-9],9[0-9]/.test(row) || /rgba\(255,1[6-8][0-9],/.test(row);
+})());
+check('a brightness-only fixture gets no warmth track', (() => {
+  const sh = lsh();
+  sh._lightOpen = 'light.b';
+  const h = sh._secLights(LSEC);
+  const row = h.slice(h.indexOf('data-light="light.b"'));
+  return !/data-lwarm="light\.b"/.test(row) && /no warmth to set/.test(row);
+})());
+check('a colour-temp fixture does get one, at its own range', (() => {
+  const sh = lsh();
+  sh._lightOpen = 'light.a';
+  const h = sh._secLights(LSEC);
+  return /data-lwarm="light\.a"/.test(h) && /data-lmin="2202"/.test(h)
+    && /data-lmax="6535"/.test(h);
+})());
+
+/* The cluster replaced a sub-line. It must show one dot per member, and the
+   sub-line must then say nothing. */
+check('a two-lamp group draws two pips', (() => {
+  const h = lhtml();
+  const row = h.slice(h.indexOf('data-light="light.a"'));
+  const face = row.slice(0, row.indexOf('pl-txt'));
+  return (face.match(/pl-pip/g) || []).length === 2;
+})());
+check('a row with nothing to say draws no sub-line', (() => {
+  const h = lhtml();
+  const row = h.slice(h.indexOf('data-light="light.a"'), h.indexOf('data-light="light.b"'));
+  return !/pl-t2/.test(row);
+})());
+check('an offline member is named, and its pip is dead', (() => {
+  const h = lhtml({ 'light.a2': { state: 'unavailable', attributes: {} } });
+  const row = h.slice(h.indexOf('data-light="light.a"'), h.indexOf('data-light="light.b"'));
+  return /offline/.test(row) && /rgba\(255,255,255,\.06\)/.test(row);
+})());
+check('an extra switch that is on is worth saying', (() => {
+  const h = lhtml({ 'switch.scent': { state: 'on', attributes: { friendly_name: 'Scentsy' } } });
+  const row = h.slice(h.indexOf('data-light="light.a"'), h.indexOf('data-light="light.b"'));
+  return /Scentsy on/.test(row);
+})());
+
+/* Christmas hid itself with a Bubble styles hack; this is the same contract
+   one level down. */
+check('hide_when_unavailable drops the row entirely', (() => {
+  const h = lhtml();
+  return !/data-light="light\.xmas"/.test(h);
+})());
+check('and brings it back when the sensor reports', (() => {
+  const h = lhtml({ 'sensor.xmas': { state: '60', attributes: {} },
+    'light.xmas': { state: 'off', attributes: {} } });
+  return /data-light="light\.xmas"/.test(h);
+})());
+
+/* ---- the guard ---- */
+check('the night light is marked guarded while the Hatch plays', (() => {
+  const h = lhtml();
+  return /data-light="light\.night" data-dim="\d" data-guard="1"/.test(h);
+})());
+check('and is NOT guarded once the Hatch stops', (() => {
+  const h = lhtml({ 'media_player.hatch': { state: 'idle', attributes: {} } });
+  return /data-light="light\.night" data-dim="\d" data-guard="0"/.test(h);
+})());
+check('the guard asks before turning it off', (() => {
+  const sh = lsh();
+  sh._lightAsk = { id: 'light.night', kind: 'toggle' };
+  const h = sh._secLights(LSEC);
+  return /Joel is asleep/.test(h) && /Turn it off/.test(h);
+})());
+
+/* The likelier accident is a thumb dragging it to 80% at 2am, not a tap. The
+   guard has to cover the LEVEL, and the question has to carry the number. */
+check('the guard also asks before CHANGING THE LEVEL', (() => {
+  const sh = lsh();
+  sh._lightAsk = { id: 'light.night', kind: 'level', value: 80 };
+  const h = sh._secLights(LSEC);
+  return /Set it to 80%\?/.test(h) && /Set 80%/.test(h);
+})());
+check('a guarded drag sends nothing until the question is answered', (() => {
+  const sh = lsh();
+  let calls = 0;
+  sh._hass.callService = () => { calls += 1; };
+  /* what the drag handler does on a guarded row: preview, then ask */
+  sh._lightAsk = { id: 'light.night', kind: 'level', value: 80 };
+  return calls === 0 && sh._optBri('light.night', 5) === 5;
+})());
+check('answering yes to a level change is what finally sends it', (() => {
+  const sh = lsh();
+  let sent = null;
+  sh._hass.callService = (d, s2, data) => { sent = [d, s2, data]; };
+  sh._lightSetBri('light.night', 80);
+  /* debounced, so the optimistic value leads and one call follows */
+  return sh._optBri('light.night', 5) === 80 && sent === null;
+})());
+
+/* Moods are target sets, and a guarded light is never in one — "all off" that
+   kills the night light is the bug, not the feature. */
+check('a mood never touches a guarded light', (() => {
+  const sh = lsh();
+  const hit = [];
+  sh._hass.callService = (d, s2, data) => { hit.push(data.entity_id); };
+  sh._lightApplyMood(LSEC, 0);
+  return hit.indexOf('light.night') < 0 && hit.indexOf('light.a') >= 0
+    && hit.indexOf('light.b') >= 0;
+})());
+check('a mood sends brightness as 0-255, not as a percentage', (() => {
+  const sh = lsh();
+  let data = null;
+  sh._hass.callService = (d, s2, x) => { if (x.entity_id === 'light.a') data = x; };
+  sh._lightApplyMood(LSEC, 0);
+  return data && data.brightness === Math.round(55 / 100 * 255) && data.color_temp_kelvin === 2700;
+})());
+
+/* The chip counts what you can act on: guarded and unavailable lights are
+   neither "on" nor part of the total. */
+check('the header chip excludes the guarded light from the count', (() => {
+  const h = lhtml();
+  return /1 of 2 on/.test(h);
+})());
+check('a house with only the night light on says so', (() => {
+  const h = lhtml({ 'light.a': { state: 'off', attributes: {} } });
+  return /Night light only/.test(h);
+})());
+
+/* Optimistic brightness, on _optGoal's contract. */
+check('an optimistic brightness stands, then yields to the real state', (() => {
+  const sh = new SH();
+  sh._briOpt = { 'light.a': { value: 80, until: Date.now() + 10000 } };
+  return sh._optBri('light.a', 30) === 80 && sh._optBri('light.a', 80) === 80
+    && sh._optBri('light.a', 30) === 30;
+})());
+check('an optimistic brightness that never lands expires', (() => {
+  const sh = new SH();
+  sh._briOpt = { 'light.a': { value: 80, until: Date.now() - 1 } };
+  return sh._optBri('light.a', 30) === 30;
+})());
+check('a lamp on at the dimmest possible step still reads 1%, never 0%', (() => {
+  /* on and off must not look the same — brightness 1/255 rounds to zero */
+  const h = lhtml({ 'light.a': { state: 'on', attributes: { brightness: 1,
+    supported_color_modes: ['brightness'] } } });
+  const row = h.slice(h.indexOf('data-light="light.a"'));
+  return /<div class="pl-kv">1%<\/div>/.test(row);
+})());
+
+/* The v1.31.1 lesson: a new section type must be in BOTH places or setConfig
+   throws and Lovelace replaces the entire card. */
+check('setConfig accepts a lights section', (() => {
+  try { new SH().setConfig({ sections: [LSEC] }); return true; } catch (e) { return false; }
+})());
+check('_bindLights is actually called, not merely defined',
+  /this\._bindLights\(\);/.test(src) && /_bindLights\(\) \{/.test(src));
+check('the lights row never reaches for pointer capture',
+  !/pl-row[\s\S]{0,4000}setPointerCapture/.test(src));
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
