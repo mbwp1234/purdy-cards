@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.45.2";
+const PC_VERSION = "1.45.3";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -9487,6 +9487,12 @@ const plRgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 const plPct = (b) => (b == null ? null : Math.max(1, Math.round(b / 255 * 100)));
 const plByte = (p) => Math.max(1, Math.min(255, Math.round(p / 100 * 255)));
 
+/* Where the warmth knob sits, as one expression. The renderer and the live
+   drag painter both read it, for the same reason _lightPaint is shared: two
+   code paths drawing the same control would drift. */
+const plWarmPct = (k, min, max) =>
+  Math.max(0, Math.min(100, (k - min) / ((max - min) || 1) * 100));
+
 Object.assign(PurdyShellCard.prototype, {
 
   /* Everything the section needs to know about one light, read live. */
@@ -9509,7 +9515,7 @@ Object.assign(PurdyShellCard.prototype, {
       cfg, id: cfg.entity, name: cfg.name || (a.friendly_name || cfg.entity),
       gone, on, dimmable, warmable,
       bri: opt == null ? (on ? 100 : (cfg.default_brightness || 100)) : opt,
-      kelvin: a.color_temp_kelvin == null ? null : a.color_temp_kelvin,
+      kelvin: this._optK(cfg.entity, a.color_temp_kelvin == null ? null : a.color_temp_kelvin),
       minK: a.min_color_temp_kelvin || 2000,
       maxK: a.max_color_temp_kelvin || 6535,
       rgb: a.rgb_color,
@@ -9524,6 +9530,19 @@ Object.assign(PurdyShellCard.prototype, {
     if (!o) return real;
     if (Date.now() > o.until) { delete this._briOpt[id]; return real; }
     if (real != null && Math.abs(real - o.value) <= 1) { delete this._briOpt[id]; return real; }
+    return o.value;
+  },
+
+  /* The optimistic colour temperature, on the same contract. The tolerance is
+     wider than brightness's because a bulb quantises kelvin to mired steps and
+     never echoes back the exact number asked for — at the blue end one step is
+     already ~43K, so an exact-match test would keep the optimistic value up
+     until it expired and then snap. */
+  _optK(id, real) {
+    const o = (this._kOpt || {})[id];
+    if (!o) return real;
+    if (Date.now() > o.until) { delete this._kOpt[id]; return real; }
+    if (real != null && Math.abs(real - o.value) <= 75) { delete this._kOpt[id]; return real; }
     return o.value;
   },
 
@@ -9646,6 +9665,26 @@ Object.assign(PurdyShellCard.prototype, {
     el.querySelectorAll(".pl-pip").forEach((pip) => { pip.style.cssText = p.pip; });
   },
 
+  /* Paint the warmth track at a value, in place — the knob, the readout and
+     the row's own hue, since hue IS the colour temperature the fixture
+     reports. Exactly the rule the brightness drag already follows: a drag
+     cannot go through _render(). It could not even try here, because
+     pointerdown sets _dragging, so _render() was a no-op for the whole
+     gesture and NOTHING moved — the knob sat still while the service calls
+     went out. That is the "the slider does not slide" report. */
+  _paintWarm(el, id, k) {
+    const knob = el.querySelector(".pl-g");
+    if (knob) knob.style.left = plWarmPct(k, +el.dataset.lmin, +el.dataset.lmax).toFixed(1) + "%";
+    const row = el.closest(".pl-row");
+    const em = row && row.querySelector(".pl-warmrow em");
+    if (em) em.textContent = k + "K";
+    const cfg = this._lightCfg(id);
+    if (row && cfg) {
+      const l = this._lightOf(cfg);          /* reads the optimistic kelvin */
+      if (l.on) this._paintLight(row, id, l.bri);
+    }
+  },
+
   /* The hold panel: the members, then warmth. A fixture that reports no colour
      temperature gets no track rather than a dead one — the same rule that stops
      a missing reading being drawn as a zero. */
@@ -9663,10 +9702,9 @@ Object.assign(PurdyShellCard.prototype, {
     let warm;
     if (l.warmable && !l.gone) {
       const k = l.kelvin == null ? Math.round((l.minK + l.maxK) / 2) : l.kelvin;
-      const pct = Math.max(0, Math.min(100, (k - l.minK) / (l.maxK - l.minK) * 100));
       warm = `<div class="pl-warmrow">
           <div class="pl-warm" data-lwarm="${psEsc(l.id)}" data-lmin="${l.minK}" data-lmax="${l.maxK}">
-            <span class="pl-g" style="left:${pct.toFixed(1)}%"></span>
+            <span class="pl-g" style="left:${plWarmPct(k, l.minK, l.maxK).toFixed(1)}%"></span>
           </div><em>${k}K</em>
         </div>`;
     } else {
@@ -9797,8 +9835,29 @@ Object.assign(PurdyShellCard.prototype, {
     if (!s.timer) s.timer = setTimeout(fire, gap - since);
   },
 
+  /* Same contract as _lightSetBri, and for the same reason: this fired a
+     service call on EVERY pointermove — dozens a second at one bulb, which is
+     how a warmth drag ended up queued behind its own traffic. Optimistic
+     value is recorded synchronously so the knob and the row hue can be
+     painted from it now; only the call is throttled. */
   _lightSetKelvin(id, k) {
-    this._hass.callService("light", "turn_on", { entity_id: id, color_temp_kelvin: k });
+    if (!this._kOpt) this._kOpt = {};
+    this._kOpt[id] = { value: k, until: Date.now() + 12000 };
+    if (!this._kSend) this._kSend = {};
+    const s = this._kSend[id] || (this._kSend[id] = {});
+    s.value = k;
+    const gap = 150;
+    const fire = () => {
+      s.timer = null;
+      s.last = Date.now();
+      if (this._hass) {
+        this._hass.callService("light", "turn_on",
+          { entity_id: id, color_temp_kelvin: s.value });
+      }
+    };
+    const since = s.last ? Date.now() - s.last : Infinity;
+    if (since >= gap) { fire(); return; }
+    if (!s.timer) s.timer = setTimeout(fire, gap - since);
   },
 
   _lightApplyMood(sec, i) {
@@ -9954,21 +10013,36 @@ Object.assign(PurdyShellCard.prototype, {
         if (!r.width) return;
         const p = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
         const min = +el.dataset.lmin, max = +el.dataset.lmax;
-        this._lightSetKelvin(el.dataset.lwarm, Math.round(min + p * (max - min)));
+        const id = el.dataset.lwarm;
+        const k = Math.round(min + p * (max - min));
+        this._lightSetKelvin(id, k);   /* records the optimistic value now */
+        this._paintWarm(el, id, k);    /* ...which this then draws from */
       };
       let warming = false;
       const mv = (e) => { if (warming) set(e); };
-      const up = () => {
+      const stop = () => {
         warming = false; this._dragging = false;
         this.shadowRoot.removeEventListener("pointermove", mv);
         this.shadowRoot.removeEventListener("pointerup", up);
-        this._render();
+        ["pointercancel", "lostpointercapture"].forEach((ev) =>
+          this.shadowRoot.removeEventListener(ev, cancel));
       };
+      const up = () => { stop(); this._render(); };
+      /* A gesture that ends any way OTHER than a clean pointerup left
+         _dragging stuck true, and _render() is gated on it — so the card
+         stopped repainting for good. The brightness read frozen and a tap on
+         the row toggled a light that never appeared to move. That is the
+         second half of the report, and it is the same hazard the volume
+         sliders carry a pointercancel guard for. */
+      const cancel = () => { stop(); this._render(); };
       el.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
+        if (warming) stop();          /* never stack a second gesture's listeners */
         warming = true; this._dragging = true;
         this.shadowRoot.addEventListener("pointermove", mv);
         this.shadowRoot.addEventListener("pointerup", up);
+        ["pointercancel", "lostpointercapture"].forEach((ev) =>
+          this.shadowRoot.addEventListener(ev, cancel));
         set(e);
       });
     });
