@@ -3452,6 +3452,70 @@ check('missing a chip cannot toggle the group behind it', (() => {
   return /\.pl-more/.test(down.slice(0, down.indexOf('hold = setTimeout')));
 })());
 
+/* The warmth track. Every one of these is a lesson the brightness drag had
+   already learned and the warmth track never got. */
+check('an optimistic kelvin stands, then yields to the real state', (() => {
+  const sh = new SH();
+  sh._kOpt = { 'light.a': { value: 4000, until: Date.now() + 10000 } };
+  return sh._optK('light.a', 2700) === 4000
+    && sh._optK('light.a', 4030) === 4030   /* a mired step, not a disagreement */
+    && sh._optK('light.a', 2700) === 2700;
+})());
+check('an optimistic kelvin that never lands expires', (() => {
+  const sh = new SH();
+  sh._kOpt = { 'light.a': { value: 4000, until: Date.now() - 1 } };
+  return sh._optK('light.a', 2700) === 2700;
+})());
+
+/* The send is a THROTTLE. It used to fire a service call on every single
+   pointermove — dozens a second at one bulb. */
+check('a burst of warmth moves sends once, immediately', (() => {
+  const sh = new SH(); let n = 0;
+  sh._hass = { callService: () => { n++; } };
+  for (let k = 2700; k < 3000; k += 10) sh._lightSetKelvin('light.a', k);
+  return n === 1;
+})());
+check('the last warmth value is queued to land, not dropped', (() => {
+  const sh = new SH();
+  sh._hass = { callService: () => {} };
+  sh._lightSetKelvin('light.a', 2700);
+  sh._lightSetKelvin('light.a', 3300);
+  sh._lightSetKelvin('light.a', 4100);
+  const s = sh._kSend['light.a'];
+  if (s.timer) clearTimeout(s.timer);
+  return !!s.timer && s.value === 4100;   /* trailing edge carries the newest */
+})());
+check('the warmth drag moves the number before HA echoes anything', (() => {
+  /* The optimistic value is written synchronously, so the knob and the row
+     hue can be painted from it during the gesture rather than after. */
+  const sh = new SH();
+  sh._hass = { callService: () => {} };
+  sh._lightSetKelvin('light.a', 5000);
+  return sh._optK('light.a', 2700) === 5000;
+})());
+
+/* _dragging gates _render(). A warmth gesture that ended any way other than a
+   clean pointerup left it stuck true and the card stopped repainting for
+   good: the brightness read frozen and taps looked dead. */
+const warmBind = (() => {
+  const bind = src.slice(src.indexOf('_bindLights() {'), src.indexOf('_lightCfg(id) {'));
+  return bind.slice(bind.indexOf('"[data-lwarm]"'));
+})();
+/* Matching "pointercancel" alone is not enough — the cleanup that REMOVES the
+   listener names it too, so deleting the registration left the test green.
+   The registration itself is what has to be asserted. */
+check('a cancelled warmth drag cannot strand _dragging',
+  /pointercancel/.test(warmBind)
+  && /addEventListener\(ev, cancel\)/.test(warmBind)
+  && /const cancel = \(\) => \{ stop\(\);/.test(warmBind));
+check('a warmth drag paints in place rather than through _render',
+  /_paintWarm\(/.test(warmBind));
+check('the warmth knob and the renderer read the same geometry', (() => {
+  const more = src.slice(src.indexOf('_lightMore(l) {'), src.indexOf('_lightMoodHtml'));
+  const paint = src.slice(src.indexOf('_paintWarm(el, id, k) {'), src.indexOf('_lightMore(l) {'));
+  return /plWarmPct\(/.test(more) && /plWarmPct\(/.test(paint);
+})());
+
 /* The stylesheet is one template literal, so a backtick anywhere inside it —
    including in a comment quoting a CSS property — silently terminates the
    string and takes the whole bundle with it. It happened while fixing the
