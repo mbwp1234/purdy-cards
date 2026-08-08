@@ -1082,7 +1082,7 @@ check('a hosted sheet is titled from its config', /Televisions/.test(hostHtml));
 check('a hosted sheet leaves a mount point rather than markup', /id="ps-host"/.test(hostHtml));
 
 /* Mounting needs a DOM, so reuse the mini-DOM from the reconciliation block. */
-const savedDoc2 = globalThis.document;
+const savedDocSy = globalThis.document;
 const hostNode = new MiniNode();
 let made = null;
 globalThis.document = { createElement: (t) => { made = new MiniNode(); made.tag = t; return made; } };
@@ -1113,7 +1113,7 @@ check('an unregistered card reports itself instead of throwing',
 shhost._sheet = null;
 shhost._mountSheetCard();
 check('closing a hosted sheet releases the card', shhost._hosted === null);
-globalThis.document = savedDoc2;
+globalThis.document = savedDocSy;
 
 /* The bell carries alert_when_faults AND a sheet. Treating the flag as a
    destination meant that with any fault raised — and the low-battery rule
@@ -3534,6 +3534,407 @@ check('_bindLights is actually called, not merely defined',
   /this\._bindLights\(\);/.test(src) && /_bindLights\(\) \{/.test(src));
 check('the lights row never reaches for pointer capture',
   !/pl-row[\s\S]{0,4000}setPointerCapture/.test(src));
+
+/* ------------------------------------------------------- systems mode -- */
+/* The mode swaps the column AND the dock, so the assertions that matter are
+   about what happens to the four patched slots — and about the lists being
+   DISCOVERED, since the hand-typed version had three container ids that did
+   not exist and rendered as dead toggles for weeks. */
+const SRV = {
+  name: 'PurdyNAS', prefix: 'purdynas', url: 'http://nas/Dashboard',
+  status: 'sensor.purdynas_system_status',
+  uptime: 'sensor.purdynas_uptime_text',
+  version: 'sensor.purdynas_unraid_version',
+  registration: 'sensor.purdynas_registration_state',
+  registration_type: 'sensor.purdynas_registration_type',
+  faults: [{ entity: 'sensor.purdynas_disk_disk1_usage', above: 90, label: 'Disk 1', detail: 'low on space', severity: 'critical' }],
+  meters: [{ label: 'Array', entity: 'sensor.purdynas_array_usage' }],
+  stats: [{ label: 'CPU', entity: 'sensor.purdynas_cpu_usage', unit: '%' }],
+  parity: { problem: 'binary_sensor.purdynas_parity_valid', last_check: 'sensor.purdynas_last_parity_check',
+    next_check: 'sensor.purdynas_next_parity_check', progress: 'sensor.purdynas_parity_check_progress',
+    running: 'binary_sensor.purdynas_parity_check_running', start: 'button.purdynas_start_parity_check' },
+  power: [{ name: 'Reboot', entity: 'button.purdynas_reboot_system' }],
+  docker: { cpu: 'sensor.purdynas_docker_cpu_usage', memory: 'sensor.purdynas_docker_memory_usage',
+    vdisk: 'sensor.purdynas_docker_vdisk_usage', conflicts: 'sensor.purdynas_docker_port_conflicts',
+    running: 'sensor.purdynas_containers_running',
+    containers_prefix: 'switch.purdynas_container_', vms: ['switch.purdynas_vm_home_assistant'],
+    names: { binhex_jellyfin: { name: 'Jellyfin', icon: 'mdi:movie-play' } } },
+  storage: { array: 'sensor.purdynas_array_usage', text: 'sensor.purdynas_storage_text',
+    disks_prefix: 'sensor.purdynas_disk_', shares_prefix: 'sensor.purdynas_share_',
+    pools: [{ label: 'flash', entity: 'sensor.purdynas_flash_usage' }] },
+  perf: { cpu: 'sensor.purdynas_cpu_usage', ram: 'sensor.purdynas_ram_usage',
+    gpu_util: 'sensor.purdynas_gpu_utilization', gpu_temp: 'sensor.purdynas_gpu_temperature',
+    board_temp: 'sensor.purdynas_motherboard_temperature', governor: 'sensor.purdynas_cpu_governor',
+    fans: ['number.purdynas_fan_1'],
+    network: [{ name: 'br0', rx: 'sensor.purdynas_network_br0_rx', tx: 'sensor.purdynas_network_br0_tx' }],
+    power: { watts: 'sensor.purdynas_power', voltage: 'sensor.purdynas_voltage',
+      daily: 'sensor.purdynas_energy_daily', monthly: 'sensor.purdynas_energy_monthly' } },
+  notifications: { total: 'sensor.purdynas_notifications', alert: 'sensor.purdynas_notifications_unread_alert',
+    warning: 'sensor.purdynas_notifications_unread_warning', info: 'sensor.purdynas_notifications_unread_info',
+    archive: 'button.purdynas_archive_all_notifications' },
+};
+const num = (v, attrs) => ({ state: String(v), attributes: attrs || {} });
+const sysHass = { states: {
+  'sensor.purdynas_system_status': num('online'),
+  'sensor.purdynas_uptime_text': num('13d 1h'),
+  'sensor.purdynas_unraid_version': num('7.2.3'),
+  'sensor.purdynas_registration_state': num('expired'),
+  'sensor.purdynas_registration_type': num('plus'),
+  'sensor.purdynas_array_usage': num(85.8, { total_capacity: '16.4 TB', free_space: '2.3 TB',
+    num_data_disks: 3, num_parity_disks: 1, array_state: 'STARTED' }),
+  'sensor.purdynas_storage_text': num('15.44 TB / 18 TB'),
+  'sensor.purdynas_cpu_usage': num(10.8, { cpu_model: 'AMD Ryzen 7 5800X 8-Core Processor',
+    cpu_threads: 16, cpu_frequency: '4575 MHz' }),
+  'sensor.purdynas_cpu_governor': num('powersave'),
+  'sensor.purdynas_ram_usage': num(15.9, { ram_used: '10.0 GB', ram_total: '62.7 GB', ram_cached: '51.2 GB' }),
+  'sensor.purdynas_gpu_utilization': num(0), 'sensor.purdynas_gpu_temperature': num(32, { unit_of_measurement: '°C' }),
+  'sensor.purdynas_motherboard_temperature': num(34, { unit_of_measurement: '°C' }),
+  'number.purdynas_fan_1': num(84),
+  'sensor.purdynas_network_br0_rx': num(104.5, { unit_of_measurement: 'kbit/s' }),
+  'sensor.purdynas_network_br0_tx': num(100.7, { unit_of_measurement: 'kbit/s' }),
+  'sensor.purdynas_power': num(145.7), 'sensor.purdynas_voltage': num(118.5),
+  'sensor.purdynas_energy_daily': num(1.162), 'sensor.purdynas_energy_monthly': num(23.56),
+  'binary_sensor.purdynas_parity_valid': num('off', { device_class: 'problem' }),
+  'binary_sensor.purdynas_parity_check_running': num('off'),
+  'sensor.purdynas_parity_check_progress': num(0),
+  'sensor.purdynas_last_parity_check': num('2026-03-01T15:17:52+00:00'),
+  'sensor.purdynas_next_parity_check': num('2026-09-01T05:30:00+00:00'),
+  'sensor.purdynas_docker_cpu_usage': num(3.7), 'sensor.purdynas_docker_memory_usage': num(5782.5),
+  'sensor.purdynas_docker_vdisk_usage': num(24.7), 'sensor.purdynas_docker_port_conflicts': num(0),
+  'sensor.purdynas_containers_running': num('4 of 11'),
+  'switch.purdynas_container_binhex_jellyfin': num('on', { friendly_name: 'PurdyNAS Container binhex-jellyfin',
+    container_image: 'binhex/arch-jellyfin', container_ports: [{ public_port: 8096 }],
+    dashboard_url: 'http://nas:8096/web/' }),
+  'switch.purdynas_container_pihole': num('on', { friendly_name: 'PurdyNAS Container pihole' }),
+  'switch.purdynas_container_ollama': num('off', { friendly_name: 'PurdyNAS Container ollama' }),
+  'switch.purdynas_vm_home_assistant': num('on', { friendly_name: 'PurdyNAS VM Home Assistant' }),
+  'sensor.purdynas_disk_disk1_health': num('PASSED'),
+  'sensor.purdynas_disk_disk1_usage': num(92.8, { used_size: '6.7 TB', total_size: '7.3 TB', role: 'data' }),
+  'sensor.purdynas_disk_disk2_health': num('PASSED'),
+  'sensor.purdynas_disk_disk2_usage': num(50.0, { role: 'data' }),
+  'sensor.purdynas_disk_disk2_temperature': num(31, { unit_of_measurement: '°C' }),
+  'sensor.purdynas_disk_parity_health': num('PASSED'),
+  'sensor.purdynas_disk_parity2_health': num('DISK_NP_DSBL'),
+  'sensor.purdynas_flash_usage': num(1.7),
+  'sensor.purdynas_share_appdata_usage': num(84.1),
+  'sensor.purdynas_share_isos_usage': num(12.0),
+  'sensor.purdynas_notifications': num(51, { unread_count: 51, recent_notifications: [
+    { subject: 'Disk 1 is low on space (93%)', importance: 'alert' },
+    { subject: 'Version update 2026.08.07', importance: 'normal' },
+  ] }),
+  'sensor.purdynas_notifications_unread_alert': num(1),
+  'sensor.purdynas_notifications_unread_warning': num(3),
+  'sensor.purdynas_notifications_unread_info': num(47),
+} };
+
+const sy = new SH();
+sy.setConfig({
+  server: SRV,
+  dock: [{ icon: 'mdi:home-variant', name: 'Home', link: '/lovelace/phone2' },
+    { icon: 'mdi:server', name: 'Systems', mode: 'systems' }],
+  sections: [{ type: 'quick', key: 'q', tiles: [] }],
+});
+sy._hass = sysHass;
+
+check('a server block does not require a systems section', sy._sysCfg() !== null);
+check('every configured page gets a dock slot',
+  sy._sysPages().map((p) => p.key).join(',') === 'overview,docker,storage,perf,alerts');
+check('a page with no config gets no slot', (() => {
+  const p = new SH();
+  p.setConfig({ server: { name: 'x', status: 'sensor.s' }, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  return p._sysPages().map((x) => x.key).join(',') === 'overview';
+})());
+
+/* Discovery is the whole argument for the rewrite: the typed list named three
+   containers that did not exist. A discovered list cannot. */
+const cts = sy._syContainers();
+check('containers are discovered from hass, not from config', cts.length === 3);
+check('discovery cannot invent a container that is not there',
+  !cts.some((c) => /lancache/.test(c.id)));
+check('a discovered container takes its name from the friendly name',
+  (cts.find((c) => c.key === 'pihole') || {}).name === 'pihole');
+check('a config override renames a container',
+  (cts.find((c) => c.key === 'binhex_jellyfin') || {}).name === 'Jellyfin');
+check('the link comes off the switch, not out of config',
+  (cts.find((c) => c.key === 'binhex_jellyfin') || {}).url === 'http://nas:8096/web/');
+check('the port comes off the switch too',
+  (cts.find((c) => c.key === 'binhex_jellyfin') || {}).port === ':8096');
+
+/* A slot with no disk in it must read as absent. A 0% bar is a claim about a
+   healthy empty drive, and there is no drive — the sock's zero-vs-missing
+   lesson, in a new place. */
+const dsk = sy._syDisks();
+check('disks are discovered by health, so an empty slot is still seen', dsk.length === 4);
+check('an empty parity slot is drawn as absent, not as zero',
+  (dsk.find((d) => d.key === 'parity2') || {}).present === false);
+check('a real disk is present', (dsk.find((d) => d.key === 'disk1') || {}).present === true);
+check('a disk temperature is picked up only where it exists',
+  (dsk.find((d) => d.key === 'disk2') || {}).tempF === 31 &&
+  (dsk.find((d) => d.key === 'disk1') || {}).tempF === null);
+
+check('shares are discovered and sorted by fullness',
+  sy._syShares().map((s) => s.name).join(',') === 'appdata,isos');
+
+/* The watched set cannot be complete until hass exists, because the lists are
+   discovered from it — without the expansion a container toggle would not
+   repaint until the 30s clock came round. */
+check('discovered ids are not watched before hass', !sy._watched.includes('switch.purdynas_container_pihole'));
+sy._expandWatched();
+check('expanding the watched set picks up discovered containers',
+  sy._watched.includes('switch.purdynas_container_pihole'));
+check('expanding picks up discovered disks',
+  sy._watched.includes('sensor.purdynas_disk_disk1_health'));
+check('expanding picks up the configured singles',
+  sy._watched.includes('sensor.purdynas_power') && sy._watched.includes('sensor.purdynas_uptime_text'));
+check('expanding invalidates the signature so the next hass is not skipped', sy._last === null);
+check('_expandWatched runs on first hass', /_expandWatched\(\);/.test(src) &&
+  /_start\(\) \{[\s\S]{0,400}_expandWatched/.test(src));
+
+/* Rendering: the pages are strings, so they can be asserted directly. */
+const ov = sy._syOverview(SRV);
+check('overview surfaces an expired registration', /Registration/.test(ov) && /expired/.test(ov));
+check('overview raises the disk-1 fault from an above rule', /Disk 1/.test(ov) && /low on space/.test(ov));
+check('overview reads parity_valid as a PROBLEM sensor, so off is valid',
+  /Valid<\/span>/.test(sy._syParity(SRV)));
+check('parity off-by-polarity would show invalid', (() => {
+  const flipped = { ...sysHass, states: { ...sysHass.states,
+    'binary_sensor.purdynas_parity_valid': num('on', { device_class: 'problem' }) } };
+  const p = new SH(); p.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p._hass = flipped;
+  return /Invalid<\/span>/.test(p._syParity(SRV));
+})());
+check('parity dates are short, not ISO',
+  /Mar/.test(sy._syParity(SRV)) && !/2026-03-01T/.test(sy._syParity(SRV)));
+check('reboot is behind the two-tap arm, not a bare button',
+  /data-arm="sy:button\.purdynas_reboot_system"/.test(sy._syPower(SRV)));
+check('the arm handler routes systems keys', /k\.indexOf\("sy:"\) === 0/.test(src));
+
+const dk = sy._syDocker(SRV);
+check('docker page lists every discovered container', /Jellyfin/.test(dk) && /ollama/.test(dk));
+check('docker memory is shown in GB, not five digits of MB', /5\.6<small>GB/.test(dk));
+/* A sensor that is not reporting and a sensor reporting zero are different
+   facts. `pcNum(...) ?? 0` is the shape that hides it, and it had crept into
+   seven figures on these pages. */
+check('a docker stat with no reading shows a dash, not 0.0%', (() => {
+  const gone = { states: { ...sysHass.states } };
+  delete gone.states['sensor.purdynas_docker_cpu_usage'];
+  const p = new SH(); p.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p._hass = gone;
+  const out = p._syDocker(SRV);
+  return /—/.test(out) && !/0\.0<small>%<\/small><\/span>[\s\S]{0,80}Memory/.test(out);
+})());
+check('a notification count with no sensor shows a dash, not 0', (() => {
+  const gone = { states: { ...sysHass.states } };
+  delete gone.states['sensor.purdynas_notifications_unread_warning'];
+  const p = new SH(); p.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p._hass = gone;
+  return /Warning —/.test(p._syAlerts(SRV));
+})());
+check('no figure on the systems pages defaults a missing reading to zero', (() => {
+  const sysSrc = fs.readFileSync(new URL('../src/77-shell-systems.js', import.meta.url), 'utf8');
+  return !/\?\? 0\)/.test(sysSrc);
+})());
+check('a stopped container is dimmed rather than hidden', /ps-sw off/.test(dk));
+check('docker counts come from the discovered list', /All 3/.test(dk) && /Running 2/.test(dk));
+sy._syfilter = 'running';
+check('the running filter drops the stopped ones', !/ollama/.test(sy._syDocker(SRV)));
+sy._syfilter = 'all';
+sy._syq = 'zzz';
+check('a search with no hits says so rather than showing nothing', /Nothing matches/.test(sy._syDocker(SRV)));
+sy._syq = '';
+
+/* An optimistic knob, on _optGoal's contract: a container takes seconds to
+   start and a toggle that sits still for three of them reads as a missed tap. */
+sy._swOpt = { 'switch.purdynas_container_ollama': { value: 'on', until: Date.now() + 12000 } };
+check('an optimistic switch reads as its pending value',
+  (sy._syContainers().find((c) => c.key === 'ollama') || {}).on === true);
+sy._swOpt = { 'switch.purdynas_container_ollama': { value: 'on', until: Date.now() - 1 } };
+check('an optimistic switch that never landed expires back to the truth',
+  (sy._syContainers().find((c) => c.key === 'ollama') || {}).on === false);
+sy._swOpt = {};
+
+const stg = sy._syStorage(SRV);
+check('storage leads with the array total', /15\.44 TB/.test(stg) && /2\.3 TB free/.test(stg));
+check('storage draws the absent parity slot as not installed', /not installed/.test(stg));
+check('storage shows only the fullest shares until expanded',
+  /appdata/.test(stg) && /Shares/.test(stg));
+
+const pf = sy._syPerf(SRV);
+check('perf names the CPU without the marketing suffix',
+  /Ryzen 7 5800X<\/b>/.test(pf) && !/8-Core Processor/.test(pf));
+check('perf reports threads and governor', /16 threads/.test(pf) && /powersave/.test(pf));
+check('perf shows no per-core bars, because there is no per-core data',
+  !/core-?\d/i.test(pf));
+check('perf prints the network unit once rather than per row', (pf.match(/kbit\/s/g) || []).length === 1);
+check('perf converts monthly energy without inventing a cost',
+  /23\.6 kWh/.test(pf) && !/\$/.test(pf));
+
+const al = sy._syAlerts(SRV);
+check('alerts splits by importance', /Alert 1/.test(al) && /Warning 3/.test(al) && /Info 47/.test(al));
+check('alerts says the list is a sample, not the whole of 51',
+  /most recent of 51/.test(al));
+sy._synf = 'alert';
+check('the importance filter narrows the list',
+  /Disk 1 is low/.test(sy._syAlerts(SRV)) && !/Version update/.test(sy._syAlerts(SRV)));
+sy._synf = 'all';
+
+/* The mode swaps both the column and the dock. Home is not a peer tab: it
+   exits, so it carries its own class rather than an `on` state. */
+const savedDocSys = globalThis.document;
+globalThis.document = { createElement: () => new MiniNode() };
+const slots = {};
+const mkSysSlot = (id) => (slots[id] = slots[id] || new MiniNode());
+const syr = new SH();
+syr.setConfig({
+  server: SRV,
+  dock: [{ icon: 'mdi:home-variant', name: 'Home', link: '/x' }, { icon: 'mdi:server', name: 'Systems', mode: 'systems' }],
+  sections: [{ type: 'quick', key: 'q', tiles: [] }],
+});
+syr._hass = sysHass;
+syr.shadowRoot = {
+  /* Only the four real slots exist; anything else must answer null, or _one
+     would hand a handler to a node that cannot take one. */
+  getElementById: (id) => (["ps-stat", "ps-col", "ps-sheetslot", "ps-dockwrap"].includes(id) ? mkSysSlot(id) : null),
+  querySelector: () => null,
+  querySelectorAll: () => [],
+};
+syr._mounted = true;
+syr._mode = 'systems';
+syr._render();
+check('systems mode replaces the greeting with the page name',
+  /PurdyNAS/.test(slots['ps-stat']._html) && /Overview/.test(slots['ps-stat']._html));
+check('systems mode swaps the dock', /data-sysdock="docker"/.test(slots['ps-dockwrap']._html));
+check('the systems dock leads with Home', /data-sysdock="__home"/.test(slots['ps-dockwrap']._html));
+check('Home is not drawn as a sixth tab',
+  /ps-db home/.test(slots['ps-dockwrap']._html) &&
+  !/ps-db on[^>]*data-sysdock="__home"/.test(slots['ps-dockwrap']._html));
+/* The now-playing bar belongs to the house, not to a dock — walking into the
+   server pages must not take the pause button away from you. */
+check('the now-playing bar survives the mode switch', (() => {
+  const withMusic = { states: { ...sysHass.states,
+    'media_player.a': num('playing', { app_id: 'music_assistant', media_title: 'Dance Mode' }) } };
+  const m = new SH();
+  m.setConfig({ server: SRV, now_playing: { players: [{ entity: 'media_player.a', name: 'Kitchen' }] },
+    dock: [], sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  m._hass = withMusic;
+  return /ps-mini/.test(m._miniHtml()) && /Dance Mode/.test(m._miniHtml());
+})());
+check('both render paths use the one now-playing bar', (() => {
+  const core = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+  const sysSrc = fs.readFileSync(new URL('../src/77-shell-systems.js', import.meta.url), 'utf8');
+  return /_miniHtml\(\)\}<div class="ps-dock">/.test(core) && /_miniHtml\(\)\}<div class="ps-dock">/.test(sysSrc)
+    && (src.match(/id="ps-mini"/g) || []).length === 1;
+})());
+const colKids = mkSysSlot('ps-col').kids;
+check('the page mounts as one keyed node', colKids.length === 1 && colKids[0].dataset.sect === 'sys-overview');
+check('a page is not styled as a section', colKids[0].className === 'ps-sypage');
+syr._page = 'docker';
+syr._render();
+check('switching page swaps the node',
+  mkSysSlot('ps-col').kids.length === 1 && mkSysSlot('ps-col').kids[0].dataset.sect === 'sys-docker');
+syr._mode = null;
+syr._render();
+check('leaving the mode restores the house dock', /data-dock="1"/.test(slots['ps-dockwrap']._html));
+check('leaving the mode restores the greeting', !/PurdyNAS/.test(slots['ps-stat']._html));
+globalThis.document = savedDocSys;
+
+/* The v1.31.1 lesson again, one level up: a renderer that is never dispatched
+   to, or a dock verb the handler does not know, is a control that does
+   nothing. Both halves have to exist. */
+/* Not just "the call exists somewhere": the systems file calls it too, so a
+   single global match passed happily with the core call deleted. Each render
+   path is asserted in its own file — which is what the _bindScrub lesson
+   actually was. */
+check('_bindSystems is defined', /_bindSystems\(\) \{/.test(src));
+check('the house render path binds systems', (() => {
+  const core = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+  return /this\._bindSystems\(\);/.test(core);
+})());
+check('the systems render path binds systems', (() => {
+  const sysSrc = fs.readFileSync(new URL('../src/77-shell-systems.js', import.meta.url), 'utf8');
+  return /_renderSystems\([\s\S]*?this\._bindSystems\(\);/.test(sysSrc);
+})());
+check('the dock handler knows the mode verb', /if \(d\.mode\) \{/.test(src));
+/* The landing page's PurdyNAS row is the other way in. It must NOT also keep
+   its chevron: a stub of the five pages beside the real thing is two answers
+   to one question. */
+check('a device row can open the mode instead of expanding', (() => {
+  const p = new SH();
+  p.setConfig({ server: SRV, sections: [{ type: 'systems', key: 'sys', devices: [
+    { name: 'PurdyNAS', key: 'nas', icon: 'mdi:server', mode: 'systems', chip: 'sensor.purdynas_containers_running' },
+    { name: 'Jeeves', key: 'floor', icon: 'mdi:robot-vacuum' },
+  ] }] });
+  p._hass = sysHass;
+  const out = p._devicesHtml(p._config.sections[0]);
+  return /data-mode="systems"/.test(out);
+})());
+check('a mode row drops the expand, and its neighbours keep theirs', (() => {
+  const p = new SH();
+  p.setConfig({ server: SRV, sections: [{ type: 'systems', key: 'sys', devices: [
+    { name: 'PurdyNAS', key: 'nas', mode: 'systems' },
+    { name: 'Jeeves', key: 'floor' },
+  ] }] });
+  p._hass = sysHass;
+  const out = p._devicesHtml(p._config.sections[0]);
+  return !/data-mode="systems"[^>]*data-group/.test(out) && /data-group="sys\|dev\|floor"/.test(out);
+})());
+check('the mode row handler exists', /this\._each\("\[data-mode\]"/.test(src));
+check('mode is checked before sheet, so an entry with both opens the mode',
+  src.indexOf('if (d.mode) {') < src.indexOf('if (d.sheet) {'));
+check('every systems page in the dock list has a renderer', (() => {
+  const pages = ['overview', 'docker', 'storage', 'perf', 'alerts'];
+  const sysSrc = fs.readFileSync(new URL('../src/77-shell-systems.js', import.meta.url), 'utf8');
+  const dispatch = /const html = \{([\s\S]*?)\}\[page\.key\]\(\)/.exec(sysSrc);
+  return dispatch && pages.every((p) => new RegExp(`\\b${p}:`).test(dispatch[1]));
+})());
+
+/* Same rule the music search and the light drag already follow: a control the
+   user is holding cannot go through _render, or the patch replaces the node
+   mid-gesture. The container search is the third place this has come up. */
+check('the container search paints in place rather than re-rendering', (() => {
+  const sysSrc = fs.readFileSync(new URL('../src/77-shell-systems.js', import.meta.url), 'utf8');
+  const h = /_one\("ps-syq"[\s\S]*?\n    \}\);/.exec(sysSrc);
+  return h && /_paintContainers\(\)/.test(h[0]) && !/this\._render\(\)/.test(h[0]);
+})());
+check('the search field holds the repaint lock while focused', (() => {
+  const sysSrc = fs.readFileSync(new URL('../src/77-shell-systems.js', import.meta.url), 'utf8');
+  return /"focus", \(\) => \{ this\._dragging = true; \}/.test(sysSrc);
+})());
+
+/* minSpan: an idle box between 7% and 11% is idle. Auto-scaling that to full
+   height draws a mountain range out of nothing. */
+check('a sparkline with no minSpan keeps the old one-unit floor', (() => {
+  const p = SH.helpers.sparkPoly([{ t: 0, v: 20 }, { t: 1, v: 20.2 }], 100, 20, 4);
+  const ys = p.split(' ').map((s) => parseFloat(s.split(',')[1]));
+  return Math.abs(ys[0] - ys[1]) < 4;   // not slammed to the extremes
+})());
+check('a wider minSpan flattens an idle CPU instead of amplifying it', (() => {
+  const q = SH.helpers.sparkPoly([{ t: 0, v: 7 }, { t: 1, v: 11 }], 100, 46, 5, 10);
+  const ys = q.split(' ').map((s) => parseFloat(s.split(',')[1]));
+  const r = SH.helpers.sparkPoly([{ t: 0, v: 7 }, { t: 1, v: 11 }], 100, 46, 5);
+  const yr = r.split(' ').map((s) => parseFloat(s.split(',')[1]));
+  return Math.abs(ys[0] - ys[1]) < Math.abs(yr[0] - yr[1]);
+})());
+check('the CPU graph reaches for minSpan rather than free-scaling',
+  /pcSparkPoly\(down, W, H, 5, 10\)/.test(src));
+check('the CPU graph rides the existing 26h fetch',
+  /srv\.perf\.cpu && srv\.perf\.graph !== false/.test(src));
+check('the CPU scrub kind is wired into _bindScrub', /kind === "cpu"/.test(src));
+check('the graph container claims no touch-action', (() => {
+  const m = /\.ps-sygraph \{[^}]*\}/.exec(shs);
+  return m && !/touch-action/.test(m[0]);
+})());
+
+/* The systems stylesheet must use the token scales like everything else. */
+check('systems styles introduce no loose font-size', (() => {
+  const block = shs.slice(shs.indexOf('systems mode --'));
+  return !/font-size:\s*\d/.test(block);
+})());
+check('the systems page classes it renders all exist', (() => {
+  const used = ['ps-sypage', 'ps-sycard', 'ps-syb', 'ps-sybar', 'ps-symeta',
+    'ps-syfans', 'ps-syn', 'ps-syhero', 'ps-sygraph', 'ps-db.home', 'ps-syb-bad'];
+  return used.every((cl) => shs.includes('.' + cl));
+})());
 
 // double-define guard: a second load must warn, not throw
 let warned = '';

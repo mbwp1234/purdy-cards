@@ -398,3 +398,100 @@ data:
   media_type: playlist
 response_variable: lib
 ```
+
+## `purdy-shell-card` — systems mode
+
+A whole server behind its own bottom bar. `server:` is a **top-level** key, not a section, because the pages are alternatives to each other rather than neighbours in a scrolling column — and because it swaps the dock as well as the column.
+
+```yaml
+type: custom:purdy-shell-card
+dock:
+  - { icon: mdi:home-variant, name: Home, active: true, link: /lovelace/phone2 }
+  - { icon: mdi:server, name: Systems, mode: systems }
+server:
+  name: MyServer
+  prefix: myserver                       # entity-id fragment used for discovery
+  url: http://<server-host>/Dashboard
+  status: sensor.myserver_system_status
+  uptime: sensor.myserver_uptime_text
+  version: sensor.myserver_version
+  registration: sensor.myserver_registration_state
+  faults:
+    - { entity: sensor.myserver_disk_disk1_usage, above: 90,
+        label: Disk 1, detail: low on space, severity: critical }
+  meters:
+    - { label: Array, entity: sensor.myserver_array_usage }
+  stats:
+    - { label: CPU, entity: sensor.myserver_cpu_usage, unit: "%" }
+  parity:
+    problem: binary_sensor.myserver_parity_valid    # device_class problem: ON is INVALID
+    last_check: sensor.myserver_last_parity_check
+    next_check: sensor.myserver_next_parity_check
+    running: binary_sensor.myserver_parity_check_running
+    progress: sensor.myserver_parity_check_progress
+    start: button.myserver_start_parity_check
+  power:
+    - { name: Reboot, entity: button.myserver_reboot_system }
+  docker:
+    cpu: sensor.myserver_docker_cpu_usage
+    memory: sensor.myserver_docker_memory_usage
+    vdisk: sensor.myserver_docker_vdisk_usage
+    conflicts: sensor.myserver_docker_port_conflicts
+    running: sensor.myserver_containers_running
+    containers_prefix: switch.myserver_container_
+    vms: [switch.myserver_vm_home_assistant]
+    names:
+      binhex_jellyfin: { name: Jellyfin, icon: mdi:movie-play }
+  storage:
+    array: sensor.myserver_array_usage
+    text: sensor.myserver_storage_text
+    disks_prefix: sensor.myserver_disk_
+    shares_prefix: sensor.myserver_share_
+    pools:
+      - { label: cache, entity: sensor.myserver_disk_cache_usage }
+  perf:
+    cpu: sensor.myserver_cpu_usage
+    ram: sensor.myserver_ram_usage
+    gpu_util: sensor.myserver_gpu_utilization
+    fans: [number.myserver_fan_fan_1_speed]
+    network:
+      - { name: br0, rx: sensor.myserver_network_br0_rx, tx: sensor.myserver_network_br0_tx }
+    power: { watts: sensor.myserver_power, voltage: sensor.myserver_voltage }
+  notifications:
+    total: sensor.myserver_notifications
+    alert: sensor.myserver_notifications_unread_alert
+    archive: button.myserver_archive_all_notifications
+```
+
+A page whose config block is absent gets no dock slot, so a partial `server:` degrades to fewer pages rather than to empty ones.
+
+### The lists are discovered, not configured
+
+Containers, disks and shares come out of `hass.states` by prefix. The hand-typed version of this had five Docker groups naming eleven containers and **three of those entity ids did not exist** — they had rendered as permanently-off toggles that did nothing. A list that is derived cannot drift from the server; a list that is typed always eventually does.
+
+Discovery walks every entity id, so it runs on first `hass` and again on entering the mode, never per state change. Discovered ids are folded into the watched set (`_expandWatched`) so a container toggle repaints immediately; the 30s clock is the backstop for one that appears while a page is open.
+
+A container row takes its name, image, port and link straight off the switch's own attributes — `names:` only exists to override the display name and icon.
+
+### What the data cannot do
+
+Three things a native Unraid client shows are not in the HA integration, and the pages say so rather than faking them:
+
+| Expected | Available | What is drawn |
+|---|---|---|
+| Per-core CPU bars | One aggregate `cpu_usage`; the core count is an attribute | A 16-bar grid would be sixteen copies of one number. The aggregate, with a 24h history graph the native clients do not have. |
+| Per-container CPU / RAM | Aggregate Docker CPU, memory and vdisk only | The aggregate strip at the top of the page; rows carry identity, not load. |
+| Per-disk temperature | Published for some disks, not all | Shown where it exists, omitted where it does not — never a dash in a temperature column. |
+
+A slot with **no disk in it** publishes a health of `DISK_NP_DSBL` and no usage. It reads as *not installed*; a 0% bar would be a claim about a healthy empty drive.
+
+### The mode contract
+
+- **A mode, not a Lovelace view.** A view swap re-runs the landing page's whole first-render path on return, and hash-driven pop-ups leak across views. A mode is a state flip on the element already mounted: same gradient, same sheet slot, same dock measurement.
+- **Home is not a sixth tab.** It exits rather than switches, so it carries its own treatment.
+- **The now-playing bar belongs to the house.** Walking into the server pages does not take the pause button away — one `_miniHtml`, both render paths.
+- **Reboot and shut down take the two-tap arm**, and sit below everything worth reading.
+- **The container search paints in place.** A focused field holds `_dragging`, so the patch cannot replace the input mid-word — the same rule the music search and the light drag follow.
+- **`pcNum(...) ?? 0` is banned here too.** A sensor that is not reporting and a sensor reporting zero are different facts; every figure goes through a helper that returns a dash.
+
+A device row in a `systems` section takes `mode: systems` to become the other way in. It drops its chevron when it does — a stub of the five pages beside the real thing is two answers to one question.

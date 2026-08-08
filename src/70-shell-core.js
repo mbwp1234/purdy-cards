@@ -80,6 +80,15 @@ class PurdyShellCard extends PcBaseCard {
     this._open = null;        // key of the expanded section, or null
     this._openGroups = {};    // "sectionKey|groupName" -> true for open groups
     this._sheet = null;       // "alerts" when the alert sheet is showing
+    /* Systems is a MODE, not a section: the column and the dock both swap.
+       null is the house; "systems" is the server, and _page is which of its
+       pages is showing. See 77-shell-systems.js. */
+    this._mode = null;
+    this._page = "overview";
+    this._swOpt = {};         // optimistic container/VM switch states
+    this._syq = "";           // container search
+    this._syfilter = "all";
+    this._synf = "all";       // notification importance filter
     this._history = {};
     /* null, not {} — the nursery section has to tell "the recorder has not
        answered yet" from "he has never slept", and {} reads as the second. */
@@ -146,6 +155,10 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   _start() {
+    /* The systems mode's lists are discovered from hass.states, so the watched
+       set cannot be complete until hass exists. Without this a container
+       toggle would not repaint until the 30s clock came round. */
+    this._expandWatched();
     this._startHistory();
     this._startNursery();
     this._fetchEvents();
@@ -297,6 +310,10 @@ class PurdyShellCard extends PcBaseCard {
       }
       if (s.type === "sleep" && s.sleep_state) ids.add(s.sleep_state);
     });
+    /* The systems mode's CPU graph rides the same 26h fetch — one more id on a
+       request that is already going out beats a second request. */
+    const srv = this._config.server;
+    if (srv && srv.perf && srv.perf.cpu && srv.perf.graph !== false) ids.add(srv.perf.cpu);
     return [...ids];
   }
 
@@ -430,7 +447,10 @@ class PurdyShellCard extends PcBaseCard {
         node._psHtml = s.html;
         node.innerHTML = s.html;
       }
-      const cls = s.open ? "ps-sect open" : "ps-sect";
+      /* Systems mode reuses this reconciler for its pages, and a page is not
+         a section: no hairline divider, no expand state. */
+      const base = s.cls || "ps-sect";
+      const cls = s.open ? base + " open" : base;
       if (node.className !== cls) node.className = cls;
       /* Re-inserting a node that is already in place would detach and
          re-attach it, losing focus for no reason. */
@@ -519,6 +539,13 @@ class PurdyShellCard extends PcBaseCard {
     const raised = this._raised();
     if (this._config.log_to) this._syncLog(raised);
     const faults = this._faults();
+
+    /* Systems mode owns the same four slots — header, column, sheet and dock —
+       so it branches here rather than being a section. Everything above this
+       line still runs: the fault list and the notification log are the house's
+       and do not stop mattering because you are looking at the server. */
+    if (this._mode === "systems") return this._renderSystems(faults);
+
     const worst = faults.length
       ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
       : "good";
@@ -558,15 +585,12 @@ class PurdyShellCard extends PcBaseCard {
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
     });
 
-    const np = this._nowPlaying();
     const dock = (c.dock || []).map((d, i) => {
       const alert = d.alert_when_faults && faults.length;
       return `<button class="ps-db ${d.active ? "on" : ""} ${alert ? "alert" : ""}" type="button" data-dock="${i}">
           <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
         </button>`;
     }).join("");
-
-    const npArt = np && np.st.attributes.entity_picture_local;
 
     this._patch("ps-stat", `
         <div>
@@ -592,29 +616,38 @@ class PurdyShellCard extends PcBaseCard {
     this._patch("ps-sheetslot", this._sheetHtml(faults));
     this._mountSheetCard();
 
-    this._patch("ps-dockwrap", `
-        ${np ? `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
-          <div class="ps-mart">${npArt
-            ? `<img src="${psEsc(npArt)}" alt="" />`
-            : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
-          <div class="ps-grow">
-            <div class="ps-mt ps-trunc">${psEsc(np.st.attributes.media_title)}</div>
-            <div class="ps-ms ps-trunc">${psEsc(np.name)} · ${np.playing ? "playing" : "paused"}</div>
-          </div>
-          <button class="ps-mb" type="button" data-mp="playpause" data-entity="${psEsc(np.entity)}" aria-label="Play or pause">
-            <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
-              ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
-        </div>` : ""}
-        <div class="ps-dock">${dock}</div>`);
+    this._patch("ps-dockwrap", `${this._miniHtml()}<div class="ps-dock">${dock}</div>`);
 
     this._bind();
     this._bindScrub();
     this._bindLights();
+    this._bindSystems();
     this._reserve();
     /* Only while the music sheet is open, and only when the answer could have
        changed — see _syncQueue. Kicked from the tail of the render so it
        cannot recurse into one that has not finished. */
     this._syncQueue();
+  }
+
+  /* The now-playing bar belongs to the house, not to a dock: walking into the
+     server pages must not take the pause button away from you. Shared by both
+     render paths for that reason, and _reserve measures whatever results. */
+  _miniHtml() {
+    const np = this._nowPlaying();
+    if (!np) return "";
+    const art = np.st.attributes.entity_picture_local;
+    return `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
+        <div class="ps-mart">${art
+          ? `<img src="${psEsc(art)}" alt="" />`
+          : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+        <div class="ps-grow">
+          <div class="ps-mt ps-trunc">${psEsc(np.st.attributes.media_title)}</div>
+          <div class="ps-ms ps-trunc">${psEsc(np.name)} · ${np.playing ? "playing" : "paused"}</div>
+        </div>
+        <button class="ps-mb" type="button" data-mp="playpause" data-entity="${psEsc(np.entity)}" aria-label="Play or pause">
+          <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
+            ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
+      </div>`;
   }
 
   /* Reserve exactly as much room as the dock actually occupies.
@@ -731,6 +764,10 @@ class PurdyShellCard extends PcBaseCard {
           this._render();
         } else if (k === "sdel") {
           this._schedDelete();
+        } else if (k.indexOf("sy:") === 0) {
+          /* Reboot, shut down, stop the array. The entity is in the key so
+             this stays generic — the arm is the only thing core owns. */
+          this._syArmedAction(k.slice(3));
         }
       });
     });
@@ -1121,6 +1158,20 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
+    /* A row can be the way into a mode as well as a dock button — the
+       PurdyNAS row on the landing page opens the server pages rather than
+       expanding a smaller copy of them beside the real thing. */
+    this._each("[data-mode]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        psClosePopup();
+        this._sheet = null;
+        this._mode = el.dataset.mode;
+        this._expandWatched();
+        this._render();
+      });
+    });
+
     this._each("[data-dock]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1137,6 +1188,19 @@ class PurdyShellCard extends PcBaseCard {
             && !d.sheet && !d.section && !d.link) {
           psClosePopup();
           this._sheet = "alerts";
+          this._render();
+          return;
+        }
+        /* A mode replaces the column AND the dock. Checked before `sheet` so
+           an entry can carry both and the mode wins — the sheet would open
+           behind a dock that no longer has a button to close it. */
+        if (d.mode) {
+          psClosePopup();
+          this._sheet = null;
+          this._mode = d.mode;
+          /* Re-discover on entry: this is the moment the list of containers
+             and disks actually matters, and it is cheap enough to do once. */
+          this._expandWatched();
           this._render();
           return;
         }
@@ -1228,6 +1292,14 @@ class PurdyShellCard extends PcBaseCard {
           html = `<b>${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
             (i ? `<span><i style="background:var(--ps-cool)"></i>In<b>${i.v.toFixed(1)}\u00B0</b></span>` : "") +
             (o ? `<span><i style="background:var(--ps-heat)"></i>Out<b>${o.v.toFixed(1)}\u00B0</b></span>` : "");
+        } else if (kind === "cpu") {
+          const d = this._cpuData;
+          if (!d) return;
+          const t = d.t0 + f * (d.t1 - d.t0);
+          let best = d.pts[0];
+          for (const q of d.pts) if (Math.abs(q.t - t) < Math.abs(best.t - t)) best = q;
+          html = `<b>${best.v.toFixed(1)}%</b>` +
+            `<span>${new Date(best.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`;
         } else if (kind === "night") {
           /* The nursery rail. Unlike the hypnogram there is no state series to
              sample — just two phases and a set of point events — so the

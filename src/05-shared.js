@@ -115,13 +115,22 @@ function pcDownsample(series, n) {
 /* null — never a flat line — when there is nothing to draw. A sparkline that
    invents a straight line through the middle of an empty box is the same lie
    as a ring that reads zero because the sock is off. */
-function pcSparkPoly(points, w, h, pad) {
+/* `minSpan` is the narrowest range the plot is allowed to fill its height
+   with. A room that holds within a degree is steady, not noisy, and a CPU that
+   idles between 7% and 11% is idle — auto-scaling either one draws a mountain
+   range out of nothing. Defaults to 1 (the temperature case it was written
+   for) so the existing callers are unchanged. */
+function pcSparkPoly(points, w, h, pad, minSpan) {
   if (!points || points.length < 2) return null;
   const p = pad == null ? 4 : pad;
+  const floor = minSpan == null ? 1 : minSpan;
   const t0 = points[0].t, t1 = points[points.length - 1].t;
   let vmin = Infinity, vmax = -Infinity;
   points.forEach((q) => { vmin = Math.min(vmin, q.v); vmax = Math.max(vmax, q.v); });
-  if (vmax - vmin < 1) { vmax += 0.5; vmin -= 0.5; }
+  if (vmax - vmin < floor) {
+    const grow = (floor - (vmax - vmin)) / 2;
+    vmax += grow; vmin -= grow;
+  }
   const span = t1 - t0 || 1;
   return points.map((q) => {
     const x = ((q.t - t0) / span) * w;

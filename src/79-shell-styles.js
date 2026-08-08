@@ -774,6 +774,88 @@ const PS_STYLES = `
       .pl-abtn.go { background: rgba(239,106,106,.2); border-color: rgba(239,106,106,.44);
                     color: #FFC2C2; }
 
+      /* ---------------------------------------------------- systems mode --*/
+      /* A page is not a section: no hairline between siblings (there is only
+         ever one), and it owns its own vertical rhythm. */
+      .ps-sypage { padding: 4px 13px 15px; display: flex; flex-direction: column; gap: 9px; overflow-x: clip; }
+      .ps-syh { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em; margin: 1px 0 0; line-height: 1.1; }
+
+      /* The glass sub-panel the pages are built from. One step darker than the
+         column it sits in, so the page reads as blocks rather than as a wall. */
+      .ps-sycard { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                   border-radius: var(--pc-r-xl); padding: 11px 12px;
+                   display: flex; flex-direction: column; gap: 8px; }
+      .ps-syrow { display: flex; align-items: center; justify-content: space-between; gap: 9px; width: 100%; }
+      .ps-sysub { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .ps-sysub b { color: var(--ps-text); font-weight: 640; }
+      .ps-syhair { height: 1px; background: var(--ps-hair); }
+      .ps-symeta { display: block; font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                   font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+      .ps-syid { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+      .ps-syid > div { min-width: 0; cursor: pointer; }
+      .ps-syk { display: block; font-size: var(--pc-fs-micro); letter-spacing: .1em;
+                text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
+      .ps-syid b { font-size: var(--pc-fs-md); font-weight: 640; }
+      .ps-syid em { font-style: normal; font-size: var(--pc-fs-xs); color: var(--ps-warn); }
+      .ps-syreg { display: flex; align-items: center; gap: 8px; font-size: var(--pc-fs-sm);
+                  color: var(--ps-warn); cursor: pointer; }
+      .ps-syreg b { color: var(--ps-text); font-weight: 650; }
+
+      /* A meter whose subject IS the fill gets the full width. The 54px inline
+         bar is right for a row in a list of other things and wrong here. */
+      .ps-syb { display: grid; grid-template-columns: 1fr auto; gap: 3px 9px; cursor: pointer; padding: 2px 0; }
+      .ps-sybk { font-size: var(--pc-fs-sm); color: var(--ps-muted); min-width: 0;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ps-sybk i { font-style: normal; color: var(--ps-dim); font-size: var(--pc-fs-xs); }
+      .ps-sybv { font-size: var(--pc-fs-sm); font-weight: 650; font-variant-numeric: tabular-nums; }
+      .ps-sybv.warn { color: var(--ps-warn); } .ps-sybv.bad { color: var(--ps-bad); }
+      /* A disk whose SMART is not PASSED: the number may be fine and the drive
+         is not, so the colour goes on the name rather than on the fill. */
+      .ps-syb-bad .ps-sybk { color: var(--ps-bad); }
+      .ps-sybar { grid-column: 1 / -1; height: 5px; border-radius: var(--pc-r-pill);
+                  background: var(--ps-track); overflow: hidden; position: relative; }
+      .ps-sybar.tall { height: 7px; }
+      .ps-sybar i { display: block; height: 100%; border-radius: var(--pc-r-pill); background: var(--ps-good); }
+      .ps-sybar i.warn { background: var(--ps-warn); }
+      .ps-sybar i.bad { background: var(--ps-bad); }
+      .ps-sybar i.fan { background: var(--ps-deep); }
+
+      .ps-sytot { display: flex; flex-direction: column; gap: 1px; }
+      .ps-sybig { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em;
+                  font-variant-numeric: tabular-nums; cursor: pointer; }
+      .ps-sybig small { font-size: var(--pc-fs-sm); font-weight: 500; color: var(--ps-muted); margin-left: 3px; }
+      .ps-sytog { cursor: pointer; }
+      .ps-syshare { font-size: var(--pc-fs-sm); cursor: pointer; }
+      .ps-syshare b { font-variant-numeric: tabular-nums; font-weight: 650; }
+
+      .ps-vits.two { grid-template-columns: repeat(2, 1fr); }
+      .ps-sw.off { opacity: .62; }
+      .ps-sw .ps-grow { min-width: 0; cursor: pointer; }
+
+      .ps-sycpu { font-size: var(--pc-fs-md); font-weight: 650; }
+      .ps-syhero { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em;
+                   font-variant-numeric: tabular-nums; text-align: right; }
+      .ps-syhero.live { color: var(--ps-cool); }
+      .ps-syhero span { display: block; font-size: var(--pc-fs-micro); font-weight: 500; color: var(--ps-muted); }
+      /* No touch-action here. The graph must not claim the gesture until a
+         deliberate press has completed — see _bindScrub. */
+      .ps-sygraph { position: relative; width: 100%; }
+      .ps-sygraph svg { width: 100%; height: 46px; display: block; }
+
+      .ps-syfans { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; }
+      .ps-syfk { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
+      .ps-syfv { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+
+      .ps-syn { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; }
+      .ps-syn + .ps-syn { border-top: 1px solid var(--ps-hair-soft); }
+      .ps-synt { display: block; font-size: var(--pc-fs-sm); line-height: 1.4; }
+
+      /* Home exits the mode rather than switching within it, so it must not
+         read as a sixth peer. */
+      .ps-db.home { color: var(--ps-text); }
+      .ps-db.home ha-icon { background: var(--pc-fill-2); border-radius: var(--pc-r-xs); padding: 3px; }
+
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
     `;
 

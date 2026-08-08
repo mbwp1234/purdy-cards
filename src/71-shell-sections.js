@@ -811,8 +811,16 @@ Object.assign(PurdyShellCard.prototype, {
       const buttons = (d.buttons || []).map((b, i) =>
         `<button class="ps-btn" type="button" data-dbtn="${di}|${i}">${psEsc(b.name)}</button>`).join("");
 
-      return `<div class="ps-dev ${open ? "open" : ""}">
-          <button class="ps-devh" type="button" data-group="${psEsc(key)}" aria-expanded="${open}">
+      /* A device can hand its depth to the systems mode instead of expanding.
+         PurdyNAS is five pages now, and a chevron that opens a stub of them
+         beside the real thing is two answers to one question — so the row
+         becomes the way in and drops the expand entirely. */
+      const toMode = d.mode
+        ? ` data-mode="${psEsc(d.mode)}"` : "";
+
+      return `<div class="ps-dev ${open && !d.mode ? "open" : ""}">
+          <button class="ps-devh" type="button"${d.mode ? toMode : ` data-group="${psEsc(key)}"`}
+            aria-expanded="${d.mode ? "false" : open}">
             <span class="ps-devi ${faults.length ? "bad" : ""}"><ha-icon icon="${psEsc(d.icon || "mdi:devices")}"></ha-icon></span>
             <span class="ps-grow">
               <span class="ps-devn">${psEsc(d.name)}</span>
