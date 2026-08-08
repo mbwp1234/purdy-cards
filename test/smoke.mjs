@@ -3667,6 +3667,26 @@ const dsk = sy._syDisks();
 check('disks are discovered by health, so an empty slot is still seen', dsk.length === 4);
 check('an empty parity slot is drawn as absent, not as zero',
   (dsk.find((d) => d.key === 'parity2') || {}).present === false);
+/* Three states, not two. A parity disk is installed and publishes no usage
+   sensor at all — folding "no usage" into "no disk" made a working parity
+   drive read as an empty slot. */
+check('a healthy parity disk with no usage sensor is present, not absent',
+  (dsk.find((d) => d.key === 'parity') || {}).present === true &&
+  (dsk.find((d) => d.key === 'parity') || {}).hasUsage === false);
+check('a parity disk with no usage draws its health, not an invented bar', (() => {
+  const out = sy._syStorage(SRV);
+  return /no usage reported/.test(out) && /PASSED/.test(out);
+})());
+check('the pools are not swept into the array disk list', (() => {
+  const p2 = new SH();
+  p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p2._hass = { states: { ...sysHass.states,
+    'sensor.purdynas_disk_cache_health': num('PASSED'),
+    'sensor.purdynas_disk_cache_usage': num(24.7, { role: 'cache' }) } };
+  const out = p2._syStorage(SRV);
+  const arr = out.slice(out.indexOf('Array disks'), out.indexOf('Pools'));
+  return !/cache/.test(arr);
+})());
 check('a real disk is present', (dsk.find((d) => d.key === 'disk1') || {}).present === true);
 check('a disk temperature is picked up only where it exists',
   (dsk.find((d) => d.key === 'disk2') || {}).tempF === 31 &&

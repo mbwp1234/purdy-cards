@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.46.0";
+const PC_VERSION = "1.46.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -10320,9 +10320,14 @@ Object.assign(PurdyShellCard.prototype, {
         health,
         healthId: d.id,
         usageId: `${pre}${d.key}_usage`,
-        /* DISK_NP_DSBL is "no disk present". An empty bar would claim a
-           healthy empty drive; there is no drive. */
-        present: health !== "DISK_NP_DSBL" && !!usage,
+        /* Three different states, and only one of them is "fine".
+           DISK_NP_DSBL is "no disk present" — an empty bar would claim a
+           healthy empty drive, and there is no drive. But a PARITY disk is
+           installed and publishes no usage sensor at all, so "no usage" is
+           not the same as "no disk": folding them made the working parity
+           drive read as an empty slot. */
+        present: health !== "DISK_NP_DSBL",
+        hasUsage: !!usage,
         usage: Number.isFinite(u) ? u : null,
         used: usage ? usage.attributes.used_size : null,
         total: usage ? usage.attributes.total_size : null,
@@ -10721,8 +10726,11 @@ Object.assign(PurdyShellCard.prototype, {
           style="width:${(pct || 0).toFixed(1)}%"></i></span>
       </div>`;
 
-    const data = disks.filter((d) => d.role !== "parity" && d.key.indexOf("parity") !== 0);
-    const parity = disks.filter((d) => d.role === "parity" || d.key.indexOf("parity") === 0);
+    /* The disk prefix also matches the pools (cache, cache2, vm), which are
+       listed explicitly under `pools:` with labels of their own — so the array
+       block takes only what the integration calls a data disk, plus parity. */
+    const data = disks.filter((d) => d.role === "data");
+    const parity = disks.filter((d) => d.key.indexOf("parity") === 0);
 
     const diskRow = (d) => {
       if (!d.present) {
@@ -10734,6 +10742,15 @@ Object.assign(PurdyShellCard.prototype, {
             <span class="ps-chip">—</span></div>`;
       }
       const ok = d.health === "PASSED";
+      if (!d.hasUsage) {
+        /* Parity: installed, healthy, and it has no usage to draw. A bar here
+           would have to invent a number. */
+        return `<div class="ps-sw" data-info="${psEsc(d.healthId)}">
+            <ha-icon icon="mdi:shield-check-outline"></ha-icon>
+            <span class="ps-grow"><span class="ps-trunc">${psEsc(d.key)}</span>
+            <span class="ps-symeta">no usage reported</span></span>
+            <span class="ps-chip ${ok ? "good" : "bad"}">${psEsc(d.health)}</span></div>`;
+      }
       const meta = [
         d.used && d.total ? `${d.used} of ${d.total}` : null,
         d.tempF != null ? `${Math.round(d.tempF)}${d.tempUnit || ""}` : null,
