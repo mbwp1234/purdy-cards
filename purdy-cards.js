@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.46.2";
+const PC_VERSION = "1.47.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -12000,6 +12000,2879 @@ const PS_STYLES = `
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
     `;
 
+/* ============================================================================
+ * purdy-desk-card
+ *
+ * The whole DESKTOP view as one element — the counterpart to purdy-shell-card,
+ * not a wider copy of it.
+ *
+ * Why a second element rather than a `wide:` flag on the shell: the two views
+ * disagree about the thing the shell is built around. The shell is ONE COLUMN
+ * you scroll, where detail is bought by pushing everything below you further
+ * down. The desk is ONE SHEET that never scrolls, where detail is bought with
+ * WIDTH — a panel expands sideways and its neighbours fold to a headline. A
+ * flag cannot straddle that: every layout rule, every "what does collapsed
+ * mean", and every decision about what earns a permanent slot inverts.
+ *
+ * What the two DO share is everything that is not layout, and they share it by
+ * borrowing rather than by copying — see PD_BORROW below. The derivations, the
+ * fault engine, the recorder fetches, the optimistic setpoint and the
+ * bind-once guards are the shell's, live, so a fix lands in both.
+ *
+ * The three rules the shell learned the hard way apply here unchanged:
+ *   - it PATCHES, it does not repaint (see _patch / _patchKeyed)
+ *   - no handler may close over `hass` or `config` — read this._hass live
+ *   - a zero and a missing reading must never look the same
+ * ========================================================================== */
+
+/* Sections accepted in `sections:`. Same config language as purdy-shell-card,
+   deliberately: a section body written for the phone pastes into the desktop
+   view unchanged, and the two views cannot drift into two vocabularies.
+   `sleep` is absent — the Owlet panel was retired and porting it to buy back a
+   view nobody uses would be work in the wrong direction. Paste a `sleep`
+   section here and setConfig says so by name rather than rendering a blank.
+
+   As on the shell, a type has to be added HERE **and** to the dispatch in
+   _panelHtml / _stripHtml / _dockHtml. Missing the list is not a broken
+   section, it is a card replaced by "Configuration error" — Lovelace's answer
+   to a throw from setConfig. A test asserts the two halves name the same set. */
+const PD_SECTIONS = [
+  "climate", "nursery", "music", "calendar", "lights",
+  "people", "quick", "rooms", "systems", "nowplaying",
+];
+
+/* Which tier a section lands in when it does not say. The strip is a glance,
+   the stage is what you study, the dock is what you press — Rule 03 from the
+   design plan, expressed as a default rather than as required config. */
+const PD_ZONE_DEFAULT = {
+  climate: "stage", nursery: "stage", music: "stage", calendar: "stage",
+  lights: "stage", nowplaying: "stage",
+  people: "strip",
+  quick: "dock", rooms: "dock", systems: "dock",
+};
+
+const PD_ZONES = ["strip", "stage", "dock"];
+
+/* Everything reused from purdy-shell-card, named in one place.
+ *
+ * These are the methods that are about DATA rather than about markup: the
+ * recorder fetches, the fault engine and its dismissal store, the nursery
+ * derivation, the music target resolution, the optimistic setpoint, and the
+ * bind-once guards. None of them emit HTML, so none of them care which view is
+ * asking. Copying them would have meant two fault engines and two settle-window
+ * implementations, and this project already knows how that ends — the morning
+ * recap and the nursery card are a second implementation of the same facts and
+ * are explicitly logged as a drift risk to watch. This is the same risk
+ * declined.
+ *
+ * The markup-emitting cousins are NOT here on purpose. `_secClimate` and
+ * `_resultsHtml` describe a phone column; the desk writes its own.
+ *
+ * `_ringSvg` and `_sparkSvg` are the exception that proves the rule: they emit
+ * SVG, but every colour in them is a CSS variable, so they are markup only in
+ * the sense that geometry is. The desk declares the same `--ps-*` palette
+ * NAMES in its :host for exactly this reason — the shared names are what let
+ * the two rings be one function instead of two.
+ */
+const PD_BORROW = [
+  /* recorder + calendar */
+  "_collectWatched", "_historyEntities", "_startHistory", "_fetchHistory", "_fetchEvents",
+  /* nursery — the derivation, the fetch and the single clock the fixtures pin */
+  "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
+  /* faults, dismissals and the notification log */
+  "_dismissals", "_writeDismissals", "_dismiss", "_firedAt", "_raised", "_faults", "_syncLog",
+  /* music: which room is the target, and how a URI gets played there */
+  "_musicSec", "_targets", "_activePlayer", "_isPicked", "_togglePick", "_nowPlaying",
+  "_playUri", "_enqueueUri", "_toast", "_queueSearch", "_runSearch", "_paintResults",
+  /* the optimistic setpoint — built for the shell's stepper, and the desk's
+     stepper would have grown the identical bug without it */
+  "_optGoal",
+  /* render plumbing */
+  "_patch", "_each", "_one", "_claim", "_mountSheetCard",
+  /* greeting + name, and the state-string prettifier */
+  "_greeting", "_who", "_humanize",
+  /* geometry that is genuinely one picture at two sizes */
+  "_ringSvg", "_sparkSvg",
+];
+
+/* Take the named methods off the shell's prototype.
+ *
+ * Loud rather than silent when a name stops resolving: a borrow that quietly
+ * returns undefined would surface much later as "the desktop fault chip never
+ * fires", which is precisely the shape of bug this project keeps writing tests
+ * for (`_bindScrub` was fully written and never called for three releases).
+ * The returned list of misses is what the smoke test asserts is empty. */
+function pdBorrow(target, source, names) {
+  const missing = [];
+  names.forEach((n) => {
+    const fn = source[n];
+    if (typeof fn !== "function") { missing.push(n); return; }
+    target[n] = fn;
+  });
+  if (missing.length) {
+    console.warn(
+      `[purdy-cards] purdy-desk-card could not borrow from purdy-shell-card: ` +
+      `${missing.join(", ")}. The desktop view will be missing whatever they backed.`
+    );
+  }
+  return missing;
+}
+
+/* A time of day, for the axis labels and the status line. */
+function pdClock(t) {
+  if (t == null || !Number.isFinite(t)) return "—";
+  return new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+class PurdyDeskCard extends PcBaseCard {
+  static getStubConfig() {
+    return {
+      weather: "weather.home",
+      sections: [{ type: "quick", tiles: [] }],
+    };
+  }
+
+  constructor() {
+    super();
+    /* --- desk marker: constructor begins ---
+       Three copies of the shell's constructor were once spliced into unrelated
+       methods by a failed string replace, and one of them silently blanked the
+       saved-playlist list. The markers are what a test counts. */
+    this._open = null;         // key of the expanded stage panel, or null
+    this._sheet = null;        // key of the open sheet, or null
+    this._alertOpen = false;   // the strip's fault popover
+    this._history = {};
+    this._histErr = null;
+    /* null, not {} — "the recorder has not answered yet" and "he has never
+       slept" are different facts, and {} reads as the second. */
+    this._nursery = null;
+    this._nurseryErr = null;
+    this._nurseryTimer = null;
+    this._events = [];
+    this._goalOpt = null;      // optimistic setpoint, see _optGoal
+    this._goalSend = null;
+    this._briOpt = {};         // optimistic light brightness
+    this._briSend = {};
+    this._dragging = false;    // a drag or a focused field must survive a state change
+    this._armed = null;        // a destructive control awaiting its second tap
+    this._logged = {};
+    this._pick = null;         // the music target room; null follows what plays
+    this._results = null;      // search results, null until a query runs
+    this._query = "";
+    this._mtype = "all";
+    this._note = null;
+    this._searching = false;
+    this._openGroups = {};     // "sectionKey|groupName" -> true
+    this._guard = null;        // a protected light awaiting confirmation
+    /* --- desk marker: constructor ends --- */
+  }
+
+  setConfig(config) {
+    if (!config || !Array.isArray(config.sections)) {
+      throw new Error("purdy-desk-card: 'sections' (a list) is required");
+    }
+    config.sections.forEach((s) => {
+      if (!s || PD_SECTIONS.indexOf(s.type) < 0) {
+        throw new Error(
+          `purdy-desk-card: unknown section type '${s && s.type}'. ` +
+          `Expected one of: ${PD_SECTIONS.join(", ")}`
+        );
+      }
+      const z = s.zone || PD_ZONE_DEFAULT[s.type];
+      if (PD_ZONES.indexOf(z) < 0) {
+        throw new Error(
+          `purdy-desk-card: section '${s.type}' has zone '${s.zone}'. ` +
+          `Expected one of: ${PD_ZONES.join(", ")}`
+        );
+      }
+    });
+    this._config = { ...config };
+    this._watched = this._collectWatched();
+    this._last = null;
+    if (this._clock) clearInterval(this._clock);
+    /* The clock is the one thing no entity change drives. */
+    this._clock = setInterval(() => this._render(), 30000);
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    super.hass = hass;
+    if (first && this._config) this._start();
+  }
+
+  get hass() {
+    return this._hass;
+  }
+
+  _start() {
+    this._startHistory();
+    this._startNursery();
+    this._fetchEvents();
+  }
+
+  /* Lovelace detaches a view's elements, it does not destroy them — so coming
+     back to this view reconnects THIS element, with every timer that
+     disconnectedCallback stopped still stopped. Without this the card looks
+     frozen on return while still accepting clicks. */
+  connectedCallback() {
+    if (!this._config) return;
+    if (!this._clock) this._clock = setInterval(() => this._render(), 30000);
+    if (this._hass && !this._historyTimer) this._start();
+    this._last = null;
+    this._render();
+  }
+
+  disconnectedCallback() {
+    if (this._clock) clearInterval(this._clock);
+    if (this._historyTimer) clearInterval(this._historyTimer);
+    if (this._eventTimer) clearInterval(this._eventTimer);
+    if (this._nurseryTimer) clearInterval(this._nurseryTimer);
+    clearTimeout(this._goalSend);
+    this._goalSend = null;
+    /* Nulled rather than merely cleared: connectedCallback tells "stopped"
+       from "running" by the handle, so leaving one set stacks a second poller
+       on every return to the view. */
+    this._clock = null;
+    this._historyTimer = null;
+    this._eventTimer = null;
+    this._nurseryTimer = null;
+  }
+
+  /* Sections in a zone, in config order. Re-ranking the screen is a config
+     edit and never a code change — the shell's rule, kept. */
+  _zone(name) {
+    return (this._config.sections || [])
+      .filter((s) => !s.sheet_only && (s.zone || PD_ZONE_DEFAULT[s.type]) === name)
+      .map((s, i) => ({ key: s.key || s.type + i, ...s }));
+  }
+
+  _section(type) {
+    return (this._config.sections || []).find((s) => s.type === type);
+  }
+
+  /* ---------------------------------------------------------------- mount --
+   *
+   * The skeleton is built once and everything after it is a patch into one of
+   * these slots. Two things depend on that and both are load-bearing:
+   *
+   *   - the stylesheet is parsed once rather than on every state change, and
+   *   - #pd-stage SURVIVES every repaint, which is the only reason it may
+   *     carry a CSS transition at all. A transition on a node the renderer
+   *     replaces re-runs from zero on every state change; that is what made
+   *     the phone's lamp chips slide under the thumb constantly. The stage's
+   *     grid-template-columns is written as a style property on the surviving
+   *     node — never as part of an innerHTML string — so the expand animates
+   *     once, when it is asked to.
+   */
+  _mount() {
+    this.shadowRoot.innerHTML = `
+      <style>${PurdyDeskCard.styles}</style>
+      <div class="pd-ground"></div>
+      <div class="pd-sheet">
+        <div class="pd-tier pd-t1" id="pd-strip"></div>
+        <div class="pd-tier pd-t2"><div class="pd-stage" id="pd-stage"></div></div>
+        <div class="pd-tier pd-t3" id="pd-dock"></div>
+      </div>
+      <div id="pd-sheetslot"></div>`;
+    this._mounted = true;
+  }
+
+  /* Keyed reconciliation for a container of panels.
+   *
+   * This is _patchSections' shape rather than _patchSections itself: that one
+   * writes into the shell's single column and stamps `ps-sect` on what it
+   * finds there. The container, the class base and the state carried per node
+   * all differ here, and the honest way to share it would be to widen the
+   * shell's signature — a change to shipped code for the benefit of a caller
+   * that does not exist yet. Borrow the data, write the layout.
+   */
+  _patchKeyed(container, list, baseCls) {
+    if (!container) return;
+    const have = new Map();
+    Array.from(container.children).forEach((n) => have.set(n.dataset.pkey, n));
+
+    let prev = null;
+    list.forEach((s) => {
+      let node = have.get(s.key);
+      if (node) {
+        have.delete(s.key);
+        /* The rendered string IS the cache key, so identical output cannot
+           touch the DOM — which is what preserves focus, scroll position and
+           the artwork <img> between repaints. */
+        if (node._pdHtml !== s.html) {
+          node._pdHtml = s.html;
+          node.innerHTML = s.html;
+        }
+      } else {
+        node = document.createElement("div");
+        node.dataset.pkey = s.key;
+        node._pdHtml = s.html;
+        node.innerHTML = s.html;
+      }
+      const cls = [baseCls].concat(s.cls || []).join(" ");
+      if (node.className !== cls) node.className = cls;
+      /* Re-inserting a node already in place would detach and re-attach it,
+         losing focus for no reason. */
+      const want = prev ? prev.nextSibling : container.firstChild;
+      if (node !== want) container.insertBefore(node, want);
+      prev = node;
+    });
+
+    have.forEach((n) => n.remove());
+  }
+
+  /* Column widths for the stage.
+   *
+   * Balanced, every panel gets its configured `weight` (default 1). Expanded,
+   * the open panel takes `expand_ratio` (default 2.9) and the rest fold to
+   * `fold_ratio` (0.62) — enough width for a headline number and a chip, which
+   * is the whole promise of folding rather than hiding: the other three stay
+   * legible, so nothing you were reading disappears because you opened
+   * something else.
+   */
+  _stageCols(panels) {
+    const c = this._config;
+    if (!panels.length) return "";
+    if (!this._open) return panels.map((p) => `${p.weight || 1}fr`).join(" ");
+    const open = c.expand_ratio || 2.9;
+    const fold = c.fold_ratio || 0.62;
+    return panels.map((p) => `${p.key === this._open ? open : fold}fr`).join(" ");
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    /* Repainting mid-gesture would rip the control out from under the pointer
+       and, on a focused field, destroy the input mid-word. */
+    if (this._dragging) return;
+    if (!this._mounted) this._mount();
+    /* Written as a property rather than into the stylesheet so changing it is
+       a config edit and not a rebuild of the bundle. */
+    if (this._config.viewport_offset != null && this.style && this.style.setProperty) {
+      this.style.setProperty("--pd-off", String(this._config.viewport_offset).replace(/^(\d+(\.\d+)?)$/, "$1px"));
+    }
+
+    const raised = this._raised();
+    if (this._config.log_to) this._syncLog(raised);
+    const faults = this._faults();
+
+    this._patch("pd-strip", this._stripHtml(faults));
+
+    const panels = this._zone("stage")
+      .map((sec) => {
+        const html = this._panelHtml(sec);
+        /* A panel that renders nothing is dropped entirely, hairline and all —
+           that is how `nowplaying` disappears when the house is quiet rather
+           than leaving an empty column with a title in it. */
+        if (!html) return null;
+        const cls = ["pd-panel"];
+        if (this._open === sec.key) cls.push("is-exp");
+        else if (this._open) cls.push("is-min");
+        return { key: sec.key, html, cls, weight: sec.weight };
+      })
+      .filter(Boolean);
+
+    const stage = this.shadowRoot.getElementById("pd-stage");
+    this._patchKeyed(stage, panels, "pd-panelwrap");
+    if (stage) {
+      /* Written as a property on the surviving node, never into an innerHTML
+         string — see _mount. This is the one animated thing on the screen. */
+      const cols = this._stageCols(panels);
+      if (stage.style.gridTemplateColumns !== cols) stage.style.gridTemplateColumns = cols;
+    }
+
+    this._patch("pd-dock", this._dockHtml());
+    this._patch("pd-sheetslot", this._sheetHtml(faults));
+    this._mountSheetCard();
+
+    this._bind();
+    this._bindScrub();
+    /* Attached AFTER the patch, because a patch may have replaced the node the
+       last series was hanging on. The scrub reads these back rather than
+       re-deriving, so the number under the pointer is the number that was
+       actually drawn. */
+    this._stash("pd-wave", this._waveSeries);
+    this._stash("pd-nightrail", this._nightSeries);
+  }
+
+  /* ----------------------------------------------------------------- bind --
+   *
+   * Handlers are attached once per element and then outlive many repaints, so
+   * nothing in here may close over `hass` or `config`. Every handler reads
+   * this._hass / this._config live.
+   */
+  _bind() {
+    /* expand / collapse a stage panel */
+    this._each("[data-exp]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const k = el.dataset.exp;
+        this._open = this._open === k ? null : k;
+        this._last = null;
+        this._render();
+      });
+    });
+
+    /* open a sheet */
+    this._each("[data-sheet]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._sheet = el.dataset.sheet;
+        this._last = null;
+        this._render();
+      });
+    });
+
+    this._each("[data-close]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._sheet = null;
+        this._last = null;
+        this._render();
+      });
+    });
+
+    /* more-info, the desktop's answer to the phone's long-press */
+    this._each("[data-info]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        pcMoreInfo(this, el.dataset.info);
+      });
+    });
+
+    this._each("[data-nav]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        pcNavigate(this, el.dataset.nav);
+      });
+    });
+
+    /* the fault popover in the strip */
+    this._one("pd-alert", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._alertOpen = !this._alertOpen;
+        this._last = null;
+        this._render();
+      });
+    });
+
+    this._each("[data-dismiss]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const row = this._faults().find((f) => f.key === el.dataset.dismiss);
+        if (row) this._dismiss(row);
+      });
+    });
+
+    this._bindStrip();
+    this._bindStage();
+    this._bindDeskLights();
+    this._bindDock();
+  }
+
+  /* -------------------------------------------------------------- scrub ----
+   *
+   * The desktop scrub is NOT the phone's, and the difference is deliberate.
+   *
+   * The shell's scrubber has to spend ~340ms deciding whether a finger on the
+   * graph meant "read this" or "scroll the page", because on a phone both
+   * gestures start identically. A desk view has a pointer that hovers without
+   * committing to anything, and a sheet that never scrolls — so there is no
+   * ambiguity to resolve and no reason to make anyone wait for it. Reading the
+   * graph is hovering over it.
+   *
+   * The one rule kept verbatim is the important one: the readout is written
+   * STRAIGHT TO THE DOM from the series stashed at render time, never through
+   * _render. Re-rendering to move a crosshair would replace the node under the
+   * pointer on every pixel of travel.
+   */
+  _bindScrub() {
+    this._each("[data-scrub]", (box) => {
+      const cross = box.querySelector(".pd-cross");
+      /* The readout is not always INSIDE the scrub box. The night rail is a
+         26px bar and its caption belongs in the railbox header above it — so
+         looking only inside the box found nothing, returned early, and that
+         rail silently never scrubbed. A handler that is wired but unreachable
+         is the same failure as one that is written and never called. */
+      const out = box.querySelector("[data-readout]")
+        || (box.parentNode && box.parentNode.querySelector
+          ? box.parentNode.querySelector("[data-readout]") : null);
+      if (!cross || !out) return;
+
+      const hide = () => {
+        cross.style.opacity = "0";
+        out.style.opacity = "0";
+      };
+
+      const read = (clientX) => {
+        const r = box.getBoundingClientRect();
+        if (!r.width) return;
+        const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+        const series = box._pdSeries;
+        if (!series || !series.length) return;
+        const i = Math.min(series.length - 1, Math.round(f * (series.length - 1)));
+        const pt = series[i];
+        cross.style.opacity = "1";
+        cross.style.left = (f * 100).toFixed(2) + "%";
+        out.style.opacity = "1";
+        out.textContent = pt.label;
+      };
+
+      box.addEventListener("pointermove", (e) => read(e.clientX));
+      box.addEventListener("pointerleave", hide);
+      box.addEventListener("pointercancel", hide);
+    });
+  }
+
+  /* Stash the series a graph reads back, keyed to the element that owns it.
+     Read back at scrub time rather than re-derived, so the number under the
+     pointer is the number that was drawn. */
+  _stash(id, series) {
+    const el = this.shadowRoot && this.shadowRoot.getElementById(id);
+    if (el) el._pdSeries = series;
+  }
+
+  /* --------------------------------------------------------------- sheets --
+   *
+   * The desktop inverts the phone's rule: what you LOOK AT is inline, what you
+   * FIDDLE WITH is behind a sheet. Climate, Joel, music and the calendar are
+   * on the glass; the TV remote, the notification log and the vacuum map stay
+   * sheets, because a d-pad is a task and a log is read on demand.
+   *
+   * The host is `ps-host` on purpose — that is the id the shell's
+   * _mountSheetCard looks for, and using it is what lets the hosted-card
+   * plumbing be borrowed whole rather than reimplemented. It brings the parts
+   * that were hard to get right: `bare: true` by default so a hosted card does
+   * not draw a second surface, the blanked title so the chrome does not print
+   * the name twice, the retry without `bare` for a card entitled not to know
+   * our conventions, and an in-place error instead of a throw out of render.
+   */
+  _sheetHtml(faults) {
+    if (!this._sheet) return "";
+    const spec = (this._config.sheets || {})[this._sheet];
+    const title = this._sheet === "alerts"
+      ? (faults.length ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention` : "All clear")
+      : (spec && spec.title) || this._humanize(this._sheet);
+    let body;
+    if (this._sheet === "alerts") {
+      body = this._alertListHtml(faults);
+    } else if (spec && spec.section) {
+      /* A sheet can host one of our own sections as well as a foreign card.
+         That is how lights stays one click away without taking a permanent
+         column on the stage — the phone reached the same answer from the other
+         direction, and a `sheet_only` section keeps supplying its config while
+         rendering nothing in the column. */
+      const sec = (this._config.sections || []).find((s) => (s.key || s.type) === spec.section);
+      this._inSheet = true;
+      body = sec ? this._panelHtml({ key: sec.key || sec.type, ...sec }) : "";
+      this._inSheet = false;
+      if (!body) body = `<div class="pd-empty">Nothing to show.</div>`;
+    } else {
+      /* `dim` exists for a hosted card that hardcodes a light surface and
+         never reads HA's card variables — a filter is the only lever there is,
+         so it is opt-in per sheet and an out-of-range value is ignored rather
+         than blanking the sheet. */
+      const d = spec && Number(spec.dim);
+      body = `<div id="ps-host" class="pd-host"${d > 0 && d <= 1 ? ` style="filter:brightness(${d})"` : ""}></div>`;
+    }
+    return `
+      <div class="pd-scrim" data-close="1"></div>
+      <div class="pd-sheet-panel" role="dialog" aria-label="${psEsc(title)}">
+        <div class="pd-sheet-head">
+          <span class="pd-sheet-title">${psEsc(title)}</span>
+          <button class="pd-x" type="button" data-close="1" aria-label="Close">
+            <svg viewBox="0 0 24 24" class="pd-ico"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+        <div class="pd-sheet-body">${body}</div>
+      </div>`;
+  }
+
+  getCardSize() {
+    return 30;
+  }
+
+  /* Pure helpers, exposed so the smoke test can exercise them without reaching
+     into the bundle's module scope — the bundle is one concatenated script, so
+     its free functions are not otherwise reachable from a test that evals it. */
+  static get helpers() {
+    return {
+      sections: PD_SECTIONS,
+      zones: PD_ZONES,
+      zoneDefault: PD_ZONE_DEFAULT,
+      borrowed: PD_BORROW,
+      /* Empty, or the borrow silently lost something. A test asserts it. */
+      borrowMissing: PD_BORROW_MISSING,
+      clock: pdClock,
+    };
+  }
+
+  static get styles() {
+    return PD_STYLES;
+  }
+}
+
+/* Do the borrowing once, at definition time, and remember what failed so a
+   test can assert nothing did. */
+const PD_BORROW_MISSING = pdBorrow(PurdyDeskCard.prototype, PurdyShellCard.prototype, PD_BORROW);
+/* ============================================================================
+ * purdy-desk-card — Tier 1, the status strip
+ *
+ * Everything you glance at and never press, on one line across the top.
+ *
+ * The phone gives each of these a row of its own because it has no width to
+ * spend. Across 1500px they are five short answers — who, when, outside, the
+ * house, and is anything wrong — and stacking them would waste the one
+ * dimension the desktop actually has.
+ *
+ * The attention list is a CHIP here, not a band. A full-width band for
+ * something that is empty most of the time is dead height on a sheet that
+ * never scrolls, and this house almost always has one low battery raised, so
+ * the band would almost always be drawn and almost never be read. Green when
+ * clear, red with a count when not, and the list itself lives in a popover.
+ * ========================================================================== */
+
+const PD_WX = {
+  rainy: "mdi:weather-rainy", pouring: "mdi:weather-pouring", sunny: "mdi:weather-sunny",
+  clear: "mdi:weather-night", "clear-night": "mdi:weather-night", cloudy: "mdi:weather-cloudy",
+  partlycloudy: "mdi:weather-partly-cloudy", snowy: "mdi:weather-snowy", fog: "mdi:weather-fog",
+  windy: "mdi:weather-windy", lightning: "mdi:weather-lightning", hail: "mdi:weather-hail",
+};
+
+Object.assign(PurdyDeskCard.prototype, {
+
+  _stripHtml(faults) {
+    const now = new Date();
+    const zones = [this._zoneId(), this._zoneClock(now), this._zoneWeather()];
+    zones.push(this._zoneHvac());
+    /* Anything the config parked in the strip — people, today. Rendered from
+       the same section bodies the stage and dock use, so moving a section
+       between tiers stays a `zone:` edit. */
+    this._zone("strip").forEach((sec) => {
+      const html = this._stripSection(sec);
+      if (html) zones.push(`<div class="pd-z pd-z-sec">${html}</div>`);
+    });
+    zones.push(this._zoneAlert(faults));
+    return zones.filter(Boolean).join("");
+  },
+
+  _zoneId() {
+    const now = new Date();
+    const occ = this._config.occupancy ? pcState(this._hass, this._config.occupancy) : "";
+    const who = this._who();
+    return `<div class="pd-z pd-z-id">
+        <h2>${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</h2>
+        <div class="pd-sub">${now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}${
+          occ ? ` · ${psEsc(this._humanize(occ))}` : ""}</div>
+      </div>`;
+  },
+
+  _zoneClock(now) {
+    /* Split so the meridiem can sit under the digits rather than beside them —
+       at this size a trailing " PM" drags the eye off the number. */
+    const t = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const parts = t.split(" ");
+    return `<div class="pd-z pd-z-clock">
+        <div class="pd-time">${psEsc(parts[0])}</div>
+        <div class="pd-mer">${psEsc(parts[1] || "")}</div>
+      </div>`;
+  },
+
+  _zoneWeather() {
+    const c = this._config;
+    if (!c.weather) return "";
+    const st = this._hass.states[c.weather];
+    if (!st) return "";
+    const temp = st.attributes.temperature;
+    const clim = this._section("climate") || {};
+    const out = clim.outside || {};
+    /* pcReading rather than `|| 0`: an outside sensor that has dropped off has
+       to read as absent, not as zero degrees. */
+    const oT = pcReading(this._hass, out.temp);
+    const oH = pcReading(this._hass, out.humidity);
+    return `<div class="pd-z pd-z-wx" data-info="${psEsc(c.weather)}" role="button" tabindex="0">
+        <div class="pd-wxmain">
+          <ha-icon icon="${PD_WX[st.state] || "mdi:weather-partly-cloudy"}"></ha-icon>
+          <div>
+            <div class="pd-wxt">${temp == null ? "—" : Math.round(temp) + "°"}</div>
+            <div class="pd-wxs">${psEsc(this._humanize(st.state))}</div>
+          </div>
+        </div>
+        <div class="pd-wxout">
+          <span>Outside <b>${oT.ok && oT.n != null ? oT.n.toFixed(1) + "°" : "—"}</b></span>
+          <span>Humidity <b>${oH.ok && oH.n != null ? oH.n.toFixed(0) + "%" : "—"}</b></span>
+        </div>
+      </div>`;
+  },
+
+  /* The house in one line: what it is trying to do, and what each zone reads.
+     The detail — the ring, the graph, the schedule — is the stage's job. */
+  _zoneHvac() {
+    const sec = this._section("climate");
+    if (!sec) return "";
+    const h = this._hass;
+    const goalSt = sec.goal && h.states[sec.goal];
+    const thermo = sec.thermostat && h.states[sec.thermostat];
+    const src = goalSt || thermo;
+    if (!src) return "";
+    const action = (thermo && thermo.attributes.hvac_action) || (src.state || "");
+    const real = pcNumOf(src, "temperature");
+    const goal = this._optGoal(sec.goal || sec.thermostat, real);
+    const cool = /cool/i.test(action);
+    const heat = /heat/i.test(action);
+    const verb = cool ? "Cooling to" : heat ? "Heating to" : "Holding";
+
+    const zones = ((sec.zones || {}).options || []).map((z) => {
+      const r = pcReading(h, z.temp);
+      const active = (sec.zones || {}).select
+        ? pcState(h, sec.zones.select) === z.option : false;
+      return `<div class="pd-zc ${active ? "on" : ""}">${psEsc(z.label)}
+          <b>${r.ok && r.n != null ? r.n.toFixed(1) + "°" : "—"}</b></div>`;
+    }).join("");
+
+    return `<div class="pd-z pd-z-hvac">
+        <div class="pd-hv">
+          <div class="pd-hvgoal">
+            <span class="pd-lbl">${verb}</span>
+            <div class="pd-hvbig">${goal == null ? "—" : Math.round(goal) + "°"}</div>
+          </div>
+          <div class="pd-zpair">${zones}</div>
+        </div>
+      </div>`;
+  },
+
+  /* Presence, as pills. Battery colours itself only when it is actually low —
+     a number that is always amber stops meaning anything. */
+  _stripSection(sec) {
+    if (sec.type !== "people") return "";
+    const h = this._hass;
+    const rows = (sec.people || []).map((p) => {
+      const st = p.entity && h.states[p.entity];
+      const home = st && st.state === "home";
+      const b = pcReading(h, p.battery);
+      const s = pcReading(h, p.steps);
+      const low = b.ok && b.n != null && b.n <= (sec.low_battery || 25);
+      const name = p.name || pcName(h, p.entity);
+      return `<div class="pd-pw ${home ? "home" : ""}" data-info="${psEsc(p.entity || "")}" role="button" tabindex="0">
+          <div class="pd-av">${psEsc((name || "?").slice(0, 1))}</div>
+          <div>
+            <div class="pd-pn">${psEsc(name)}</div>
+            <div class="pd-pb ${low ? "low" : ""}">${
+              b.ok && b.n != null ? Math.round(b.n) + "%" : "—"}${
+              s.ok && s.n != null ? " · " + Math.round(s.n).toLocaleString() : ""}</div>
+          </div>
+        </div>`;
+    }).join("");
+    return `<div class="pd-ppl">${rows}</div>`;
+  },
+
+  _zoneAlert(faults) {
+    /* A dropped connection must say so. Everything on the screen is
+       last-known-good from that moment, and a confident "All clear" over stale
+       states is the one thing the chip must never say. */
+    if (pcOffline(this._hass)) {
+      return `<div class="pd-z pd-z-alert">
+          <span class="pd-chip bad"><span class="pd-dot"></span>Reconnecting…</span>
+        </div>`;
+    }
+    const worst = faults.length
+      ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
+      : "good";
+    const label = faults.length
+      ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention`
+      : "All clear";
+    return `<div class="pd-z pd-z-alert">
+        <button class="pd-chip ${worst}" type="button" id="pd-alert"
+          aria-expanded="${this._alertOpen ? "true" : "false"}">
+          <span class="pd-dot"></span>${label}</button>
+        ${this._alertOpen ? `<div class="pd-pop">${this._alertListHtml(faults)}</div>` : ""}
+      </div>`;
+  },
+
+  /* The list itself, shared by the popover and the sheet — one renderer, so
+     the two can never disagree about what is raised. */
+  _alertListHtml(faults) {
+    if (!faults.length) {
+      return `<div class="pd-empty">Nothing needs attention.</div>`;
+    }
+    const rows = faults.map((f) => `
+      <div class="pd-ar">
+        <span class="pd-sev ${psEsc(f.severity)}"></span>
+        <div class="pd-grow">
+          <div class="pd-at">${psEsc(f.title)}</div>
+          ${f.detail ? `<div class="pd-ad">${psEsc(f.detail)}</div>` : ""}
+        </div>
+        ${f.entity ? `<button class="pd-mini-btn" type="button" data-info="${psEsc(f.entity)}">Open</button>` : ""}
+        <button class="pd-mini-btn" type="button" data-dismiss="${psEsc(f.key)}">Dismiss</button>
+      </div>`).join("");
+    /* A dismissal is an acknowledgement, not a mute — saying so beside the
+       button is cheaper than the support question it prevents. */
+    return `${rows}<div class="pd-note">Dismissing hides a row until it fires again.</div>`;
+  },
+
+  _bindStrip() {
+    /* Clicking elsewhere in the strip closes the popover.
+     *
+     * Deliberately NOT a capture-phase listener, and not on document. Capture
+     * runs on the ancestor BEFORE the chip's own handler, so it would close the
+     * popover and repaint — which replaces the chip mid-dispatch, so the chip's
+     * click never lands and the thing can never be opened at all. The chip
+     * stops propagation, so bubbling gives the right answer for both cases.
+     * Bound on the strip rather than on document so it dies with the element. */
+    this._one("pd-strip", (el) => {
+      el.addEventListener("click", () => {
+        if (!this._alertOpen) return;
+        this._alertOpen = false;
+        this._last = null;
+        this._render();
+      });
+    });
+  },
+});
+/* ============================================================================
+ * purdy-desk-card — Tier 2, the stage
+ *
+ * The middle tier is the whole idea of the view: the panels you actually study,
+ * side by side, where DETAIL IS BOUGHT WITH WIDTH RATHER THAN WITH A POP-UP.
+ *
+ * Every panel has three faces and shows exactly one of them:
+ *
+ *   full   the balanced state — what it looks like when nothing is expanded
+ *   xtra   revealed underneath `full` when this panel is the expanded one
+ *   mini   the folded headline, shown when a DIFFERENT panel is expanded
+ *
+ * `mini` is why this is folding and not hiding. Opening climate must not make
+ * Joel disappear — it makes him a number you can still read. That is the whole
+ * difference between this and the phone's pop-ups, which black out everything
+ * behind them.
+ *
+ * All three faces are `display` swaps driven by a class on the panel wrapper.
+ * NONE of them animates. The only transition on the screen is the stage's
+ * grid-template-columns, on a node the renderer never replaces — see _mount.
+ * An entry/exit animation on a patched node re-runs from zero on every state
+ * change, which is how the phone's lamp chips ended up sliding under the thumb
+ * constantly. Assume any such animation is wrong until proven against a
+ * patching renderer.
+ * ========================================================================== */
+
+Object.assign(PurdyDeskCard.prototype, {
+
+  /* The dispatch half of the two-places rule. PD_SECTIONS is the other half,
+     and a test asserts the stage types here are exactly the stage-defaulted
+     types there — either half alone is a card that throws out of setConfig. */
+  _panelHtml(sec) {
+    const fn = {
+      climate: () => this._pnlClimate(sec),
+      nursery: () => this._pnlNursery(sec),
+      music: () => this._pnlMusic(sec),
+      calendar: () => this._pnlCalendar(sec),
+      lights: () => this._pnlLights(sec),
+      nowplaying: () => this._pnlNowplaying(sec),
+      /* A section parked on the stage that has no stage renderer falls back to
+         its dock treatment rather than vanishing — moving a section between
+         tiers is a `zone:` edit and must never be a blank column. */
+      people: () => `<div class="pd-pbody pd-full">${this._stripSection(sec)}</div>`,
+      quick: () => `<div class="pd-pbody pd-full">${this._dockSection(sec)}</div>`,
+      rooms: () => `<div class="pd-pbody pd-full">${this._dockSection(sec)}</div>`,
+      systems: () => `<div class="pd-pbody pd-full">${this._dockSection(sec)}</div>`,
+    }[sec.type];
+    return fn ? fn() : "";
+  },
+
+  /* The header is a button whenever the panel has anything more to show.
+   *
+   * `expandable: false` renders the same header — same size, same weight, same
+   * chip — minus the chevron and the click. It is NOT a smaller, quieter
+   * treatment: on the phone that mistake turned five of seven section titles
+   * into captions, and a title that shrinks because it happens to have no
+   * detail behind it is a hierarchy that means nothing. */
+  _head(sec, chip) {
+    /* Inside a sheet the chrome has already named itself beside the close
+       button, and there is nothing to expand into — a second title printed
+       the name twice on the phone and would here too. */
+    if (this._inSheet) return "";
+    const open = this._open === sec.key;
+    const can = sec.expandable !== false;
+    const inner = `<span class="pd-nm">${psEsc(sec.title || this._humanize(sec.type))}</span>
+        ${chip || ""}
+        ${can ? `<span class="pd-cv"><svg viewBox="0 0 24 24" class="pd-ico"><path d="M9 5l7 7-7 7"/></svg></span>` : ""}`;
+    return can
+      ? `<button class="pd-ph" type="button" data-exp="${psEsc(sec.key)}"
+           aria-expanded="${open ? "true" : "false"}">${inner}</button>`
+      : `<div class="pd-ph static">${inner}</div>`;
+  },
+
+  _chip(text, cls) {
+    return `<span class="pd-chip ${cls || ""}">${cls ? `<span class="pd-dot"></span>` : ""}${psEsc(text)}</span>`;
+  },
+
+  _mstat(value, key, small) {
+    return `<div class="pd-mstat">
+        <span class="pd-mv">${value}${small ? `<small>${psEsc(small)}</small>` : ""}</span>
+        <span class="pd-mk">${psEsc(key)}</span>
+      </div>`;
+  },
+
+  /* ------------------------------------------------------------- climate --*/
+
+  _pnlClimate(sec) {
+    const h = this._hass;
+    const goalSt = sec.goal && h.states[sec.goal];
+    const thermo = sec.thermostat && h.states[sec.thermostat];
+    const src = goalSt || thermo;
+    const action = (thermo && thermo.attributes.hvac_action) || (src && src.state) || "";
+    const cool = /cool/i.test(action);
+    const heat = /heat/i.test(action);
+    const col = cool ? "var(--ps-cool)" : heat ? "var(--ps-heat)" : "var(--ps-good)";
+
+    const cur = pcNumOf(thermo, "current_temperature");
+    const real = pcNumOf(src, "temperature");
+    const goalId = sec.goal || sec.thermostat;
+    const goal = this._optGoal(goalId, real);
+
+    const lo = (sec.ring || {}).min == null ? 60 : sec.ring.min;
+    const hi = (sec.ring || {}).max == null ? 80 : sec.ring.max;
+    const frac = (v) => (v == null ? null : Math.max(0, Math.min(1, (v - lo) / (hi - lo))));
+
+    /* A missing current temperature draws an EMPTY ring, not a ring at zero —
+       a thermostat that has dropped off and a house at 60° must not look the
+       same. */
+    const segs = cur == null ? [] : [[frac(cur), col]];
+    const ring = this._ringSvg(112, 9, segs, frac(goal), "var(--ps-warn)");
+
+    const mini = `<div class="pd-mini">
+        ${this._mstat(cur == null ? "—" : cur.toFixed(1), "inside", "°")}
+        ${this._mstat(goal == null ? "—" : Math.round(goal), "goal", "°")}
+        ${this._chip(cool ? "Cooling" : heat ? "Heating" : "Idle", cool ? "cool" : heat ? "heat" : "")}
+      </div>`;
+
+    const chip = this._chip(cool ? "Cooling" : heat ? "Heating" : "Idle", cool ? "cool" : heat ? "heat" : "");
+
+    return `${this._head(sec, chip)}
+      ${mini}
+      <div class="pd-pbody pd-full">
+        <div class="pd-cwrap">
+          <div class="pd-ring" style="width:112px;height:112px">
+            ${ring}
+            <div class="pd-rv">
+              <b>${cur == null ? "—" : cur.toFixed(1) + "°"}</b>
+              <small>${cur == null ? "no reading" : "now"}</small>
+            </div>
+          </div>
+          <div class="pd-grow">
+            <div class="pd-steprow">
+              <button class="pd-step" type="button" data-goal="-1" aria-label="Lower the goal"
+                ${goal == null ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24" class="pd-ico"><path d="M5 12h14"/></svg></button>
+              <div class="pd-goal"><b>${goal == null ? "—" : Math.round(goal) + "°"}</b><span>goal</span></div>
+              <button class="pd-step" type="button" data-goal="1" aria-label="Raise the goal"
+                ${goal == null ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24" class="pd-ico"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <div class="pd-cnote">${psEsc(this._climateNote(sec, action))}</div>
+          </div>
+        </div>
+        ${this._wave(sec)}
+        <div class="pd-xtra">
+          ${this._climateRooms(sec)}
+          ${this._climateChips(sec)}
+        </div>
+      </div>`;
+  },
+
+  /* What window the schedule is holding.
+   *
+   * GTTC's `current_schedule_entry` is `{time_start, time_end, target_temp,
+   * cooling_temp, effective_temp}` — NOT the `{start, heat_temp, cool_temp}`
+   * shape a reasonable person would guess, and which this first read from.
+   * Guessing produced no error and no gap: `win.start` was undefined, the
+   * branch fell through, and the panel quietly printed "HVAC is cooling"
+   * forever instead of the window. Both shapes are accepted so a different
+   * thermostat integration is not a silent blank. */
+  _climateNote(sec, action) {
+    const h = this._hass;
+    const st = sec.goal && h.states[sec.goal];
+    const win = st && st.attributes.current_schedule_entry;
+    const start = win && (win.time_start || win.start);
+    if (start) {
+      const end = win.time_end || win.end;
+      const clock = (hhmm) => (/^\d{1,2}:\d{2}$/.test(String(hhmm))
+        ? psMinsToClock(psMins(hhmm)) : String(hhmm));
+      const heat = win.target_temp != null ? win.target_temp : win.heat_temp;
+      const cool = win.cooling_temp != null ? win.cooling_temp : win.cool_temp;
+      const range = end ? `${clock(start)}–${clock(end)}` : clock(start);
+      const pair = heat != null && cool != null
+        ? ` ${Math.round(heat)}° heat / ${Math.round(cool)}° cool.` : "";
+      return `Holding the ${range} window.${pair}`;
+    }
+    return action ? `HVAC is ${this._humanize(action).toLowerCase()}.` : "";
+  },
+
+  /* Every room, its 24h shape and its number. The sparkline rides the same
+     26h fetch the graph makes rather than asking for its own. */
+  _climateRooms(sec) {
+    const h = this._hass;
+    const rows = (sec.rooms || []).map((r) => {
+      const t = pcReading(h, r.temp);
+      const hu = pcReading(h, r.humidity);
+      return `<div class="pd-rml" data-info="${psEsc(r.temp || "")}" role="button" tabindex="0">
+          <span class="pd-rmn">${psEsc(r.name)}</span>
+          ${sec.room_spark === false ? "" : `<span class="pd-spark">${this._sparkSvg(r.temp)}</span>`}
+          <span class="pd-rmv">${t.ok && t.n != null ? t.n.toFixed(1) + "°" : "—"}</span>
+          <span class="pd-rmh">${hu.ok && hu.n != null ? hu.n.toFixed(0) + "%" : "—"}</span>
+        </div>`;
+    }).join("");
+    return rows ? `<div class="pd-rmlist">${rows}</div>` : "";
+  },
+
+  _climateChips(sec) {
+    const h = this._hass;
+    const out = (sec.chips || []).map((c) => {
+      if (c.visible && c.visible.entity) {
+        if (pcState(h, c.visible.entity) !== c.visible.state) return "";
+      }
+      /* `source: schedule_preset` asks which of GTTC's four schedules owns the
+         live window. select.gttc_schedule_mode describes the BASE lists only
+         and is not a reliable guide, so it is never put on a dashboard. */
+      const val = c.source === "schedule_preset"
+        ? this._preset(sec)
+        : (c.show_state && c.entity ? this._humanize(pcState(h, c.entity)) : "");
+      /* A chip that asked for a value and did not get one is dropped whole —
+         printing just its label is a question with no answer. */
+      if ((c.source || c.show_state) && !val) return "";
+      const label = [c.name, val].filter(Boolean).join(" ");
+      if (!label) return "";
+      return this._chip(label, c.style || "");
+    }).filter(Boolean).join("");
+    const hold = this._holdRow(sec);
+    return (out || hold) ? `<div class="pd-chiprow">${out}</div>${hold}` : "";
+  },
+
+  /* Which schedule is actually running. `active_preset` is null whenever GTTC
+     picks one situationally, so there is no flag to follow — the live window
+     has to be matched against each preset's plan. The schedule fetch is the
+     phone's job; here the chip reports the thermostat's own answer or says it
+     does not know, rather than printing the base list's name as if it were it. */
+  /* GTTC keeps four schedules at once and `active_preset` is null whenever it
+     picks one situationally, so there is often no flag to follow — telling
+     which owns the live window means matching it against each preset's plan
+     over the websocket, which this panel does not do.
+     Returning null DROPS the chip. The rejected alternative was a placeholder
+     word, which is what the first pass shipped: the chip read "Running:
+     schedule", which is not an answer, and `select.gttc_schedule_mode` is
+     worse than nothing because it describes the base lists only. */
+  _preset(sec) {
+    const st = sec.goal && this._hass.states[sec.goal];
+    const p = st && (st.attributes.active_preset || st.attributes.preset_mode);
+    return p ? this._humanize(p) : null;
+  },
+
+  _holdRow(sec) {
+    const rem = (sec.hold || {}).remaining;
+    if (!rem) return "";
+    const r = pcReading(this._hass, rem);
+    if (!r.ok || !r.st || !r.st.state || r.st.state === "0") return "";
+    const armed = this._armed === "hold";
+    return `<div class="pd-hold">
+        <span>Hold · ${psEsc(r.st.state)} left</span>
+        <button class="pd-mini-btn ${armed ? "arm" : ""}" type="button" data-hold="1">${
+          armed ? "Tap again to cancel" : "Cancel hold"}</button>
+      </div>`;
+  },
+
+  /* ---------------------------------------------------------------- wave --
+   *
+   * Inside and outside on ONE shared vertical scale — two independently scaled
+   * lines in the same box would put a 70° room and a 95° afternoon on top of
+   * each other and read as agreement.
+   *
+   * Deliberately not the phone's `_waveSvg`. That one is 320px wide with no
+   * axis at all, because a phone has nowhere to put one; this draws six-hourly
+   * gridlines and names them, which is most of what the picture is for at this
+   * size. Same data, different picture — the hypnogram/temperature precedent.
+   */
+  _wave(sec) {
+    const g = sec.graph || {};
+    const W = 400, H = 96;
+    const err = this._histErr;
+    const pick = (id) => {
+      const raw = this._history[id];
+      if (!raw) return [];
+      return raw.map((p) => ({ t: p.t, v: parseFloat(p.s) })).filter((p) => Number.isFinite(p.v));
+    };
+    const ins = pcDownsample(pick(g.inside), 120);
+    const out = pcDownsample(pick(g.outside), 120);
+
+    if ((!ins.length && !out.length)) {
+      /* "The recorder did not answer" and "there is nothing here yet" are
+         different facts and the graph says which. Neither is a flat line. */
+      return `<div class="pd-graph"><div class="pd-nohist">${
+        err ? "Recorder did not answer" : "No history yet"}</div></div>`;
+    }
+
+    const all = ins.concat(out);
+    let vmin = Infinity, vmax = -Infinity, t0 = Infinity, t1 = -Infinity;
+    all.forEach((p) => {
+      vmin = Math.min(vmin, p.v); vmax = Math.max(vmax, p.v);
+      t0 = Math.min(t0, p.t); t1 = Math.max(t1, p.t);
+    });
+    if (vmax - vmin < 4) { const grow = (4 - (vmax - vmin)) / 2; vmax += grow; vmin -= grow; }
+    const span = t1 - t0 || 1;
+    const x = (t) => ((t - t0) / span) * W;
+    const y = (v) => 6 + (1 - (v - vmin) / (vmax - vmin)) * (H - 12);
+    const poly = (pts) => pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+
+    /* Gridlines on real hours, labelled where they actually fall. Three
+       captions spread evenly across an axis that is not evenly divided point
+       at the wrong times — the nursery rail learned that the hard way. */
+    const marks = [];
+    const step = 6 * 3600 * 1000;
+    const first = Math.ceil(t0 / step) * step;
+    for (let t = first; t <= t1; t += step) {
+      marks.push(`<line x1="${x(t).toFixed(1)}" y1="0" x2="${x(t).toFixed(1)}" y2="${H}"
+        stroke="var(--ps-hair)" stroke-width="1" vector-effect="non-scaling-stroke"/>`);
+    }
+    const labels = [];
+    for (let t = first; t <= t1; t += step) {
+      labels.push(`<span style="left:${((x(t) / W) * 100).toFixed(2)}%">${psEsc(
+        new Date(t).toLocaleTimeString([], { hour: "numeric" }))}</span>`);
+    }
+
+    const lastIn = ins.length ? ins[ins.length - 1].v : null;
+    const lastOut = out.length ? out[out.length - 1].v : null;
+
+    /* What the scrub reads back — stashed after the patch, from the same
+       series that was drawn rather than re-derived. */
+    this._waveSeries = (ins.length ? ins : out).map((p, i) => {
+      const o = out.length ? out[Math.min(out.length - 1, Math.round(i * (out.length / (ins.length || 1))))] : null;
+      return {
+        t: p.t,
+        label: `${pdClock(p.t)} · ${ins.length ? p.v.toFixed(1) + "° in" : ""}${
+          ins.length && o ? " · " : ""}${o ? o.v.toFixed(1) + "° out" : ""}`,
+      };
+    });
+
+    return `<div class="pd-graph" id="pd-wave" data-scrub="wave">
+        <div class="pd-cross"></div>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="pd-wavesvg"
+             aria-label="Inside and outside temperature">
+          ${marks.join("")}
+          ${out.length ? `<polyline fill="none" stroke="var(--ps-heat)" stroke-width="1.8"
+            stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+            points="${poly(out)}"/>` : ""}
+          ${ins.length ? `<polyline fill="none" stroke="var(--ps-cool)" stroke-width="2"
+            stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+            points="${poly(ins)}"/>` : ""}
+        </svg>
+        <div class="pd-axis">${labels.join("")}</div>
+        <div class="pd-glg">
+          <span><i style="background:var(--ps-cool)"></i>Inside<b>${lastIn == null ? "—" : lastIn.toFixed(1) + "°"}</b></span>
+          <span><i style="background:var(--ps-heat)"></i>Outside<b>${lastOut == null ? "—" : lastOut.toFixed(1) + "°"}</b></span>
+          <span class="pd-readout" data-readout="1"></span>
+        </div>
+      </div>`;
+  },
+
+  /* ------------------------------------------------------------- nursery --*/
+
+  _pnlNursery(sec) {
+    const loaded = this._nursery != null;
+    const err = this._nurseryErr;
+    const sessions = loaded ? this._nurserySessions(sec) : [];
+    const stats = psNurseryStats(sessions, { now: this._nowMs(), days: sec.days || 7 });
+    const now = this._nowMs();
+    const todayKey = psDayKey(new Date(now));
+
+    const live = sessions.find((s) => s.active);
+    const nights = sessions.filter((s) => s.night);
+    const night = nights.length ? nights[nights.length - 1] : null;
+    const naps = sessions.filter((s) => !s.night && s.day === todayKey);
+
+    /* The ring scales to HIS OWN average, never a fixed goal: the reading is
+       "above or below normal", which keeps meaning as he grows. The configured
+       max is only the fallback until an average exists. */
+    const avg = stats.avgNightMin;
+    const maxMin = avg ? avg * 1.25 : (sec.ring || {}).max_hours ? sec.ring.max_hours * 60 : 12 * 60;
+    const nightMin = night ? night.asleepMinutes : null;
+    const frac = nightMin == null ? 0 : Math.max(0, Math.min(1, nightMin / maxMin));
+    const goalFrac = avg ? Math.max(0, Math.min(1, avg / maxMin)) : null;
+
+    /* A night that has not happened and a night of no sleep are different
+       facts. The ring reads "—" and says which. */
+    const ringLabel = night ? psDur(nightMin) : "—";
+    const ringSub = night
+      ? (night.active ? "tonight" : "last night")
+      : (loaded ? "no night yet" : err ? "unavailable" : "loading");
+
+    const napRings = naps.map((n, i) => {
+      const short = n.asleepMinutes < (sec.catnap_under_min || 30);
+      const f = Math.max(0.04, Math.min(1, n.asleepMinutes / (sec.nap_full_min || 120)));
+      return `<div class="pd-nap">
+          <div class="pd-ring sm" style="width:54px;height:54px">
+            ${this._ringSvg(54, 5, [[f, short ? "var(--ps-warn)" : "var(--ps-light)"]], null)}
+            <div class="pd-rv sm"><b>${psEsc(psHM(n.asleepMinutes))}</b></div>
+          </div>
+          <span class="pd-napt">${psEsc(pdClock(n.from))}</span>
+        </div>`;
+    }).join("");
+
+    const chip = live
+      ? this._chip(live.settledAt && live.settledAt <= now ? "Asleep" : "Settling", "deep")
+      : stats.wakeWindowMin != null
+        ? this._chip(`Up ${psHM(stats.wakeWindowMin)}`, "")
+        : this._chip(loaded ? "Idle" : "…", "");
+
+    const mini = `<div class="pd-mini">
+        ${this._mstat(nightMin == null ? "—" : (nightMin / 60).toFixed(1), "night", nightMin == null ? "" : "h")}
+        ${this._mstat(String(naps.length), naps.length === 1 ? "nap today" : "naps today")}
+        ${chip}
+      </div>`;
+
+    return `${this._head(sec, chip)}
+      ${mini}
+      <div class="pd-pbody pd-full">
+        <div class="pd-jwrap">
+          <div class="pd-ring" style="width:112px;height:112px">
+            ${this._ringSvg(112, 9, night ? [[frac, "var(--ps-light)"]] : [], goalFrac, "var(--ps-warn)")}
+            <div class="pd-rv"><b>${psEsc(ringLabel)}</b><small>${psEsc(ringSub)}</small></div>
+          </div>
+          <div class="pd-grow">
+            <div class="pd-naps">${napRings || `<span class="pd-dimtext">No naps yet today</span>`}</div>
+            <div class="pd-jstatus">${this._nurseryStatus(sec, live, stats, night, now)}</div>
+          </div>
+        </div>
+        ${this._nightRail(sec, night, loaded, err)}
+        <div class="pd-xtra">
+          ${this._nurseryRows(sec, night, stats, naps)}
+        </div>
+      </div>`;
+  },
+
+  /* One line of live status. When he is up it carries how long and since when
+     — the number that decides whether the next nap is due. The door is
+     deliberately not a state here: it opens several times a day for reasons
+     nobody is tracking, and while it was a state it displaced the one thing
+     worth reading. */
+  _nurseryStatus(sec, live, stats, night, now) {
+    if (!this._nursery) {
+      return this._nurseryErr
+        ? `Recorder did not answer — <button class="pd-mini-btn" type="button" data-retry="nursery">retry</button>`
+        : "Loading his week…";
+    }
+    if (live) {
+      const settled = live.settledAt && live.settledAt <= now;
+      if (!settled) return `Down ${pdClock(live.from)} · settling ${psHM(Math.round((now - live.from) / 60000))}`;
+      return `Down ${pdClock(live.from)} · settled ${pdClock(live.settledAt)} · asleep ${
+        psHM(Math.round((now - live.settledAt) / 60000))}`;
+    }
+    if (stats.wakeWindowMin == null) return "Nothing recorded yet.";
+    const bed = stats.bedMean != null ? ` · usually down ${psMinsToClock(stats.bedMean)}` : "";
+    return `Awake ${psHM(stats.wakeWindowMin)} · since ${pdClock(stats.wakeSince)}${bed}`;
+  },
+
+  /* The night as a plot with an axis, inside a box — a bare line on the card
+     ground does not read as one. Two segments (settling, asleep) with a tick
+     wherever someone went in, and hourly gridlines. */
+  _nightRail(sec, night, loaded, err) {
+    if (!loaded) {
+      return `<div class="pd-railbox"><div class="pd-nohist">${
+        err ? "Recorder did not answer" : "Loading…"}</div></div>`;
+    }
+    if (!night) {
+      return `<div class="pd-railbox"><div class="pd-nohist">No night recorded yet</div></div>`;
+    }
+    const from = night.from;
+    /* A finished night ends where the Hatch stopped. Running it to now
+       regardless would leave the sleep as a narrow band on the left with hours
+       of blank to the right, and the end label reading the current time. */
+    const to = night.active ? this._nowMs() : night.to;
+    const span = to - from || 1;
+    const pct = (t) => (((t - from) / span) * 100).toFixed(2);
+    const settled = Math.min(Math.max(night.settledAt, from), to);
+
+    const ticks = (night.events || []).map((t) =>
+      `<i class="pd-tick" style="left:${pct(t)}%"></i>`).join("");
+
+    const marks = [];
+    const step = 3600 * 1000;
+    for (let t = Math.ceil(from / step) * step; t <= to; t += step) {
+      marks.push(`<i class="pd-grid" style="left:${pct(t)}%"></i>`);
+    }
+
+    this._nightSeries = [];
+    const N = 120;
+    for (let i = 0; i < N; i++) {
+      const t = from + (span * i) / (N - 1);
+      const state = t < settled ? "settling" : "asleep";
+      this._nightSeries.push({ t, label: `${pdClock(t)} · ${state}` });
+    }
+
+    return `<div class="pd-railbox">
+        <div class="pd-railhead">
+          <span>${psEsc(night.active ? "Tonight" : "Last night")}</span>
+          <span class="pd-readout" data-readout="1"></span>
+        </div>
+        <div class="pd-rail" id="pd-nightrail" data-scrub="night">
+          <div class="pd-cross"></div>
+          ${marks.join("")}
+          <i class="pd-seg settle" style="left:0;width:${pct(settled)}%"></i>
+          <i class="pd-seg sleep" style="left:${pct(settled)}%;width:${(100 - pct(settled)).toFixed(2)}%"></i>
+          ${ticks}
+        </div>
+        <div class="pd-railfoot">
+          <span>${psEsc(pdClock(from))}</span>
+          <span>${psEsc(pdClock(to))}</span>
+        </div>
+      </div>`;
+  },
+
+  _nurseryRows(sec, night, stats, naps) {
+    const row = (l, v, c) => `<div class="pd-jr"><span class="pd-l">${psEsc(l)}</span>
+        <span class="pd-v">${psEsc(v)}</span><span class="pd-c">${psEsc(c || "")}</span></div>`;
+    const napRows = naps.map((n) => row(
+      pdClock(n.from) + " – " + pdClock(n.to),
+      psHM(n.asleepMinutes),
+      n.interventions ? `${n.interventions} in` : ""
+    )).join("");
+
+    const nightRows = night ? [
+      row("Asleep", psDur(night.asleepMinutes),
+        stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet"),
+      row("Down / up", `${pdClock(night.from)} – ${pdClock(night.to)}`, ""),
+      row("Settled", pdClock(night.settledAt), `+${psHM(night.settleMinutes)} settling`),
+      row("Interventions", String(night.interventions),
+        (night.events || []).map((t) => pdClock(t)).join(" · ")),
+      row("Longest stretch", psDur(night.longestStretch),
+        stats.avgStretch ? `7d ${psDur(stats.avgStretch)}` : ""),
+    ].join("") : "";
+
+    const spread = stats.bedSpread != null
+      ? row("Bedtime", psMinsToClock(stats.bedMean), `± ${stats.bedSpread}m over ${stats.nights} nights`)
+      : "";
+
+    return `${naps.length ? `<div class="pd-sub2">Naps today · ${naps.length}</div>${napRows}` : ""}
+      ${night ? `<div class="pd-sub2">${night.active ? "Tonight" : "Last night"}</div>${nightRows}` : ""}
+      ${spread}`;
+  },
+
+  /* ---------------------------------------------------------------- music --*/
+
+  _pnlMusic(sec) {
+    const h = this._hass;
+    const target = this._activePlayer();
+    const st = target && h.states[target];
+    const playing = st && st.state === "playing";
+    /* An idle MA player KEEPS its media_title and its artwork — the living
+       room reports "Bluey Theme Tune" hours after it stopped. Reading the
+       attribute without the state is how a silent house grows a now-playing
+       row: the title is only true while the queue is. */
+    const live = !!st && (st.state === "playing" || st.state === "paused");
+    const title = live ? st.attributes.media_title : null;
+    const art = live ? st.attributes.entity_picture_local : null;
+    const artist = live ? (st.attributes.media_artist || st.attributes.media_album_name) : null;
+
+    const rooms = (sec.players || []).map((p) => {
+      const ps = h.states[p.entity];
+      const live = ps && psIsMusic(ps) && ps.state === "playing";
+      return `<button class="pd-mr ${this._isPicked(p.entity) ? "sel" : ""} ${live ? "live" : ""}"
+          type="button" data-pick="${psEsc(p.entity)}">${psEsc(p.name)}</button>`;
+    }).join("");
+
+    const presets = (sec.presets || []).map((p) => `
+      <button class="pd-pr" type="button" data-uri="${psEsc(p.uri)}" data-kind="playlist">
+        <ha-icon icon="${psEsc(p.icon || "mdi:playlist-music")}"></ha-icon>
+        <span class="pd-trunc">${psEsc(p.name)}</span>
+      </button>`).join("");
+
+    const idle = (sec.players || []).filter((p) => {
+      const ps = h.states[p.entity];
+      return !(ps && psIsMusic(ps) && ps.state === "playing");
+    }).length;
+
+    const chip = title
+      ? this._chip(playing ? "Playing" : "Paused", playing ? "cool" : "")
+      : this._chip(`${idle} idle`, "");
+
+    const mini = `<div class="pd-mini">
+        ${title
+          ? `${this._mstat(psEsc(title), psEsc(artist || "playing"))}`
+          : this._mstat("—", "nothing playing")}
+        ${chip}
+      </div>`;
+
+    return `${this._head(sec, chip)}
+      ${mini}
+      <div class="pd-pbody pd-full">
+        <div class="pd-now">
+          <div class="pd-art">${art
+            /* entity_picture_local, never entity_picture: MA publishes an
+               absolute plain-HTTP URL to its own port, which an HTTPS
+               dashboard blocks as mixed content and which is unreachable off
+               the LAN. The image simply never loads and nothing says why. */
+            ? `<img src="${psEsc(art)}" alt="" />`
+            : `<svg viewBox="0 0 24 24" class="pd-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+          <div class="pd-grow">
+            <div class="pd-nt pd-trunc">${psEsc(title || "Nothing playing")}</div>
+            <div class="pd-ns pd-trunc">${psEsc(artist || this._roomName(sec, target))}</div>
+          </div>
+          <div class="pd-tbs">
+            <button class="pd-tb" type="button" data-mp="prev" ${target ? "" : "disabled"} aria-label="Previous">
+              <svg viewBox="0 0 24 24" class="pd-ico"><path d="M18 5v14L8 12zM6 5v14"/></svg></button>
+            <button class="pd-tb pp" type="button" data-mp="playpause" ${target ? "" : "disabled"} aria-label="Play or pause">
+              <svg viewBox="0 0 24 24" class="pd-ico">${playing
+                ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
+            <button class="pd-tb" type="button" data-mp="next" ${target ? "" : "disabled"} aria-label="Next">
+              <svg viewBox="0 0 24 24" class="pd-ico"><path d="M6 5v14l10-7zM18 5v14"/></svg></button>
+          </div>
+        </div>
+        <div class="pd-lbl">Rooms</div>
+        <div class="pd-mroom">${rooms}</div>
+        <div class="pd-lbl">Presets</div>
+        <div class="pd-pres">${presets}</div>
+        <div class="pd-xtra">
+          <div class="pd-lbl">Search</div>
+          <input class="pd-search" id="pd-q" type="search" placeholder="Tracks, albums, playlists, radio…"
+            value="${psEsc(this._query)}" />
+          <div class="pd-mtypes">${["all", "track", "album", "artist", "playlist", "radio"].map((k) =>
+            `<button class="pd-mt ${this._mtype === k ? "on" : ""}" type="button" data-mtype="${k}">${
+              k === "all" ? "All" : this._humanize(k)}</button>`).join("")}</div>
+          <div id="ps-res" class="pd-res">${this._resultsHtml()}</div>
+          ${this._note ? `<div class="pd-note">${psEsc(this._note)}</div>` : ""}
+        </div>
+      </div>`;
+  },
+
+  /* The ROOM, as config named it. The entity's friendly name is Music
+     Assistant's mirror of the source device — the living room speaker answers
+     to "Living Room TV", which is both wrong and confusing next to a TV row.
+     Config already says what the room is called. */
+  _roomName(sec, entity) {
+    if (!entity) return "";
+    const p = (sec.players || []).find((x) => x.entity === entity);
+    return (p && p.name) || pcName(this._hass, entity);
+  },
+
+  /* Overrides the shell's, which speaks in ps- classes. The borrowed
+     _paintResults calls whichever the instance has, so search-as-you-type
+     writes desk markup straight into #ps-res without a repaint — which is what
+     keeps the focused field alive mid-word. The id is `ps-res` precisely so
+     that borrowed painter finds it. */
+  _resultsHtml() {
+    if (this._searching) return `<div class="pd-dimtext">Searching…</div>`;
+    if (this._results == null) return "";
+    if (!this._results.length) return `<div class="pd-dimtext">Nothing found.</div>`;
+    return this._results.map((r) => `
+      <div class="pd-mi">
+        <div class="pd-th">${r.image
+          ? `<img src="${psEsc(r.image)}" alt="" />`
+          : `<svg viewBox="0 0 24 24" class="pd-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+        <div class="pd-grow">
+          <div class="pd-n pd-trunc">${psEsc(r.name)}</div>
+          <div class="pd-s pd-trunc">${psEsc(r.sub || r.kind)}</div>
+        </div>
+        <button class="pd-mini-btn" type="button" data-uri="${psEsc(r.uri)}" data-kind="${psEsc(r.kind)}">Play</button>
+        <button class="pd-mini-btn" type="button" data-enq="${psEsc(r.uri)}" data-kind="${psEsc(r.kind)}">Queue</button>
+      </div>`).join("");
+  },
+
+  /* ------------------------------------------------------------ calendar --*/
+
+  _pnlCalendar(sec) {
+    const days = sec.days || 5;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const byDay = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start.getTime() + i * 86400000);
+      const next = d.getTime() + 86400000;
+      byDay.push({
+        d,
+        events: this._events.filter((e) => e.t >= d.getTime() && e.t < next),
+      });
+    }
+    /* Today always. After that only days that have something, with the empty
+       ones counted into one line rather than drawn as five "Nothing scheduled"
+       rows — five identical negatives is not information, it is height. */
+    const shown = byDay.filter((x, i) => i === 0 || x.events.length);
+    const emptyCount = byDay.length - shown.length;
+    const next = this._events.find((e) => e.t >= Date.now());
+
+    const dayRow = (x) => `
+      <div class="pd-cday">
+        <div class="pd-cdt ${x.d.toDateString() === new Date().toDateString() ? "today" : ""}">
+          <div class="pd-dw">${x.d.toLocaleDateString([], { weekday: "short" })}</div>
+          <div class="pd-dn">${x.d.getDate()}</div>
+        </div>
+        <div class="pd-cev">${x.events.length
+          ? x.events.map((e) => `<div class="pd-ev"><i style="background:${psEsc(e.color)}"></i>
+              <span class="pd-trunc">${psEsc(e.name)}</span>
+              <span class="pd-et">${e.allDay ? "all day" : psEsc(pdClock(e.t))}</span></div>`).join("")
+          : `<div class="pd-ev none">Nothing scheduled</div>`}</div>
+      </div>`;
+
+    const chip = this._chip(
+      this._events.length ? `${this._events.length} event${this._events.length > 1 ? "s" : ""}` : "clear", "");
+
+    const mini = `<div class="pd-mini">
+        ${next
+          ? this._mstat(psEsc(new Date(next.t).toLocaleDateString([], { weekday: "short", day: "numeric" })), "next")
+          : this._mstat("—", "nothing ahead")}
+        ${next ? `<div class="pd-mstat"><span class="pd-mv sm">${psEsc(next.name)}</span>
+            <span class="pd-mk">${next.allDay ? "all day" : psEsc(pdClock(next.t))}</span></div>` : ""}
+      </div>`;
+
+    return `${this._head(sec, chip)}
+      ${mini}
+      <div class="pd-pbody pd-full">
+        ${shown.map(dayRow).join("")}
+        ${emptyCount ? `<div class="pd-dimtext">${emptyCount} more day${
+          emptyCount > 1 ? "s" : ""} with nothing scheduled</div>` : ""}
+        <div class="pd-xtra">
+          ${byDay.filter((x, i) => i > 0 && !x.events.length).map(dayRow).join("")}
+          <div class="pd-chiprow">${(sec.entities || []).map((e) => typeof e === "string" ? "" :
+            `<span class="pd-chip" style="color:${psEsc(e.color)}"><span class="pd-dot"></span>${
+              psEsc(pcName(this._hass, e.entity).replace(/ calendar$/i, ""))}</span>`).join("")}</div>
+        </div>
+      </div>`;
+  },
+
+  /* --------------------------------------------------------- now playing --*/
+
+  _pnlNowplaying(sec) {
+    const h = this._hass;
+    const rows = [];
+    (sec.tvs || []).forEach((tv) => {
+      const st = tv.media_player && h.states[tv.media_player];
+      if (!st || (st.state !== "playing" && st.state !== "on")) return;
+      const app = tv.app_sensor ? pcState(h, tv.app_sensor) : "";
+      rows.push(`<div class="pd-npr" data-info="${psEsc(tv.media_player)}" role="button" tabindex="0">
+          <div class="pd-th"><svg viewBox="0 0 24 24" class="pd-ico"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20.5h8"/></svg></div>
+          <div class="pd-grow">
+            <div class="pd-n pd-trunc">${psEsc(st.attributes.media_title || app || "On")}</div>
+            <div class="pd-s pd-trunc">${psEsc(tv.name)}</div>
+          </div>
+          ${sec.remote_sheet ? `<button class="pd-mini-btn" type="button" data-sheet="${psEsc(sec.remote_sheet)}">Remote</button>` : ""}
+        </div>`);
+    });
+    const np = this._nowPlaying();
+    if (np) {
+      rows.push(`<div class="pd-npr" data-info="${psEsc(np.entity)}" role="button" tabindex="0">
+          <div class="pd-th">${np.st.attributes.entity_picture_local
+            ? `<img src="${psEsc(np.st.attributes.entity_picture_local)}" alt="" />`
+            : `<svg viewBox="0 0 24 24" class="pd-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+          <div class="pd-grow">
+            <div class="pd-n pd-trunc">${psEsc(np.st.attributes.media_title)}</div>
+            <div class="pd-s pd-trunc">${psEsc(np.name)} · ${np.playing ? "playing" : "paused"}</div>
+          </div>
+        </div>`);
+    }
+    /* Nothing on means no panel at all — the renderer drops a section that
+       returns "", hairline and all, rather than leaving an empty column. */
+    if (!rows.length) return "";
+    return `${this._head(sec, this._chip(`${rows.length} on`, "cool"))}
+      <div class="pd-mini">${this._mstat(String(rows.length), rows.length === 1 ? "playing" : "playing")}</div>
+      <div class="pd-pbody pd-full">${rows.join("")}</div>`;
+  },
+
+  /* ----------------------------------------------------------------- bind --*/
+
+  _bindStage() {
+    /* The setpoint moves on the TAP, not on the round trip.
+     *
+     * Two bugs in one, both of which the phone's stepper shipped with: waiting
+     * for HA to echo the value back takes seconds with GTTC, and computing the
+     * next value from the LIVE attribute means a second tap inside that window
+     * reads the same unchanged temperature and recomputes the same number — so
+     * tapping + three times raised the goal by one degree. The optimistic value
+     * is what BOTH the display and the next tap read, and a burst of taps sends
+     * one call carrying the last value. */
+    this._each("[data-goal]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sec = this._section("climate");
+        if (!sec) return;
+        const id = sec.goal || sec.thermostat;
+        const st = this._hass.states[id];
+        const base = this._optGoal(id, pcNumOf(st, "temperature"));
+        if (base == null) return;
+        const next = Math.round(base + Number(el.dataset.goal));
+        /* Expires after 12s so a call that never lands shows the truth again
+           rather than leaving an unbacked number on screen. */
+        this._goalOpt = { id, value: next, until: Date.now() + 12000 };
+        this._last = null;
+        this._render();
+        clearTimeout(this._goalSend);
+        this._goalSend = setTimeout(() => {
+          this._hass.callService("climate", "set_temperature", { entity_id: id, temperature: next });
+        }, 400);
+      });
+    });
+
+    /* Cancelling a hold is destructive, so it arms rather than asking. The arm
+       lapses after 5s — a modal for this would be heavier than the action. */
+    this._each("[data-hold]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sec = this._section("climate");
+        if (this._armed !== "hold") {
+          this._armed = "hold";
+          this._last = null;
+          this._render();
+          clearTimeout(this._armTimer);
+          this._armTimer = setTimeout(() => {
+            this._armed = null; this._last = null; this._render();
+          }, 5000);
+          return;
+        }
+        clearTimeout(this._armTimer);
+        this._armed = null;
+        const svc = (sec.hold || {}).cancel_service;
+        if (svc && svc.indexOf(".") > 0) {
+          const p = svc.split(".");
+          this._hass.callService(p[0], p[1], {});
+        }
+        this._last = null;
+        this._render();
+      });
+    });
+
+    this._each("[data-retry]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (el.dataset.retry === "nursery") this._fetchNursery();
+        else this._fetchHistory();
+      });
+    });
+
+    /* transport */
+    this._each("[data-mp]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const target = this._activePlayer();
+        if (!target) return;
+        const st = this._hass.states[target];
+        const svc = { prev: "media_previous_track", next: "media_next_track" }[el.dataset.mp]
+          || (st && st.state === "playing" ? "media_pause" : "media_play");
+        this._hass.callService("media_player", svc, { entity_id: target });
+      });
+    });
+
+    /* Picking a room is a radio, not a set. "Play to two rooms" as two
+       play_media calls is two unsynchronised queues, not multi-room — real
+       grouping is media_player.join. Every control in this panel acts on the
+       one target, including the artwork and the title. */
+    this._each("[data-pick]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._togglePick(el.dataset.pick);
+        this._render();
+      });
+    });
+
+    this._each("[data-uri]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._playUri(el.dataset.uri, el.dataset.kind);
+      });
+    });
+
+    this._each("[data-enq]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._enqueueUri(el.dataset.enq, el.dataset.kind);
+      });
+    });
+
+    this._each("[data-mtype]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._mtype = el.dataset.mtype;
+        this._last = null;
+        this._render();
+        if ((this._query || "").trim()) this._runSearch();
+      });
+    });
+
+    /* A focused field must keep _dragging set or the next state change patches
+       the input away mid-word. The results are painted straight into their own
+       container for the same reason — see _paintResults. */
+    this._one("pd-q", (el) => {
+      el.addEventListener("focus", () => { this._dragging = true; });
+      el.addEventListener("blur", () => { this._dragging = false; });
+      el.addEventListener("input", () => this._queueSearch(el.value));
+    });
+  },
+});
+/* ============================================================================
+ * purdy-desk-card — the lights panel
+ *
+ * A light row should LOOK LIT, not look filled. A tile with an icon, a name, a
+ * percentage and a left-to-right sweep IS the built-in tile card, and
+ * restyling it does not change what it depicts. So there is no fill and no
+ * track: a glow starts at the bulb and falls off across the row, its reach is
+ * the brightness and its hue is the colour temperature the fixture actually
+ * reports. An off light is dark, not 0%.
+ *
+ * Two verbs on one pointer here rather than the phone's three: click toggles,
+ * drag dims. The phone's 380ms hold-to-open-the-lamps is a touch affordance
+ * with no reason to exist next to a chevron and a mouse — the members live in
+ * the expanded panel instead.
+ *
+ * The guard covers the LEVEL, not just the switch. Asking only about "off"
+ * leaves the likelier accident open: a pointer landing on the night light
+ * drags it to 80% and floods the room at 2am, silently. A guarded drag
+ * PREVIEWS the value and asks with the number in the question.
+ * ========================================================================== */
+
+Object.assign(PurdyDeskCard.prototype, {
+
+  /* What a light should READ as, which is not always what HA says yet. Same
+     contract as _optGoal — the climate stepper's lesson applied before it
+     could bite here. */
+  _briOf(id, real) {
+    const o = this._briOpt[id];
+    if (!o) return real;
+    if (Date.now() > o.until) { delete this._briOpt[id]; return real; }
+    if (real != null && Math.abs(real - o.value) < 2) { delete this._briOpt[id]; return real; }
+    return o.value;
+  },
+
+  /* Percent, or null when the light is off or missing — never 0, because "off"
+     and "on at nothing" are different states and only one of them is a level. */
+  _lightPct(id) {
+    const st = this._hass.states[id];
+    if (!st || st.state !== "on") return this._briOf(id, null);
+    const b = st.attributes.brightness;
+    const real = b == null ? 100 : Math.round((b / 255) * 100);
+    return this._briOf(id, real);
+  },
+
+  _lightList(sec) {
+    return (sec.lights || []).filter((l) => {
+      if (!l.hide_when_unavailable) return true;
+      /* The tree's light is not merely unavailable while it is down — it is
+         absent from the registry entirely, so the hide has to key off
+         something that still exists. */
+      const st = this._hass.states[l.hide_when_unavailable];
+      return !!st && st.state !== "unavailable" && st.state !== "unknown";
+    });
+  },
+
+  _pnlLights(sec) {
+    const h = this._hass;
+    const list = this._lightList(sec);
+    if (!list.length) return "";
+    const on = list.filter((l) => {
+      const st = h.states[l.entity];
+      return st && st.state === "on";
+    }).length;
+
+    const chip = this._chip(on ? `${on} on` : "all off", on ? "warn" : "");
+
+    const moods = (sec.moods || []).map((m, i) => `
+      <button class="pd-mood" type="button" data-mood="${i}">
+        <ha-icon icon="${psEsc(m.icon || "mdi:lightbulb-group")}"></ha-icon>
+        <span class="pd-trunc">${psEsc(m.name)}</span>
+      </button>`).join("");
+
+    const guard = this._guard
+      ? `<div class="pd-guard">
+          <div class="pd-gq"><b>${psEsc(this._guard.ask)}</b>${
+            this._guard.detail ? `<span>${psEsc(this._guard.detail)}</span>` : ""}</div>
+          <div class="pd-grow2">${psEsc(this._guard.what)}</div>
+          <button class="pd-mini-btn" type="button" data-guard="no">Cancel</button>
+          <button class="pd-mini-btn arm" type="button" data-guard="yes">Do it</button>
+        </div>`
+      : "";
+
+    return `${this._head(sec, chip)}
+      <div class="pd-mini">
+        ${this._mstat(String(on), on === 1 ? "light on" : "lights on")}
+        ${chip}
+      </div>
+      <div class="pd-pbody pd-full">
+        ${guard}
+        ${moods ? `<div class="pd-moods">${moods}</div>` : ""}
+        <div class="pd-lights">${list.map((l) => this._lightRow(l)).join("")}</div>
+      </div>`;
+  },
+
+  _lightRow(l) {
+    const h = this._hass;
+    const st = h.states[l.entity];
+    const missing = !st || st.state === "unavailable";
+    const on = !!st && st.state === "on";
+    const pct = this._lightPct(l.entity);
+    const k = st && st.attributes.color_temp_kelvin;
+    /* Hue from the temperature the fixture reports, so a warm lamp glows warm.
+       No reading means neutral rather than a made-up colour. */
+    const hue = k ? (k <= 2700 ? 32 : k <= 4000 ? 42 : 200) : 40;
+    const sat = k && k > 4500 ? 30 : 78;
+    const reach = on && pct != null ? 12 + (pct / 100) * 76 : 0;
+
+    /* A row with nothing to say says nothing. The sub-line appears only for
+       what you could not otherwise know. */
+    const members = (l.members || []).map((m) => h.states[m]).filter(Boolean);
+    const memOn = members.filter((m) => m.state === "on").length;
+    const offline = members.filter((m) => m.state === "unavailable").length;
+    const extras = (l.extras || []).map((e) => h.states[e]).filter(Boolean);
+    const extraOn = extras.filter((e) => e.state === "on");
+    let sub = "";
+    if (missing) sub = "Offline";
+    else if (offline) sub = `${offline} offline`;
+    else if (extraOn.length) sub = extraOn.map((e) => pcName(h, e.entity_id) + " on").join(" · ");
+    else if (members.length > 1 && memOn && memOn < members.length) sub = `${memOn} of ${members.length} on`;
+
+    /* One dot per member, only the lit ones glowing — a group's member state is
+       a picture, not a sentence. Past three the dots stop meaning anything, so
+       those collapse to one orb. */
+    const cluster = members.length
+      ? (members.length > 3
+        ? `<i class="pd-orb ${memOn ? "lit" : ""}"></i>`
+        : members.map((m) => `<i class="pd-mdot ${m.state === "on" ? "lit" : ""}"></i>`).join(""))
+      : "";
+
+    return `<div class="pd-lrow ${on ? "on" : ""} ${missing ? "off-line" : ""}"
+        data-light="${psEsc(l.entity)}"
+        style="--l-reach:${reach.toFixed(1)}%;--l-hue:${hue};--l-sat:${sat}%">
+        <span class="pd-lglow"></span>
+        <ha-icon class="pd-lico" icon="${psEsc(l.icon || "mdi:lightbulb")}"></ha-icon>
+        <div class="pd-grow">
+          <div class="pd-ln">${psEsc(l.name || pcName(h, l.entity))}</div>
+          ${sub ? `<div class="pd-ls">${psEsc(sub)}</div>` : ""}
+        </div>
+        <div class="pd-lclu">${cluster}</div>
+        <div class="pd-lpct" data-lpct="${psEsc(l.entity)}">${
+          missing ? "—" : on ? (pct == null ? "on" : pct + "%") : "off"}</div>
+      </div>`;
+  },
+
+  /* Paint one row in place, without a repaint.
+   *
+   * A drag CANNOT go through _render: the renderer patches, so re-rendering
+   * mid-gesture replaces the panel and DETACHES the very row under the pointer.
+   * The handler keeps its stale element, getBoundingClientRect() reads zero,
+   * and every later move is silently discarded — which shows up as "I drag to
+   * where 25% should be and nothing happens, then I try again and it does",
+   * because the second try binds to the fresh node. */
+  _paintLight(el, pct) {
+    const reach = 12 + (pct / 100) * 76;
+    el.style.setProperty("--l-reach", reach.toFixed(1) + "%");
+    el.classList.add("on");
+    const out = el.querySelector("[data-lpct]");
+    if (out) out.textContent = Math.round(pct) + "%";
+  },
+
+  /* Leading-plus-trailing THROTTLE, not a debounce.
+   *
+   * A debounce clears its timer on every move, so it only ever fires after the
+   * drag stops — the number on screen moves and the room does not. A debounce
+   * is right for a search box and wrong for a control something physical is
+   * following. */
+  _lightSetBri(id, pct) {
+    this._briOpt[id] = { value: pct, until: Date.now() + 12000 };
+    const s = (this._briSend[id] = this._briSend[id] || { last: 0, timer: null, pending: null });
+    const send = (v) => {
+      s.last = Date.now();
+      this._hass.callService("light", "turn_on", {
+        entity_id: id, brightness_pct: Math.max(1, Math.round(v)),
+      });
+    };
+    const gap = Date.now() - s.last;
+    if (gap >= 150) { send(pct); return; }
+    s.pending = pct;
+    if (s.timer) return;
+    s.timer = setTimeout(() => {
+      s.timer = null;
+      if (s.pending != null) { send(s.pending); s.pending = null; }
+    }, 150 - gap);
+  },
+
+  /* The session gate, not the light. `protect` is silent all day and only
+     speaks while the Hatch is playing — a guard that fires at noon is a guard
+     people learn to click through. */
+  _protectOf(entity) {
+    const sec = this._section("lights");
+    const l = ((sec && sec.lights) || []).find((x) => x.entity === entity);
+    const p = l && l.protect;
+    if (!p || !p.when) return null;
+    return pcState(this._hass, p.when) === (p.state == null ? "on" : p.state) ? p : null;
+  },
+
+  _bindDeskLights() {
+    this._each("[data-mood]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sec = this._section("lights");
+        const m = ((sec && sec.moods) || [])[Number(el.dataset.mood)];
+        if (!m) return;
+        /* Moods never touch a guarded light. An "All off" that kills the night
+           light is the bug, not the feature. */
+        Object.keys(m.set || {}).forEach((id) => {
+          if (this._protectOf(id)) return;
+          const v = m.set[id] || {};
+          const data = { entity_id: id };
+          if (v.brightness != null) data.brightness_pct = v.brightness;
+          if (v.kelvin != null) data.color_temp_kelvin = v.kelvin;
+          this._hass.callService("light", "turn_on", data);
+        });
+        (m.off || []).forEach((id) => {
+          if (this._protectOf(id)) return;
+          this._hass.callService("light", "turn_off", { entity_id: id });
+        });
+      });
+    });
+
+    this._each("[data-guard]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const g = this._guard;
+        this._guard = null;
+        if (el.dataset.guard === "yes" && g && typeof g.go === "function") g.go();
+        this._last = null;
+        this._render();
+      });
+    });
+
+    this._each("[data-light]", (el) => {
+      let start = null, moved = false, pct0 = 0;
+
+      el.addEventListener("pointerdown", (e) => {
+        if (e.button != null && e.button !== 0) return;
+        const id = el.dataset.light;
+        const st = this._hass.states[id];
+        if (!st || st.state === "unavailable") return;
+        start = e.clientX;
+        moved = false;
+        pct0 = this._lightPct(id) == null ? 0 : this._lightPct(id);
+        this._dragging = true;
+      });
+
+      el.addEventListener("pointermove", (e) => {
+        if (start == null) return;
+        const dx = e.clientX - start;
+        if (!moved && Math.abs(dx) < 5) return;
+        moved = true;
+        const r = el.getBoundingClientRect();
+        if (!r.width) return;
+        const pct = Math.max(1, Math.min(100, Math.round(pct0 + (dx / r.width) * 100)));
+        el._pdPct = pct;
+        this._paintLight(el, pct);
+        /* A guarded light previews and does not send — the question gets asked
+           with the number in it when the pointer comes up. */
+        if (!this._protectOf(el.dataset.light)) this._lightSetBri(el.dataset.light, pct);
+      });
+
+      const finish = (e) => {
+        if (start == null) return;
+        start = null;
+        this._dragging = false;
+        const id = el.dataset.light;
+        const prot = this._protectOf(id);
+
+        if (moved) {
+          const pct = el._pdPct;
+          if (prot && pct != null) {
+            this._guard = {
+              ask: prot.ask || "Are you sure?",
+              detail: prot.detail || "",
+              what: `Set ${pcName(this._hass, id)} to ${pct}%`,
+              go: () => this._lightSetBri(id, pct),
+            };
+          }
+          this._last = null;
+          this._render();
+          return;
+        }
+
+        /* A click. Missing a control must do nothing, never something bigger —
+           a near-miss inside the row must not fall through to something else. */
+        if (prot) {
+          const st = this._hass.states[id];
+          this._guard = {
+            ask: prot.ask || "Are you sure?",
+            detail: prot.detail || "",
+            what: `Turn ${pcName(this._hass, id)} ${st && st.state === "on" ? "off" : "on"}`,
+            go: () => this._hass.callService("homeassistant", "toggle", { entity_id: id }),
+          };
+          this._last = null;
+          this._render();
+          return;
+        }
+        this._hass.callService("homeassistant", "toggle", { entity_id: id });
+      };
+
+      el.addEventListener("pointerup", finish);
+      el.addEventListener("pointercancel", () => {
+        if (start == null) return;
+        start = null;
+        this._dragging = false;
+        this._last = null;
+        this._render();
+      });
+      el.addEventListener("pointerleave", (e) => { if (start != null) finish(e); });
+
+      /* More-info without a mouse verb of its own. */
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        pcMoreInfo(this, el.dataset.light);
+      });
+    });
+  },
+});
+/* ============================================================================
+ * purdy-desk-card — Tier 3, the dock
+ *
+ * The bottom band is what you PRESS, plus the two readings that are pure
+ * ambience: room temperatures and how the server is doing.
+ *
+ * Everything here is deliberately one line tall. These are the surfaces that
+ * grew into whole pop-ups on the phone because a phone has one screen to spend;
+ * given a band across the bottom they are a strip of numbers and a row of
+ * tiles, and the depth stays one click away in a sheet rather than taking
+ * permanent height from the stage.
+ * ========================================================================== */
+
+Object.assign(PurdyDeskCard.prototype, {
+
+  _dockHtml() {
+    const zones = this._zone("dock").map((sec) => {
+      const body = this._dockSection(sec);
+      if (!body) return "";
+      return `<div class="pd-z pd-z-${psEsc(sec.type)}" style="flex:${sec.weight || 1}">
+          <span class="pd-lbl">${psEsc(sec.title || this._humanize(sec.type))}</span>
+          ${body}
+        </div>`;
+    }).join("");
+    const links = (this._config.links || []).map((d) => {
+      const attr = d.sheet ? `data-sheet="${psEsc(d.sheet)}"` : `data-nav="${psEsc(d.link || "")}"`;
+      /* `alert_when_faults` is a BADGE, not a destination. Treating the flag as
+         an action meant that with any fault raised — and the low-battery rule
+         means there almost always is one — the button stopped going where it
+         said it went. It only becomes an action for an entry with nothing of
+         its own to open. */
+      const faults = d.alert_when_faults ? this._faults().length : 0;
+      const dest = (d.sheet || d.link) ? attr : (d.alert_when_faults ? `data-sheet="alerts"` : "");
+      return `<button class="pd-link ${faults ? "alert" : ""}" type="button" ${dest}>
+          <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
+          ${faults ? `<i class="pd-badge">${faults}</i>` : ""}
+        </button>`;
+    }).join("");
+    return zones + (links ? `<div class="pd-z pd-z-links">${links}</div>` : "");
+  },
+
+  _dockSection(sec) {
+    const fn = {
+      rooms: () => this._dockRooms(sec),
+      quick: () => this._dockQuick(sec),
+      systems: () => this._dockSystems(sec),
+      people: () => this._stripSection(sec),
+    }[sec.type];
+    return fn ? fn() : "";
+  },
+
+  /* The room strip. Falls back to the climate section's room list when the
+     section carries none of its own — the same rooms written twice in config
+     is two lists to keep in step, and they would not stay in step. */
+  _dockRooms(sec) {
+    const h = this._hass;
+    const clim = this._section("climate") || {};
+    const rooms = (sec.rooms && sec.rooms.length) ? sec.rooms : (clim.rooms || []);
+    const out = (clim.outside || {});
+    const cells = [];
+    if (out.temp) {
+      const t = pcReading(h, out.temp);
+      const hu = pcReading(h, out.humidity);
+      cells.push(this._roomCell("Outside", t, hu, out.temp, true));
+    }
+    rooms.forEach((r) => {
+      cells.push(this._roomCell(r.name, pcReading(h, r.temp), pcReading(h, r.humidity), r.temp));
+    });
+    return cells.length ? `<div class="pd-rstrip">${cells.join("")}</div>` : "";
+  },
+
+  _roomCell(name, t, hu, id, accent) {
+    return `<div class="pd-rc ${accent ? "acc" : ""}" data-info="${psEsc(id || "")}" role="button" tabindex="0">
+        <span class="pd-rn">${psEsc(name)}</span>
+        <b>${t.ok && t.n != null ? t.n.toFixed(1) + "°" : "—"}</b>
+        <span class="pd-rh">${hu.ok && hu.n != null ? hu.n.toFixed(0) + "%" : ""}</span>
+      </div>`;
+  },
+
+  _dockQuick(sec) {
+    const h = this._hass;
+    const tiles = (sec.tiles || []).map((t, i) => {
+      const st = t.entity && h.states[t.entity];
+      const raw = st ? st.state : "";
+      const on = (t.on_when || ["on", "home", "playing", "cleaning"]).indexOf(raw) >= 0;
+      const alert = (t.alert_when || []).indexOf(raw) >= 0;
+      const vr = t.value_entity ? pcReading(h, t.value_entity) : null;
+      const value = vr
+        ? (vr.ok && vr.n != null ? Math.round(vr.n) + "%" : vr.ok ? this._humanize(vr.st.state) : "—")
+        : this._humanize(raw);
+      const bar = t.bar_entity ? pcReading(h, t.bar_entity) : null;
+      const barPct = bar && bar.ok && bar.n != null ? Math.max(0, Math.min(100, bar.n)) : null;
+      const warn = t.bar_warn_above != null && barPct != null && barPct > t.bar_warn_above;
+      return `<button class="pd-qt ${alert ? "alert" : on ? "on" : ""}" type="button" data-tile="${i}">
+          <ha-icon icon="${psEsc(t.icon || "mdi:toggle-switch")}"></ha-icon>
+          <div class="pd-qn">${psEsc(t.name || pcName(h, t.entity))}</div>
+          <div class="pd-qv">${psEsc(value || "")}</div>
+          ${barPct == null ? "" : `<span class="pd-qbar"><i style="width:${barPct.toFixed(0)}%;background:${
+            warn ? "var(--ps-warn)" : "var(--ps-cool)"}"></i></span>`}
+        </button>`;
+    }).join("");
+    return tiles ? `<div class="pd-qstrip">${tiles}</div>` : "";
+  },
+
+  /* One line per device group: its worst fault if it has one, otherwise its
+     headline meter. A group that is fine says so in three words and takes one
+     line; a group that is not says which. */
+  _dockSystems(sec) {
+    const h = this._hass;
+    const rows = (sec.devices || []).map((d) => {
+      const fired = (d.faults || []).filter((f) => {
+        const st = h.states[f.entity];
+        if (!st) return false;
+        if (f.state !== undefined) return st.state === f.state;
+        if (f.state_not !== undefined) return st.state !== f.state_not
+          && st.state !== "unavailable" && st.state !== "unknown";
+        return false;
+      });
+      const m = (d.meters || [])[0];
+      const r = m ? pcReading(h, m.entity) : null;
+      const pct = r && r.ok && r.n != null ? r.n : null;
+      const crit = m && m.critical_above != null && pct != null && pct > m.critical_above;
+      const warn = m && m.warn_above != null && pct != null && pct > m.warn_above;
+      const col = fired.length || crit ? "var(--ps-bad)" : warn ? "var(--ps-warn)" : "var(--ps-good)";
+      const chip = d.chip ? pcState(h, d.chip) : "";
+      return `<div class="pd-sysrow ${d.mode || d.sheet ? "tappable" : ""}" ${
+          d.sheet ? `data-sheet="${psEsc(d.sheet)}"` : d.link ? `data-nav="${psEsc(d.link)}"` : ""}>
+          <ha-icon icon="${psEsc(d.icon || "mdi:chip")}"></ha-icon>
+          <span class="pd-sn">${psEsc(d.name)}</span>
+          <span class="pd-sv">${fired.length
+            ? psEsc(fired[0].label + " " + (fired[0].detail || ""))
+            : psEsc(chip || (pct == null ? "—" : pct.toFixed(1) + "%"))}</span>
+          ${pct == null ? "" : `<span class="pd-meter"><i style="width:${
+            Math.max(0, Math.min(100, pct)).toFixed(0)}%;background:${col}"></i></span>`}
+        </div>`;
+    }).join("");
+    return rows || "";
+  },
+
+  _bindDock() {
+    this._each("[data-tile]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sec = this._zone("dock").find((s) => s.type === "quick")
+          || this._zone("stage").find((s) => s.type === "quick");
+        const t = ((sec && sec.tiles) || [])[Number(el.dataset.tile)];
+        if (!t) return;
+        /* `sheet` is our own action, so it is handled before pcAction — which
+           knows navigate/toggle/perform-action/more-info and rightly nothing
+           about this card's sheets. */
+        if (t.tap_action && t.tap_action.action === "sheet") {
+          this._sheet = t.tap_action.sheet;
+          this._last = null;
+          this._render();
+          return;
+        }
+        pcAction(this, this._hass, t.tap_action, t.entity);
+      });
+    });
+  },
+});
+/* ============================================================================
+ * purdy-desk-card — styles
+ *
+ * Kept whole and in source order, like the shell's. Splitting a sheet by
+ * section re-orders rules and quietly changes the cascade.
+ *
+ * Two rules govern this file:
+ *
+ *   1. Sizes, radii and surface tints come from the scales in PC_TOKENS. Pick a
+ *      step; do not invent one. The three desk-only steps below are declared as
+ *      tokens for the same reason — a desk is read from three feet rather than
+ *      one, so the display sizes genuinely differ, and the way to express that
+ *      is to extend the scale rather than to sprinkle loose pixels.
+ *
+ *   2. Exactly ONE property animates on this screen: the stage's
+ *      grid-template-columns, on a node the renderer never replaces. Every
+ *      other state change is a display swap. A transition on a patched node
+ *      re-runs from zero on every repaint.
+ *
+ * The palette is declared with the SHELL's variable names on purpose. The ring
+ * and sparkline helpers are borrowed verbatim from purdy-shell-card and write
+ * var(--ps-track) and var(--ps-warn) into their SVG; sharing the names is what
+ * lets those be one function instead of two.
+ * ========================================================================== */
+
+const PD_STYLES = `
+      :host {
+        ${PC_TOKENS}
+
+        --ps-text: #e8eef4;
+        --ps-muted: #8792a0;
+        /* The smallest text must not also be the faintest. #606b79 measures
+           3.6:1 on this ground — under the 4.5:1 floor — and it would colour
+           every uppercase micro label on the screen. This is ~4.9:1. */
+        --ps-dim: #7c8797;
+        --ps-cool: #4dd0e1;
+        --ps-heat: #ff9557;
+        --ps-good: #81c995;
+        --ps-warn: #f2c14e;
+        --ps-bad: #ef6a6a;
+        --ps-deep: #aa78ff;
+        --ps-light: #50a0ff;
+        --ps-track: rgba(255, 255, 255, 0.12);
+        --ps-hair: rgba(255, 255, 255, 0.075);
+        --ps-hair-soft: rgba(255, 255, 255, 0.045);
+
+        /* Desk display steps. Read at arm's length rather than at reading
+           distance, so the clock and the hero numbers sit above the shared
+           scale's top step rather than borrowing it. */
+        --pd-fs-clock: 34px;
+        --pd-fs-hero: 26px;
+        --pd-fs-big: 21px;
+
+        display: block;
+        position: relative;
+        /* Never wider than the view. The shell once carried a negative
+           horizontal margin to fight view padding and the whole page scrolled
+           sideways whenever a drag started. */
+        max-width: 100%;
+        overflow: hidden;
+        /* The desk is a fixed sheet: the page does not scroll, the panels do.
+           The offset is what the HA header, the view padding and any kiosk-mode
+           setting take off the top — which differs per install and is the first
+           thing that will need tuning, so it is the viewport_offset config key
+           rather than a number baked into the sheet. */
+        height: calc(100dvh - var(--pd-off, 88px));
+        min-height: 560px;
+        color: var(--ps-text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        border-radius: var(--pc-r-2xl);
+      }
+
+      * { box-sizing: border-box; }
+      button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+      button:disabled { opacity: .35; cursor: default; }
+      img { max-width: 100%; display: block; }
+
+      /* ---------------------------------------------------------- ground --*/
+
+      /* One gradient under everything. The melded look depends on there being
+         no per-panel backgrounds — twelve cards with a margin read as a list of
+         boxes however they are styled, because the boxes ARE the gaps. */
+      .pd-ground {
+        position: absolute; inset: 0; pointer-events: none;
+        border-radius: inherit;
+        background:
+          radial-gradient(95% 78% at 88% -14%, rgba(122, 86, 255, .40), transparent 62%),
+          radial-gradient(80% 70% at 4% 108%, rgba(26, 128, 142, .42), transparent 60%),
+          radial-gradient(60% 50% at 46% 46%, rgba(60, 44, 120, .30), transparent 70%),
+          linear-gradient(168deg, #0B0D16 0%, #080A12 55%, #06070E 100%);
+      }
+
+      /* One continuous glass sheet, subdivided by hairlines. */
+      .pd-sheet {
+        position: relative;
+        height: 100%;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        background: linear-gradient(180deg, rgba(255,255,255,.058), rgba(255,255,255,.028));
+        border: 1px solid var(--pc-edge);
+        border-radius: var(--pc-r-2xl);
+        overflow: hidden;
+        box-shadow: 0 30px 80px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.07);
+        backdrop-filter: blur(28px) saturate(1.25);
+        -webkit-backdrop-filter: blur(28px) saturate(1.25);
+      }
+
+      .pd-tier { display: flex; min-width: 0; }
+      .pd-tier + .pd-tier { border-top: 1px solid var(--ps-hair); }
+      .pd-t1, .pd-t3 { flex: 0 0 auto; }
+      .pd-t2 { min-height: 0; }
+
+      .pd-z {
+        padding: 12px 18px; min-width: 0;
+        display: flex; flex-direction: column; justify-content: center;
+      }
+      .pd-z + .pd-z { border-left: 1px solid var(--ps-hair-soft); }
+
+      /* ----------------------------------------------------------- atoms --*/
+
+      .pd-lbl {
+        font-size: var(--pc-fs-micro); letter-spacing: .14em; text-transform: uppercase;
+        color: var(--ps-dim); font-weight: 600; margin-bottom: 6px;
+      }
+      .pd-grow { flex: 1; min-width: 0; }
+      .pd-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pd-dimtext { font-size: var(--pc-fs-xs); color: var(--ps-dim); }
+      .pd-ico { width: 18px; height: 18px; display: block; flex: 0 0 auto; }
+      .pd-ico path, .pd-ico circle, .pd-ico rect, .pd-ico line, .pd-ico polyline {
+        fill: none; stroke: currentColor; stroke-width: 1.7;
+        stroke-linecap: round; stroke-linejoin: round;
+      }
+      ha-icon { --mdc-icon-size: 18px; flex: 0 0 auto; }
+
+      .pd-chip {
+        display: inline-flex; align-items: center; gap: 5px;
+        padding: 3px 9px; border-radius: var(--pc-r-pill);
+        font-size: var(--pc-fs-xs); font-weight: 600;
+        background: var(--pc-fill-2); color: var(--ps-muted);
+        font-variant-numeric: tabular-nums; white-space: nowrap;
+      }
+      .pd-chip.good { background: rgba(129,201,149,.16); color: var(--ps-good); }
+      .pd-chip.warn { background: rgba(242,193,78,.16); color: var(--ps-warn); }
+      .pd-chip.bad  { background: rgba(239,106,106,.16); color: var(--ps-bad); }
+      .pd-chip.cool { background: rgba(77,208,225,.15); color: var(--ps-cool); }
+      .pd-chip.heat { background: rgba(255,149,87,.15); color: var(--ps-heat); }
+      .pd-chip.deep { background: rgba(170,120,255,.17); color: var(--ps-deep); }
+      .pd-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+
+      .pd-mini-btn {
+        font-size: var(--pc-fs-xs); font-weight: 600; color: var(--ps-muted);
+        background: var(--pc-fill-2); border-radius: var(--pc-r-xs);
+        padding: 4px 10px; white-space: nowrap;
+      }
+      .pd-mini-btn:hover { background: var(--pc-fill-3); color: var(--ps-text); }
+      .pd-mini-btn.arm { background: rgba(239,106,106,.2); color: var(--ps-bad); }
+      .pd-note { font-size: var(--pc-fs-micro); color: var(--ps-dim); margin-top: 6px; }
+      .pd-empty { font-size: var(--pc-fs-sm); color: var(--ps-muted); padding: 6px 0; }
+
+      /* Focus has to be visible on a view driven by a keyboard as often as a
+         mouse — a desk view is the one place tabbing is normal. */
+      button:focus-visible, [tabindex]:focus-visible, input:focus-visible {
+        outline: 2px solid var(--ps-cool); outline-offset: 2px; border-radius: var(--pc-r-hair);
+      }
+
+      /* --------------------------------------------------- tier 1 · strip --*/
+
+      .pd-z-id { flex: 0 0 clamp(200px, 17%, 290px); }
+      .pd-z-id h2 {
+        margin: 0; font-size: var(--pc-fs-xl); font-weight: 640;
+        letter-spacing: -.024em; line-height: 1.15;
+      }
+      .pd-sub { font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 2px; }
+
+      .pd-z-clock { flex: 0 0 130px; align-items: center; text-align: center; }
+      .pd-time {
+        font-size: var(--pd-fs-clock); font-weight: 200; letter-spacing: -.035em;
+        font-variant-numeric: tabular-nums; line-height: 1;
+      }
+      .pd-mer {
+        font-size: var(--pc-fs-micro); letter-spacing: .15em; text-transform: uppercase;
+        color: var(--ps-dim); margin-top: 5px; font-weight: 600;
+      }
+
+      .pd-z-wx { flex: 0 0 clamp(190px, 15%, 250px); cursor: pointer; }
+      .pd-wxmain { display: flex; align-items: center; gap: 11px; }
+      .pd-wxmain ha-icon { --mdc-icon-size: 30px; color: var(--ps-cool); }
+      .pd-wxt {
+        font-size: var(--pd-fs-hero); font-weight: 600;
+        letter-spacing: -.025em; font-variant-numeric: tabular-nums; line-height: 1.1;
+      }
+      .pd-wxs { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
+      .pd-wxout {
+        display: flex; gap: 14px; margin-top: 6px;
+        font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums;
+      }
+      .pd-wxout b { color: var(--ps-text); font-weight: 600; }
+
+      .pd-z-hvac { flex: 1; }
+      .pd-hv { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+      .pd-hvbig {
+        font-size: var(--pd-fs-hero); font-weight: 600;
+        letter-spacing: -.025em; font-variant-numeric: tabular-nums; line-height: 1.1;
+      }
+      .pd-zpair { display: flex; gap: 6px; }
+      .pd-zc {
+        padding: 5px 10px; border-radius: var(--pc-r-xs); background: var(--pc-fill-1);
+        font-size: var(--pc-fs-xs); color: var(--ps-muted);
+        font-variant-numeric: tabular-nums; line-height: 1.3;
+      }
+      .pd-zc b { display: block; font-size: var(--pc-fs-md); color: var(--ps-text); font-weight: 650; }
+      .pd-zc.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
+      .pd-zc.on b { color: var(--ps-cool); }
+
+      .pd-z-sec { flex: 0 0 auto; }
+      .pd-ppl { display: flex; gap: 8px; }
+      .pd-pw {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 12px 6px 6px; border-radius: var(--pc-r-pill);
+        background: var(--pc-fill-1); cursor: pointer;
+      }
+      .pd-pw:hover { background: var(--pc-fill-2); }
+      .pd-av {
+        width: 27px; height: 27px; border-radius: 50%; background: var(--pc-fill-3);
+        display: grid; place-items: center;
+        font-size: var(--pc-fs-xs); font-weight: 700; color: var(--ps-muted); flex: 0 0 auto;
+      }
+      .pd-pw.home .pd-av { background: rgba(129,201,149,.2); color: var(--ps-good); }
+      .pd-pn { font-size: var(--pc-fs-sm); font-weight: 600; line-height: 1.15; }
+      .pd-pb { font-size: var(--pc-fs-micro); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .pd-pb.low { color: var(--ps-warn); }
+
+      .pd-z-alert { flex: 0 0 auto; justify-content: center; position: relative; }
+      .pd-pop {
+        position: absolute; top: calc(100% + 8px); right: 12px; width: 340px; z-index: 9;
+        background: rgba(20,23,32,.97); border: 1px solid var(--pc-edge);
+        border-radius: var(--pc-r-lg); padding: 10px 12px;
+        box-shadow: 0 24px 60px rgba(0,0,0,.6);
+        backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      }
+      .pd-ar { display: flex; align-items: center; gap: 9px; padding: 7px 0; }
+      .pd-ar + .pd-ar { border-top: 1px solid var(--ps-hair-soft); }
+      .pd-at { font-size: var(--pc-fs-sm); font-weight: 600; }
+      .pd-ad { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
+      .pd-sev { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; background: var(--ps-dim); }
+      .pd-sev.critical { background: var(--ps-bad); }
+      .pd-sev.warn { background: var(--ps-warn); }
+
+      /* --------------------------------------------------- tier 2 · stage --*/
+
+      .pd-stage {
+        display: grid; flex: 1; min-width: 0; min-height: 0;
+        /* THE one animated property on this screen. It is safe only because
+           #pd-stage is mounted once and never replaced — see _mount. */
+        transition: grid-template-columns .42s cubic-bezier(.4, 0, .2, 1);
+      }
+      .pd-panelwrap {
+        display: flex; flex-direction: column;
+        min-width: 0; min-height: 0; overflow: hidden;
+        padding: 13px 17px 15px;
+      }
+      .pd-panelwrap + .pd-panelwrap { border-left: 1px solid var(--ps-hair-soft); }
+      .pd-panel.is-min { padding-left: 12px; padding-right: 12px; }
+
+      .pd-ph {
+        display: flex; align-items: center; gap: 8px; width: 100%;
+        padding: 0 0 9px; text-align: left; flex: 0 0 auto;
+      }
+      .pd-ph.static { cursor: default; }
+      .pd-nm { font-size: var(--pc-fs-md); font-weight: 650; letter-spacing: -.005em; }
+      .pd-cv { margin-left: auto; color: var(--ps-dim); }
+      .pd-cv .pd-ico { width: 15px; height: 15px; }
+      .pd-panel.is-exp .pd-cv { color: var(--ps-cool); transform: rotate(90deg); }
+
+      /* The three faces. Display swaps only — never a height or opacity
+         animation, which would re-run on every repaint. */
+      .pd-mini { display: none; flex-direction: column; gap: 9px; min-height: 0; }
+      .pd-panel.is-min .pd-mini { display: flex; }
+      .pd-panel.is-min .pd-full { display: none; }
+      .pd-xtra { display: none; flex-direction: column; gap: 10px; }
+      .pd-panel.is-exp .pd-xtra { display: flex; }
+
+      .pd-pbody {
+        flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 11px;
+        /* The PAGE never scrolls; a panel that has more than fits does. */
+        overflow-y: auto; overflow-x: hidden;
+        scrollbar-width: thin; scrollbar-color: var(--pc-fill-3) transparent;
+      }
+      .pd-pbody::-webkit-scrollbar { width: 6px; }
+      .pd-pbody::-webkit-scrollbar-thumb { background: var(--pc-fill-3); border-radius: var(--pc-r-pill); }
+
+      .pd-mstat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+      .pd-mv {
+        font-size: var(--pd-fs-big); font-weight: 600; letter-spacing: -.028em;
+        font-variant-numeric: tabular-nums; line-height: 1.08;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pd-mv.sm { font-size: var(--pc-fs-md); }
+      .pd-mv small { font-size: var(--pc-fs-xs); font-weight: 500; color: var(--ps-muted); margin-left: 2px; }
+      .pd-mk {
+        font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
+        color: var(--ps-dim); font-weight: 600;
+      }
+
+      /* rings, shared markup with the shell */
+      .pd-ring { position: relative; flex: 0 0 auto; }
+      .pd-rv {
+        position: absolute; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; font-variant-numeric: tabular-nums;
+      }
+      .pd-rv b { font-size: var(--pd-fs-big); font-weight: 640; letter-spacing: -.025em; line-height: 1; }
+      .pd-rv small {
+        font-size: var(--pc-fs-micro); color: var(--ps-dim); margin-top: 3px;
+        letter-spacing: .06em; text-transform: uppercase; font-weight: 600;
+      }
+      /* The small modifier is DEFINED, not merely used. A nap ring asking for a
+         size that does not exist draws its number at the hero step inside a
+         54px ring and spills over the stroke. */
+      .pd-rv.sm b { font-size: var(--pc-fs-xs); }
+
+      /* climate */
+      .pd-cwrap { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+      .pd-steprow { display: flex; align-items: center; gap: 10px; }
+      .pd-step {
+        width: 30px; height: 30px; border-radius: 50%; background: var(--pc-fill-2);
+        display: grid; place-items: center; flex: 0 0 auto; position: relative;
+      }
+      .pd-step:hover:not(:disabled) { background: var(--pc-fill-3); }
+      .pd-step .pd-ico { width: 15px; height: 15px; }
+      .pd-goal { display: flex; align-items: baseline; gap: 6px; }
+      .pd-goal b { font-size: var(--pd-fs-big); font-weight: 650; font-variant-numeric: tabular-nums; }
+      .pd-goal span { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
+      .pd-cnote { font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 8px; line-height: 1.45; }
+
+      .pd-graph { position: relative; flex: 1 1 auto; min-height: 110px; display: flex; flex-direction: column; }
+      .pd-wavesvg { width: 100%; flex: 1; min-height: 60px; display: block; }
+      .pd-nohist {
+        font-size: var(--pc-fs-xs); color: var(--ps-dim);
+        display: grid; place-items: center; min-height: 60px; text-align: center;
+      }
+      .pd-axis { position: relative; height: 12px; }
+      .pd-axis span {
+        position: absolute; transform: translateX(-50%);
+        font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums;
+      }
+      .pd-glg {
+        display: flex; gap: 13px; align-items: center;
+        font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums;
+      }
+      .pd-glg i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+      .pd-glg b { color: var(--ps-text); font-weight: 600; margin-left: 3px; }
+      .pd-readout {
+        margin-left: auto; opacity: 0; color: var(--ps-text); font-weight: 600;
+        font-size: var(--pc-fs-xs); white-space: nowrap;
+      }
+      .pd-cross {
+        position: absolute; top: 0; bottom: 24px; width: 1px;
+        background: var(--ps-text); opacity: 0; pointer-events: none;
+      }
+
+      .pd-rmlist { display: flex; flex-direction: column; }
+      .pd-rml {
+        display: flex; align-items: center; gap: 10px; padding: 6px 0;
+        border-top: 1px solid var(--ps-hair-soft); font-size: var(--pc-fs-sm); cursor: pointer;
+      }
+      .pd-rmn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pd-spark { width: 56px; height: 18px; flex: 0 0 auto; opacity: .8; }
+      .pd-spark svg { width: 56px; height: 18px; display: block; }
+      .pd-rmv { font-weight: 650; font-variant-numeric: tabular-nums; }
+      .pd-rmh {
+        color: var(--ps-dim); font-size: var(--pc-fs-micro);
+        font-variant-numeric: tabular-nums; width: 42px; text-align: right;
+      }
+      .pd-chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
+      .pd-hold {
+        display: flex; align-items: center; gap: 9px; margin-top: 6px;
+        font-size: var(--pc-fs-xs); color: var(--ps-muted);
+      }
+      .pd-hold button { margin-left: auto; }
+
+      /* nursery */
+      .pd-jwrap { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+      .pd-naps { display: flex; gap: 10px; flex-wrap: wrap; }
+      .pd-nap { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+      .pd-napt { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
+      .pd-jstatus { font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 9px; line-height: 1.45; }
+
+      /* Both rails live in a box. They are plots with an axis, and a bare line
+         on the card ground does not read as one. */
+      .pd-railbox {
+        background: var(--pc-fill-1); border-radius: var(--pc-r-md);
+        padding: 9px 11px 7px; flex: 0 0 auto;
+      }
+      .pd-railhead, .pd-railfoot {
+        display: flex; justify-content: space-between; align-items: center;
+        font-size: var(--pc-fs-micro); color: var(--ps-dim);
+        font-variant-numeric: tabular-nums; letter-spacing: .1em; text-transform: uppercase;
+        font-weight: 600;
+      }
+      .pd-railfoot { margin-top: 5px; letter-spacing: 0; text-transform: none; }
+      .pd-rail {
+        position: relative; height: 26px; margin-top: 6px;
+        border-radius: var(--pc-r-hair); overflow: hidden; background: var(--pc-fill-1);
+      }
+      .pd-seg { position: absolute; top: 0; bottom: 0; display: block; }
+      .pd-seg.settle { background: rgba(170,120,255,.45); }
+      .pd-seg.sleep { background: rgba(80,160,255,.55); }
+      .pd-tick {
+        position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+        background: var(--ps-warn); display: block;
+      }
+      .pd-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ps-hair); display: block; }
+
+      .pd-sub2 {
+        font-size: var(--pc-fs-micro); letter-spacing: .12em; text-transform: uppercase;
+        color: var(--ps-dim); font-weight: 600; margin-top: 4px;
+      }
+      .pd-jr {
+        display: flex; align-items: center; gap: 9px; background: var(--pc-fill-1);
+        border-radius: var(--pc-r-xs); padding: 6px 10px;
+        font-size: var(--pc-fs-xs); font-variant-numeric: tabular-nums;
+      }
+      .pd-jr .pd-l { color: var(--ps-muted); flex: 1; min-width: 0; }
+      .pd-jr .pd-v { font-weight: 640; }
+      .pd-jr .pd-c { color: var(--ps-dim); text-align: right; max-width: 46%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      /* music */
+      .pd-now { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; }
+      .pd-art {
+        width: 54px; height: 54px; border-radius: var(--pc-r-md); background: var(--pc-fill-2);
+        display: grid; place-items: center; color: var(--ps-dim); flex: 0 0 auto; overflow: hidden;
+      }
+      .pd-art img { width: 100%; height: 100%; object-fit: cover; }
+      .pd-nt { font-size: var(--pc-fs-lg); font-weight: 640; letter-spacing: -.012em; }
+      .pd-ns { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
+      .pd-tbs { display: flex; gap: 4px; align-items: center; }
+      .pd-tb {
+        width: 32px; height: 32px; border-radius: 50%;
+        display: grid; place-items: center; color: var(--ps-text);
+      }
+      .pd-tb:hover:not(:disabled) { background: var(--pc-fill-2); }
+      .pd-tb.pp { background: var(--pc-fill-2); width: 36px; height: 36px; }
+      .pd-tb .pd-ico { width: 17px; height: 17px; }
+      .pd-mroom { display: flex; flex-wrap: wrap; gap: 5px; }
+      .pd-mr {
+        padding: 6px 10px; border-radius: var(--pc-r-xs); background: var(--pc-fill-1);
+        color: var(--ps-muted); font-size: var(--pc-fs-xs); font-weight: 600;
+      }
+      .pd-mr:hover { background: var(--pc-fill-2); }
+      .pd-mr.sel { background: var(--pc-fill-3); color: var(--ps-text); }
+      .pd-mr.live { color: var(--ps-cool); }
+      .pd-pres { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+      .pd-pr {
+        padding: 8px 10px; border-radius: var(--pc-r-sm); background: var(--pc-fill-1);
+        font-size: var(--pc-fs-xs); font-weight: 600;
+        display: flex; align-items: center; gap: 7px; min-width: 0; text-align: left;
+      }
+      .pd-pr:hover { background: var(--pc-fill-2); }
+      .pd-pr ha-icon { --mdc-icon-size: 15px; color: var(--ps-cool); }
+      .pd-search {
+        width: 100%; background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+        border-radius: var(--pc-r-sm); padding: 8px 11px; color: var(--ps-text);
+        /* 16px exactly: below that iOS Safari zooms the page on focus and never
+           zooms back. A desk view still gets opened on a tablet. */
+        font-size: 16px;
+      }
+      .pd-mtypes { display: flex; gap: 5px; flex-wrap: wrap; }
+      .pd-mt {
+        font-size: var(--pc-fs-micro); font-weight: 600; color: var(--ps-dim);
+        background: var(--pc-fill-1); border-radius: var(--pc-r-pill); padding: 4px 9px;
+      }
+      .pd-mt.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
+      .pd-res { display: flex; flex-direction: column; gap: 1px; }
+      .pd-mi, .pd-npr { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
+      .pd-npr { cursor: pointer; border-radius: var(--pc-r-xs); }
+      .pd-npr:hover { background: var(--pc-fill-1); }
+      .pd-th {
+        width: 34px; height: 34px; border-radius: var(--pc-r-xs); background: var(--pc-fill-2);
+        display: grid; place-items: center; color: var(--ps-dim); flex: 0 0 auto; overflow: hidden;
+      }
+      .pd-th img { width: 100%; height: 100%; object-fit: cover; }
+      .pd-mi .pd-n, .pd-npr .pd-n { font-size: var(--pc-fs-sm); font-weight: 600; }
+      .pd-mi .pd-s, .pd-npr .pd-s { font-size: var(--pc-fs-micro); color: var(--ps-dim); }
+
+      /* calendar */
+      .pd-cday { display: flex; gap: 10px; padding: 6px 0; }
+      .pd-cday + .pd-cday { border-top: 1px solid var(--ps-hair-soft); }
+      .pd-cdt { flex: 0 0 32px; text-align: center; }
+      .pd-dw {
+        font-size: var(--pc-fs-micro); letter-spacing: .11em; text-transform: uppercase;
+        color: var(--ps-dim); font-weight: 600;
+      }
+      .pd-dn { font-size: var(--pc-fs-lg); font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; }
+      .pd-cdt.today .pd-dn { color: var(--ps-cool); }
+      .pd-cev { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; justify-content: center; }
+      .pd-ev { display: flex; align-items: center; gap: 7px; font-size: var(--pc-fs-xs); }
+      .pd-ev i { width: 3px; height: 13px; border-radius: 2px; flex: 0 0 auto; }
+      .pd-et { margin-left: auto; color: var(--ps-dim); font-size: var(--pc-fs-micro);
+        font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .pd-ev.none { color: var(--ps-dim); }
+
+      /* lights */
+      .pd-moods { display: flex; gap: 6px; flex-wrap: wrap; }
+      .pd-mood {
+        display: flex; align-items: center; gap: 6px; padding: 7px 11px;
+        border-radius: var(--pc-r-sm); background: var(--pc-fill-1);
+        font-size: var(--pc-fs-xs); font-weight: 600; color: var(--ps-muted); min-width: 0;
+      }
+      .pd-mood:hover { background: var(--pc-fill-2); color: var(--ps-text); }
+      .pd-mood ha-icon { --mdc-icon-size: 15px; }
+      .pd-lights { display: flex; flex-direction: column; gap: 4px; }
+      .pd-lrow {
+        position: relative; display: flex; align-items: center; gap: 10px;
+        padding: 10px 12px; border-radius: var(--pc-r-sm);
+        background: var(--pc-fill-1); overflow: hidden;
+        cursor: pointer; touch-action: pan-y; user-select: none;
+      }
+      /* The glow IS the brightness: it starts at the bulb and falls off across
+         the row. No fill, no track — an off light is dark, not 0%. */
+      .pd-lglow {
+        position: absolute; inset: 0; pointer-events: none; opacity: 0;
+        background: linear-gradient(90deg,
+          hsl(var(--l-hue) var(--l-sat) 62% / .30) 0%,
+          hsl(var(--l-hue) var(--l-sat) 62% / .10) calc(var(--l-reach) * .6),
+          transparent var(--l-reach));
+      }
+      .pd-lrow.on .pd-lglow { opacity: 1; }
+      .pd-lrow.on { background: var(--pc-fill-2); }
+      .pd-lico { color: var(--ps-dim); position: relative; }
+      .pd-lrow.on .pd-lico { color: hsl(var(--l-hue) var(--l-sat) 72%); }
+      .pd-ln { font-size: var(--pc-fs-sm); font-weight: 600; position: relative; }
+      .pd-ls { font-size: var(--pc-fs-micro); color: var(--ps-dim); position: relative; }
+      .pd-lclu { display: flex; gap: 3px; position: relative; }
+      .pd-mdot, .pd-orb {
+        width: 5px; height: 5px; border-radius: 50%; display: block;
+        background: var(--pc-fill-3);
+      }
+      .pd-orb { width: 8px; height: 8px; }
+      .pd-mdot.lit, .pd-orb.lit {
+        background: hsl(var(--l-hue) var(--l-sat) 70%);
+        box-shadow: 0 0 6px hsl(var(--l-hue) var(--l-sat) 70% / .8);
+      }
+      .pd-lpct {
+        font-size: var(--pc-fs-xs); font-weight: 650; color: var(--ps-muted);
+        font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; position: relative;
+      }
+      .pd-lrow.on .pd-lpct { color: var(--ps-text); }
+      .pd-lrow.off-line { opacity: .5; }
+      .pd-guard {
+        display: flex; align-items: center; gap: 9px; padding: 9px 11px;
+        border-radius: var(--pc-r-sm); background: rgba(242,193,78,.12);
+        font-size: var(--pc-fs-xs); flex-wrap: wrap;
+      }
+      .pd-gq b { display: block; color: var(--ps-warn); font-weight: 650; }
+      .pd-gq span { color: var(--ps-muted); }
+      .pd-grow2 { flex: 1; min-width: 0; color: var(--ps-text); font-weight: 600; }
+
+      /* ---------------------------------------------------- tier 3 · dock --*/
+
+      .pd-z-rooms { flex: 1.5; }
+      .pd-rstrip { display: flex; gap: 7px; }
+      .pd-rc {
+        flex: 1; background: var(--pc-fill-1); border-radius: var(--pc-r-sm);
+        padding: 6px 10px; min-width: 0; cursor: pointer;
+      }
+      .pd-rc:hover { background: var(--pc-fill-2); }
+      .pd-rc.acc { background: rgba(77,208,225,.11); }
+      .pd-rn {
+        display: block; font-size: var(--pc-fs-micro); letter-spacing: .1em;
+        text-transform: uppercase; color: var(--ps-dim); font-weight: 600;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pd-rc b {
+        display: block; font-size: var(--pc-fs-lg); font-weight: 650;
+        font-variant-numeric: tabular-nums; letter-spacing: -.025em; margin-top: 2px;
+      }
+      .pd-rh { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
+
+      .pd-z-quick { flex: 1.2; }
+      .pd-qstrip { display: flex; gap: 7px; }
+      .pd-qt {
+        flex: 1; background: var(--pc-fill-1); border-radius: var(--pc-r-sm);
+        padding: 7px 8px 9px; display: flex; flex-direction: column; gap: 4px;
+        align-items: flex-start; min-width: 0; position: relative; overflow: hidden; text-align: left;
+      }
+      .pd-qt:hover { background: var(--pc-fill-2); }
+      .pd-qt ha-icon { --mdc-icon-size: 19px; color: var(--ps-dim); }
+      .pd-qn {
+        font-size: var(--pc-fs-micro); font-weight: 600; line-height: 1.2;
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pd-qv {
+        font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums;
+        max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pd-qt.on { background: rgba(242,193,78,.14); }
+      .pd-qt.on ha-icon, .pd-qt.on .pd-qn { color: var(--ps-warn); }
+      .pd-qt.alert { background: rgba(239,106,106,.16); }
+      .pd-qt.alert ha-icon, .pd-qt.alert .pd-qn { color: var(--ps-bad); }
+      .pd-qbar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--pc-fill-2); }
+      .pd-qbar i { display: block; height: 100%; }
+
+      .pd-z-systems { flex: .95; }
+      .pd-sysrow { display: flex; align-items: center; gap: 9px; font-size: var(--pc-fs-xs); padding: 3px 0; }
+      .pd-sysrow.tappable { cursor: pointer; }
+      .pd-sysrow ha-icon { --mdc-icon-size: 15px; color: var(--ps-dim); }
+      .pd-sn { color: var(--ps-muted); }
+      .pd-sv {
+        margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600;
+        max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .pd-meter {
+        width: 52px; height: 3px; border-radius: 2px; background: var(--pc-fill-2);
+        overflow: hidden; flex: 0 0 auto;
+      }
+      .pd-meter i { display: block; height: 100%; }
+
+      .pd-z-links { flex: 0 0 auto; flex-direction: row; align-items: center; gap: 6px; }
+      .pd-link {
+        display: flex; flex-direction: column; align-items: center; gap: 3px;
+        padding: 8px 12px; border-radius: var(--pc-r-sm); position: relative;
+        font-size: var(--pc-fs-micro); font-weight: 600; color: var(--ps-muted);
+      }
+      .pd-link:hover { background: var(--pc-fill-1); color: var(--ps-text); }
+      .pd-link ha-icon { --mdc-icon-size: 20px; }
+      .pd-badge {
+        position: absolute; top: 4px; right: 6px; min-width: 15px; height: 15px;
+        border-radius: var(--pc-r-pill); background: var(--ps-bad); color: #0b0d13;
+        font-size: var(--pc-fs-micro); font-weight: 700; font-style: normal;
+        display: grid; place-items: center; padding: 0 4px;
+      }
+
+      /* --------------------------------------------------------- sheets ---*/
+
+      .pd-scrim {
+        position: absolute; inset: 0; z-index: 30;
+        background: rgba(5, 6, 10, .55);
+        backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+      }
+      .pd-sheet-panel {
+        position: absolute; z-index: 31; top: 5%; bottom: 5%; right: 3%;
+        width: min(640px, 62%);
+        display: flex; flex-direction: column;
+        background: rgba(12, 14, 21, .94);
+        border: 1px solid var(--pc-edge); border-radius: var(--pc-r-xl);
+        box-shadow: 0 40px 90px -20px rgba(0,0,0,.8);
+        backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+        overflow: hidden;
+      }
+      .pd-sheet-head {
+        display: flex; align-items: center; gap: 10px;
+        padding: 13px 16px; border-bottom: 1px solid var(--ps-hair); flex: 0 0 auto;
+      }
+      /* The chrome names itself, which is why the hosted card's own title is
+         blanked — left set it printed twice. */
+      .pd-sheet-title { font-size: var(--pc-fs-md); font-weight: 650; flex: 1; min-width: 0; }
+      .pd-x { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--ps-muted); }
+      .pd-x:hover { background: var(--pc-fill-2); color: var(--ps-text); }
+      .pd-sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px; }
+      .pd-host { min-height: 100%; }
+      /* A section hosted in a sheet has no folded or expanded state — there is
+         nothing beside it to fold, so it shows everything it has. */
+      .pd-sheet-body .pd-xtra { display: flex; }
+      .pd-sheet-body .pd-pbody { overflow: visible; }
+
+      @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+      /* How it folds down. Bands merge rather than reflow, so the reading order
+         survives at every width. Below 1100 the strip wraps and the stage
+         becomes two rows of two; the phone view exists for the phone case and
+         this never tries to become it. */
+      @media (max-width: 1400px) {
+        .pd-z-clock { flex: 0 0 108px; }
+        .pd-z-wx { flex: 0 0 180px; }
+      }
+      @media (max-width: 1180px) {
+        :host { height: auto; min-height: 0; }
+        .pd-sheet { height: auto; }
+        .pd-t1 { flex-wrap: wrap; }
+        .pd-z-id { flex: 1 1 100%; }
+        .pd-stage { grid-template-columns: 1fr 1fr !important; }
+        .pd-panelwrap:nth-child(n + 3) { border-top: 1px solid var(--ps-hair-soft); }
+        .pd-panelwrap:nth-child(odd) { border-left: 0; }
+        .pd-t3 { flex-wrap: wrap; }
+        .pd-sheet-panel { width: 92%; right: 4%; }
+      }
+      @media (max-width: 820px) {
+        .pd-stage { grid-template-columns: 1fr !important; }
+        .pd-panelwrap { border-left: 0 !important; border-top: 1px solid var(--ps-hair-soft); }
+      }
+    `;
 pcDefine("climate-panel-card", ClimatePanelCard);
 pcDefine("sleep-panel-card", SleepPanelCard);
 pcDefine("purdy-header-card", PurdyHeaderCard);
@@ -12012,6 +14885,7 @@ pcDefine("purdy-remote-card", PurdyRemoteCard);
 pcDefine("purdy-devices-card", PurdyDevicesCard);
 pcDefine("purdy-music-card", PurdyMusicCard);
 pcDefine("purdy-shell-card", PurdyShellCard);
+pcDefine("purdy-desk-card", PurdyDeskCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -12038,7 +14912,8 @@ window.customCards.push(
   { type: "purdy-remote-card", name: "Purdy Remote Card", description: "Android TV remote with a device selector, brand app grid and circular d-pad.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-devices-card", name: "Purdy Devices Card", description: "Collapsible device groups with summary lines; faults stay visible while collapsed.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-music-card", name: "Purdy Music Card", description: "Music Assistant now-playing with transport, room switching and playlist presets. Set compact: true for the self-hiding home-screen headline.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
-  { type: "purdy-shell-card", name: "Purdy Shell Card", description: "The whole phone view as one element: gradient ground, one glass column of expanding sections, and a fixed dock with a now-playing bar.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
+  { type: "purdy-shell-card", name: "Purdy Shell Card", description: "The whole phone view as one element: gradient ground, one glass column of expanding sections, and a fixed dock with a now-playing bar.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-desk-card", name: "Purdy Desk Card", description: "The whole desktop view as one element: one glass sheet on one gradient, a status strip, a stage of panels that expand sideways, and a dock. Same section config as the shell.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
 );
 
 console.info(
