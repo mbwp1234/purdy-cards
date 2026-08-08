@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.46.1";
+const PC_VERSION = "1.46.2";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -10188,6 +10188,25 @@ function psShortDate(v) {
   return new Date(t).toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
+/* Every disk publishes its temperature as an ATTRIBUTE on its health sensor
+   ("37.0 °C"), and only one of them also has a dedicated temperature entity —
+   which HA has unit-converted to °F. Reading only the entity gave one disk a
+   temperature and the rest none; reading only the attribute puts °C in a card
+   where every other temperature is °F. So: parse both, and convert to whatever
+   unit the dedicated sensors use, so the column is one unit or no unit. */
+function psTempAttr(st) {
+  const raw = st && st.attributes && st.attributes.temperature;
+  if (!raw) return null;
+  const m = /(-?[\d.]+)\s*°?\s*([CF])/i.exec(String(raw));
+  if (!m) return null;
+  return { v: parseFloat(m[1]), u: m[2].toUpperCase() };
+}
+
+function psConvTemp(t, to) {
+  if (!t || !to || t.u === to) return t ? t.v : null;
+  return to === "F" ? t.v * 9 / 5 + 32 : (t.v - 32) * 5 / 9;
+}
+
 /* Bytes-ish text straight off the integration ("7.3 TB") is already formatted,
    so this only exists for the numbers we compute ourselves. */
 function psPct(v) {
@@ -10332,8 +10351,11 @@ Object.assign(PurdyShellCard.prototype, {
         used: usage ? usage.attributes.used_size : null,
         total: usage ? usage.attributes.total_size : null,
         role: usage ? usage.attributes.role : null,
-        tempF: temp ? parseFloat(temp.state) : null,
-        tempUnit: temp ? temp.attributes.unit_of_measurement : null,
+        /* The dedicated entity where there is one (HA has converted it to the
+           user's unit); the health sensor's own attribute otherwise. */
+        temp: temp ? parseFloat(temp.state) : null,
+        tempUnit: temp ? String(temp.attributes.unit_of_measurement || "").replace("°", "") : null,
+        tempAttr: psTempAttr(h.states[d.id]),
       };
     });
   },
@@ -10346,7 +10368,13 @@ Object.assign(PurdyShellCard.prototype, {
     const esc = pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const h = this._hass;
     return psDiscover(h, new RegExp(`^${esc}(.+)_usage$`))
-      .map((x) => ({ id: x.id, name: x.key.replace(/_/g, " "), v: pcNum(h, x.id) }))
+      /* The entity id has been slugified ("appdatabackups", "mslady_drive");
+         the integration keeps the real name in an attribute. */
+      .map((x) => ({
+        id: x.id,
+        name: (h.states[x.id] && h.states[x.id].attributes.share_name) || x.key.replace(/_/g, " "),
+        v: pcNum(h, x.id),
+      }))
       .filter((x) => x.v != null)
       .sort((a, b) => b.v - a.v);
   },
@@ -10484,6 +10512,17 @@ Object.assign(PurdyShellCard.prototype, {
   /* A meter that says what it is above a full-width bar. The 54px inline bar
      the Systems section uses is right for a row in a list of other things and
      wrong for a page whose subject IS the fill. */
+  /* "84.1%" of what? Nearly every one of these sensors carries the answer in
+     its attributes, so the sub-line is derived rather than typed — a figure
+     written into config is one that goes stale silently. */
+  _sySizes(entity) {
+    const st = this._hass.states[entity];
+    const a = st ? st.attributes : {};
+    if (a.used_size && a.total_size) return `${a.used_size} of ${a.total_size}`;
+    if (a.ram_used && a.ram_total) return `${a.ram_used} of ${a.ram_total}`;
+    return "";
+  },
+
   _syMeter(label, entity, opts) {
     const o = opts || {};
     const v = pcNum(this._hass, entity);
@@ -10491,8 +10530,9 @@ Object.assign(PurdyShellCard.prototype, {
     const crit = o.crit == null ? 95 : o.crit;
     const cls = v == null ? "" : v >= crit ? "bad" : v >= warn ? "warn" : "good";
     const p = v == null ? 0 : Math.max(0, Math.min(100, v));
+    const sub = o.sub || this._sySizes(entity);
     return `<div class="ps-syb" data-info="${psEsc(entity || "")}">
-        <span class="ps-sybk">${psEsc(label)}${o.sub ? ` <i>${psEsc(o.sub)}</i>` : ""}</span>
+        <span class="ps-sybk">${psEsc(label)}${sub ? ` <i>${psEsc(sub)}</i>` : ""}</span>
         <span class="ps-sybv ${cls}">${psPct(v)}</span>
         <span class="ps-sybar"><i class="${cls}" style="width:${p.toFixed(1)}%"></i></span>
       </div>`;
@@ -10548,9 +10588,11 @@ Object.assign(PurdyShellCard.prototype, {
     const cells = (s.stats || []).map((x) => {
       const v = pcNum(h, x.entity);
       const raw = pcState(h, x.entity);
+      /* CPU at 10.7% rounded to 11% throws away the only interesting digit;
+         a fan at 85% does not need one. `digits` per stat, default none. */
       const txt = v == null
-        ? psEsc(raw || "—")
-        : `${x.round === false ? v : Math.round(v)}${x.unit ? `<small>${psEsc(x.unit)}</small>` : ""}`;
+        ? psEsc(raw || "\u2014")
+        : psFig(v, x.digits == null ? 0 : x.digits, x.unit);
       return this._syCell(x.label, txt, "", x.entity);
     }).join("");
 
@@ -10639,6 +10681,12 @@ Object.assign(PurdyShellCard.prototype, {
 
     const matched = all.filter((c) => !q || c.name.toLowerCase().indexOf(q) >= 0
       || c.image.toLowerCase().indexOf(q) >= 0);
+    /* Discovery sorts by entity id, which is neither the displayed name nor
+       anything the eye can use: "Agent Zero, Avidemux, Jellyfin, Crafty" is
+       what `binhex_jellyfin` sorting between `avidemux` and `crafty_4` looks
+       like. Running first — that is the question the page answers — then by
+       what the row actually says. */
+    matched.sort((a, b) => (b.on - a.on) || a.name.localeCompare(b.name));
     const shown = filter === "running" ? matched.filter((c) => c.on)
       : filter === "stopped" ? matched.filter((c) => !c.on)
         : filter === "vms" ? [] : matched;
@@ -10710,6 +10758,13 @@ Object.assign(PurdyShellCard.prototype, {
     const pct = pcNum(h, st.array);
     const text = pcState(h, st.text);
     const disks = this._syDisks();
+    /* One unit for the whole column, taken from whichever disks have a real
+       temperature entity. With none, the raw attribute unit stands. */
+    const tUnit = (disks.find((d) => d.tempUnit) || {}).tempUnit
+      || ((disks.find((d) => d.tempAttr) || {}).tempAttr || {}).u || null;
+    disks.forEach((d) => {
+      d.tempShow = d.temp != null ? d.temp : psConvTemp(d.tempAttr, tUnit);
+    });
     const shares = this._syShares();
     const showShares = !!this._syShares_open;
 
@@ -10748,12 +10803,13 @@ Object.assign(PurdyShellCard.prototype, {
         return `<div class="ps-sw" data-info="${psEsc(d.healthId)}">
             <ha-icon icon="mdi:shield-check-outline"></ha-icon>
             <span class="ps-grow"><span class="ps-trunc">${psEsc(d.key)}</span>
-            <span class="ps-symeta">no usage reported</span></span>
+            <span class="ps-symeta">${d.tempShow != null
+              ? `${Math.round(d.tempShow)}\u00B0${tUnit || ""} · ` : ""}no usage reported</span></span>
             <span class="ps-chip ${ok ? "good" : "bad"}">${psEsc(d.health)}</span></div>`;
       }
       const meta = [
         d.used && d.total ? `${d.used} of ${d.total}` : null,
-        d.tempF != null ? `${Math.round(d.tempF)}${d.tempUnit || ""}` : null,
+        d.tempShow != null ? `${Math.round(d.tempShow)}°${tUnit || ""}` : null,
         psEsc(d.health),
       ].filter(Boolean).join(" · ");
       return this._syMeter(d.key, d.usageId, {
@@ -10914,6 +10970,12 @@ Object.assign(PurdyShellCard.prototype, {
     ];
     const filter = this._synf || "all";
 
+    /* "Notice [PURDYNAS] - Version update 2026.08.07.1706" spends its first
+       twenty characters saying what the dot beside it already says, on every
+       row, and pushes the actual subject off the end of the line. */
+    const subject = (x) => String(x.subject || "Notification")
+      .replace(/^\s*(Notice|Alert|Warning|Info)\s*\[[^\]]*\]\s*-\s*/i, "");
+
     const rank = (x) => {
       const i = String(x.importance || "").toLowerCase();
       return i === "alert" ? "alert" : i === "warning" ? "warning" : "info";
@@ -10924,7 +10986,7 @@ Object.assign(PurdyShellCard.prototype, {
         const r = rank(x);
         return `<div class="ps-syn">
             <span class="ps-dotc ${r === "alert" ? "bad" : r === "warning" ? "warn" : "info"}"></span>
-            <span class="ps-grow"><span class="ps-synt">${psEsc(x.subject || "Notification")}</span>
+            <span class="ps-grow"><span class="ps-synt">${psEsc(subject(x))}</span>
             <span class="ps-symeta">${psEsc((x.importance || "info"))}</span></span>
           </div>`;
       }).join("");

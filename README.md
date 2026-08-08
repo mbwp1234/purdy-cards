@@ -495,3 +495,14 @@ A slot with **no disk in it** publishes a health of `DISK_NP_DSBL` and no usage.
 - **`pcNum(...) ?? 0` is banned here too.** A sensor that is not reporting and a sensor reporting zero are different facts; every figure goes through a helper that returns a dash.
 
 A device row in a `systems` section takes `mode: systems` to become the other way in. It drops its chevron when it does — a stub of the five pages beside the real thing is two answers to one question.
+
+### Six things only a render against live data caught
+
+The pages were covered by tests and by a fixture modelled on the real entities, and all six of these still shipped. Worth remembering that the fixture is a guess about the data and the data is not.
+
+- **Every disk publishes its temperature as an attribute on its *health* sensor**; only one also had a dedicated temperature entity, which HA had converted to °F. Reading the entity alone gave one disk a temperature and the rest none; reading the attribute alone put °C in a card where every other temperature is °F. Both are read, and converted to one unit — a column is one unit or no unit.
+- **A parity disk is installed and reports no usage.** `DISK_NP_DSBL` is *no disk*; those two were one flag, so the working parity drive rendered as an empty slot.
+- **Discovery sorts by entity id**, which is neither the name shown nor anything the eye can use: `binhex_jellyfin` sorts between `avidemux` and `crafty_4`, so Jellyfin came third in a list headed "Agent Zero, Avidemux". Running first, then by displayed name.
+- **A share's entity id is slugified** (`appdatabackups`, `mslady_drive`); the real name is in `share_name`.
+- **"84.1%" of what?** Nearly every one of these sensors carries `used_size`/`total_size` (or `ram_used`/`ram_total`), so the meter sub-line is derived. A size typed into config is one that goes stale silently.
+- **`Notice [HOSTNAME] - `** opens every notification subject, saying what the severity dot already says and pushing the actual subject off the end of the line.

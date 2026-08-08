@@ -3608,16 +3608,16 @@ const sysHass = { states: {
   'switch.purdynas_container_pihole': num('on', { friendly_name: 'PurdyNAS Container pihole' }),
   'switch.purdynas_container_ollama': num('off', { friendly_name: 'PurdyNAS Container ollama' }),
   'switch.purdynas_vm_home_assistant': num('on', { friendly_name: 'PurdyNAS VM Home Assistant' }),
-  'sensor.purdynas_disk_disk1_health': num('PASSED'),
+  'sensor.purdynas_disk_disk1_health': num('PASSED', { temperature: '37.0 °C' }),
   'sensor.purdynas_disk_disk1_usage': num(92.8, { used_size: '6.7 TB', total_size: '7.3 TB', role: 'data' }),
-  'sensor.purdynas_disk_disk2_health': num('PASSED'),
+  'sensor.purdynas_disk_disk2_health': num('PASSED', { temperature: '31.0 °C' }),
   'sensor.purdynas_disk_disk2_usage': num(50.0, { role: 'data' }),
   'sensor.purdynas_disk_disk2_temperature': num(31, { unit_of_measurement: '°C' }),
-  'sensor.purdynas_disk_parity_health': num('PASSED'),
+  'sensor.purdynas_disk_parity_health': num('PASSED', { temperature: '38.0 °C' }),
   'sensor.purdynas_disk_parity2_health': num('DISK_NP_DSBL'),
   'sensor.purdynas_flash_usage': num(1.7),
-  'sensor.purdynas_share_appdata_usage': num(84.1),
-  'sensor.purdynas_share_isos_usage': num(12.0),
+  'sensor.purdynas_share_appdata_usage': num(84.1, { share_name: 'appdata' }),
+  'sensor.purdynas_share_isos_usage': num(12.0, { share_name: 'isos' }),
   'sensor.purdynas_notifications': num(51, { unread_count: 51, recent_notifications: [
     { subject: 'Disk 1 is low on space (93%)', importance: 'alert' },
     { subject: 'Version update 2026.08.07', importance: 'normal' },
@@ -3688,12 +3688,58 @@ check('the pools are not swept into the array disk list', (() => {
   return !/cache/.test(arr);
 })());
 check('a real disk is present', (dsk.find((d) => d.key === 'disk1') || {}).present === true);
-check('a disk temperature is picked up only where it exists',
-  (dsk.find((d) => d.key === 'disk2') || {}).tempF === 31 &&
-  (dsk.find((d) => d.key === 'disk1') || {}).tempF === null);
+/* Every disk publishes its temperature as an attribute on its health sensor;
+   only one also has a dedicated entity, which HA has converted to °F. Reading
+   only the entity gave one disk a temperature and the rest none. */
+check('a disk temperature comes from the dedicated entity where there is one',
+  (dsk.find((d) => d.key === 'disk2') || {}).temp === 31);
+check('a disk with no temperature entity still has its health attribute',
+  ((dsk.find((d) => d.key === 'disk1') || {}).tempAttr || {}).v === 37);
+check('the temperature column is one unit, not a mix', (() => {
+  const p2 = new SH();
+  p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  /* disk2's entity is °F; every other disk only has a °C attribute. Rendering
+     both raw would put 88°F next to 37°C in the same column. */
+  p2._hass = { states: { ...sysHass.states,
+    'sensor.purdynas_disk_disk2_temperature': num(87.8, { unit_of_measurement: '°F' }),
+    'sensor.purdynas_disk_disk1_health': num('PASSED', { temperature: '37.0 °C' }) } };
+  const out = p2._syStorage(SRV);
+  return /99°F/.test(out) && !/37°C/.test(out);   // 37°C === 98.6°F
+})());
 
 check('shares are discovered and sorted by fullness',
-  sy._syShares().map((s) => s.name).join(',') === 'appdata,isos');
+  sy._syShares().map((s) => s.v).join(',') === '84.1,12');
+/* The entity id is slugified ("appdatabackups"); the real name is in an
+   attribute, and it is the only place the capitals and hyphens survive. */
+check('a share shows its real name, not its slug', (() => {
+  const p2 = new SH();
+  p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p2._hass = { states: { ...sysHass.states,
+    'sensor.purdynas_share_appdatabackups_usage': num(84.1, { share_name: 'AppDataBackups' }) } };
+  return p2._syShares().some((x) => x.name === 'AppDataBackups');
+})());
+
+/* Discovery sorts by entity id, which is neither the name shown nor anything
+   the eye can use — `binhex_jellyfin` sorted between `avidemux` and `crafty_4`
+   put Jellyfin third in a list headed "Agent Zero, Avidemux". */
+check('containers list running first, then by displayed name', (() => {
+  const rows = sy._syDocker(SRV);
+  const order = [...rows.matchAll(/class="ps-trunc">([^<]+)</g)].map((m) => m[1]);
+  return order[0] === 'Jellyfin' && order[1] === 'pihole' && order[2] === 'ollama';
+})());
+
+/* "84.1%" of what? Nearly every one of these sensors carries the answer. */
+check('a meter derives its sub-line from the size attributes',
+  /6\.7 TB of 7\.3 TB/.test(sy._syStorage(SRV)));
+check('a notification subject drops the constant Notice [HOST] prefix', (() => {
+  const p2 = new SH();
+  p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
+  p2._hass = { states: { ...sysHass.states,
+    'sensor.purdynas_notifications': num(51, { recent_notifications: [
+      { subject: 'Notice [PURDYNAS] - Version update 2026.08.07', importance: 'normal' }] }) } };
+  const out = p2._syAlerts(SRV);
+  return /Version update 2026\.08\.07/.test(out) && !/\[PURDYNAS\]/.test(out);
+})());
 
 /* The watched set cannot be complete until hass exists, because the lists are
    discovered from it — without the expansion a container toggle would not
