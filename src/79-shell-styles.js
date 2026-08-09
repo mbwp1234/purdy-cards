@@ -652,7 +652,12 @@ const PS_STYLES = `
                    color: var(--ps-muted); border: 1px solid transparent; }
       .ps-cwroom.on { background: rgba(77,208,225,.15); color: var(--ps-cool);
                       border-color: rgba(77,208,225,.3); }
-      .ps-cwpair { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 10px; }
+      /* auto-fit with a floor, not a fixed 1fr 1fr: a third button squeezed
+         three into a 340px row and clipped "Emptied tank" to "Emptied ta…".
+         A truncated label is a MISSING label, not a smaller one — same fix as
+         the desk card's room and quick strips. */
+      .ps-cwpair { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+                   gap: 9px; margin-top: 10px; }
       .ps-cwbtn { display: flex; align-items: center; gap: 9px; background: var(--pc-fill-2);
                   border: 1px solid var(--pc-edge); border-radius: var(--pc-r-md);
                   padding: 11px 12px; color: var(--ps-muted); font-size: var(--pc-fs-sm);

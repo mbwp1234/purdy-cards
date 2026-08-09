@@ -2895,7 +2895,7 @@ const crewCfg = {
     dirty_water: 'sensor.dirty', filter: 'sensor.filt', progress: 'sensor.prog',
     current_room: 'sensor.room', cleaning_mode: 'select.mode', suction: 'select.suck',
     room_select: 'input_select.room', room_script: 'script.clean_room',
-    emptied_button: 'input_button.emptied',
+    emptied_button: 'input_button.emptied', map_sheet: 'vacuum',
     wear: [{ label: 'Filter', entity: 'sensor.filt' }, { label: 'Main brush', entity: 'sensor.brush' }],
     mileage: { area: 'sensor.area', runs: 'sensor.runs', path_width_m: 0.3 } },
   litter: { entity: 'vacuum.l', name: 'Litter box', litter_level: 'sensor.lit',
@@ -3020,6 +3020,22 @@ check('the hero names the room it would clean', /Clean Living Room/.test(crewVac
 
 /* Only consumables that are actually low earn a line; deep clean is gone —
    it named a house routine no longer in use. */
+/* The map sheet's only door was the Quick tile's tap_action, and replacing
+   that grid left the sheet configured, mounted and unreachable. */
+check('the vacuum panel can reach the map sheet',
+  /data-sheet="vacuum"/.test(crewVac));
+check('the map button is absent when no sheet is configured', (() => {
+  const cfg = { ...crewCfg, vacuum: { ...crewCfg.vacuum } };
+  delete cfg.vacuum.map_sheet;
+  const s2 = new SH();
+  s2.setConfig({ sections: [cfg] });
+  s2._hass = { states: crewStates };
+  s2._crewOpen = { vac: true };
+  return !/data-sheet=/.test(s2._secCrew(cfg));
+})());
+check('the action row grows rather than clipping a third label',
+  /ps-cwpair \{[^}]*auto-fit/.test(SH.styles));
+
 check('only a low consumable is called out',
   /Filter 14%/.test(crewVac) && !/Main brush/.test(crewVac));
 check('deep clean is gone entirely',

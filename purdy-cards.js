@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.51.0";
+const PC_VERSION = "1.51.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -11445,6 +11445,17 @@ Object.assign(PurdyShellCard.prototype, {
         </button>
         ${this._crewRooms(v)}
         <div class="ps-cwpair">
+          ${/* The map's only door used to be the Quick tile's tap_action, and
+                replacing that grid with this section left the sheet configured,
+                mounted and unreachable. Anything that lived ONLY on a control
+                being replaced needs a new way in, or it silently disappears —
+                the same trap that stranded the music presets in v1.25.1.
+                data-sheet is handled generically in core's _bind, so this needs
+                no handler of its own. */
+            v.map_sheet
+              ? this._crewBtn("Map", "mdi:map-marker-radius",
+                `data-sheet="${psEsc(v.map_sheet)}"`)
+              : ""}
           ${this._crewBtn("Dock", "mdi:home-import-outline",
             `data-crewact="vacuum.return_to_base" data-target="${psEsc(v.entity)}"`)}
           ${v.emptied_button
@@ -12339,7 +12350,12 @@ const PS_STYLES = `
                    color: var(--ps-muted); border: 1px solid transparent; }
       .ps-cwroom.on { background: rgba(77,208,225,.15); color: var(--ps-cool);
                       border-color: rgba(77,208,225,.3); }
-      .ps-cwpair { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 10px; }
+      /* auto-fit with a floor, not a fixed 1fr 1fr: a third button squeezed
+         three into a 340px row and clipped "Emptied tank" to "Emptied ta…".
+         A truncated label is a MISSING label, not a smaller one — same fix as
+         the desk card's room and quick strips. */
+      .ps-cwpair { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+                   gap: 9px; margin-top: 10px; }
       .ps-cwbtn { display: flex; align-items: center; gap: 9px; background: var(--pc-fill-2);
                   border: 1px solid var(--pc-edge); border-radius: var(--pc-r-md);
                   padding: 11px 12px; color: var(--ps-muted); font-size: var(--pc-fs-sm);

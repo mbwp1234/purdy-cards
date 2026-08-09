@@ -268,6 +268,17 @@ Object.assign(PurdyShellCard.prototype, {
         </button>
         ${this._crewRooms(v)}
         <div class="ps-cwpair">
+          ${/* The map's only door used to be the Quick tile's tap_action, and
+                replacing that grid with this section left the sheet configured,
+                mounted and unreachable. Anything that lived ONLY on a control
+                being replaced needs a new way in, or it silently disappears —
+                the same trap that stranded the music presets in v1.25.1.
+                data-sheet is handled generically in core's _bind, so this needs
+                no handler of its own. */
+            v.map_sheet
+              ? this._crewBtn("Map", "mdi:map-marker-radius",
+                `data-sheet="${psEsc(v.map_sheet)}"`)
+              : ""}
           ${this._crewBtn("Dock", "mdi:home-import-outline",
             `data-crewact="vacuum.return_to_base" data-target="${psEsc(v.entity)}"`)}
           ${v.emptied_button
