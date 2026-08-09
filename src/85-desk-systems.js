@@ -40,26 +40,6 @@ Object.assign(PurdyDeskCard.prototype, {
     return ids;
   },
 
-  /* Which of the server's fault rules are firing. Same rule shapes as the
-     attention list, deliberately — one vocabulary for "what counts as wrong". */
-  _serverFaults() {
-    const srv = this._config.server;
-    const h = this._hass;
-    if (!srv || !h) return [];
-    return (srv.faults || []).filter((f) => {
-      const st = h.states[f.entity];
-      if (!st) return false;
-      if (f.state !== undefined) return st.state === f.state;
-      if (f.state_not !== undefined) return st.state !== f.state_not
-        && st.state !== "unavailable" && st.state !== "unknown";
-      const n = parseFloat(st.state);
-      if (!Number.isFinite(n)) return false;
-      if (f.above !== undefined) return n > f.above;
-      if (f.below !== undefined) return n < f.below;
-      return false;
-    });
-  },
-
   /* A labelled bar. A meter with no reading draws an EMPTY track and says so —
      a bar at zero is a claim that the disk is empty. */
   _meterRow(m) {

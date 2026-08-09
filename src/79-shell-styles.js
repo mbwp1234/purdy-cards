@@ -90,7 +90,7 @@ const PS_STYLES = `
 
       /* status strip — no box, floats on the ground */
       .ps-stat { display: flex; align-items: flex-start; gap: 10px; padding: 2px 8px 14px; }
-      .ps-stat h2 { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em; margin: 0; line-height: 1.12; }
+      .ps-stat h2 { font-size: var(--pc-fs-xl); font-weight: 640; letter-spacing: -.028em; margin: 0; line-height: 1.15; }
       .ps-d { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; margin-top: 3px; }
       .ps-rt { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .ps-wx { display: flex; align-items: center; gap: 7px; color: var(--ps-cool); font-size: var(--pc-fs-xl);
@@ -139,8 +139,14 @@ const PS_STYLES = `
       .ps-rv { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
                justify-content: center; font-variant-numeric: tabular-nums; }
       .ps-rv b { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em; line-height: 1; }
+      /* A ring caption is centred over a filled arc, so anything wider than the
+         ring's inner box does not merely look tight — it is clipped by the
+         stroke, and a clipped label is a MISSING label ("THERMOSTAT" read
+         "HERMOSTAT"). Capped and centred so a long caption wraps inside the
+         ring instead of running out of it. */
       .ps-rv small { font-size: var(--pc-fs-micro); color: var(--ps-dim); margin-top: 3px; letter-spacing: .09em;
-                     text-transform: uppercase; font-weight: 650; }
+                     text-transform: uppercase; font-weight: 650;
+                     max-width: 78%; text-align: center; line-height: 1.15; }
 
       /* climate */
       .ps-chero { display: flex; align-items: center; gap: 14px; }
@@ -159,6 +165,16 @@ const PS_STYLES = `
       .ps-zc.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
       .ps-zc.on b { color: var(--ps-cool); }
       .ps-wave { margin: 4px -15px -15px; position: relative; }
+      /* The plotted range, so the line reads as a measurement rather than a
+         shape. Inside the plot and out of the flow, so it cannot change the
+         height it is describing. */
+      .ps-wax {
+        position: absolute; left: 15px; z-index: 1; pointer-events: none;
+        font-size: var(--pc-fs-micro); color: var(--ps-dim);
+        font-variant-numeric: tabular-nums;
+      }
+      .ps-wax.hi { top: 1px; }
+      .ps-wax.lo { bottom: 16px; }
       .ps-wave-svg { width: 100%; height: 74px; display: block; }
       .ps-wlg { display: flex; gap: 12px; align-items: baseline; margin-top: 11px; min-height: 16px;
                 font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }

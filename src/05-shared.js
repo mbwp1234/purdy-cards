@@ -120,13 +120,23 @@ function pcDownsample(series, n) {
    idles between 7% and 11% is idle — auto-scaling either one draws a mountain
    range out of nothing. Defaults to 1 (the temperature case it was written
    for) so the existing callers are unchanged. */
-function pcSparkPoly(points, w, h, pad, minSpan) {
+/* `scale` is an optional {lo, hi} imposed from outside. Without it every
+   sparkline auto-scales to its own data, which is right for a lone sparkline
+   and wrong for a COLUMN of them: a bedroom drifting half a degree is drawn
+   with the same amplitude as a room swinging four, so the list invites a
+   comparison it cannot support. The caller that owns the column passes one
+   scale for all of them. */
+function pcSparkPoly(points, w, h, pad, minSpan, scale) {
   if (!points || points.length < 2) return null;
   const p = pad == null ? 4 : pad;
   const floor = minSpan == null ? 1 : minSpan;
   const t0 = points[0].t, t1 = points[points.length - 1].t;
   let vmin = Infinity, vmax = -Infinity;
-  points.forEach((q) => { vmin = Math.min(vmin, q.v); vmax = Math.max(vmax, q.v); });
+  if (scale && Number.isFinite(scale.lo) && Number.isFinite(scale.hi)) {
+    vmin = scale.lo; vmax = scale.hi;
+  } else {
+    points.forEach((q) => { vmin = Math.min(vmin, q.v); vmax = Math.max(vmax, q.v); });
+  }
   if (vmax - vmin < floor) {
     const grow = (floor - (vmax - vmin)) / 2;
     vmax += grow; vmin -= grow;
@@ -134,7 +144,10 @@ function pcSparkPoly(points, w, h, pad, minSpan) {
   const span = t1 - t0 || 1;
   return points.map((q) => {
     const x = ((q.t - t0) / span) * w;
-    const y = p + (1 - (q.v - vmin) / (vmax - vmin)) * (h - p * 2);
+    /* An imposed scale can be narrower than a given room's own range, so the
+       line is clamped into the box rather than drawn outside it. */
+    const f = Math.max(0, Math.min(1, (q.v - vmin) / (vmax - vmin)));
+    const y = p + (1 - f) * (h - p * 2);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
 }

@@ -595,7 +595,12 @@ class PurdyShellCard extends PcBaseCard {
 
     this._patch("ps-stat", `
         <div>
-          <h2>${this._greeting()}${who ? `,<br>${psEsc(who)}` : ""}</h2>
+          ${/* One line, not two. The name was on its own row below the
+                greeting at the largest step on the screen — three lines of
+                chrome before a single measurement, on a column where
+                everything under it is one. The greeting changes three times a
+                day and the name never does; neither earns 22px. */""}
+          <h2>${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</h2>
           <div class="ps-d">${now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
             · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${
               c.occupancy ? " · " + psEsc(pcState(this._hass, c.occupancy)) : ""}</div>

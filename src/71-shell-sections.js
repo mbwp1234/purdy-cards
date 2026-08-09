@@ -61,7 +61,7 @@ Object.assign(PurdyShellCard.prototype, {
    * through the middle is a claim about the room, and "the recorder has
    * nothing" is not that claim. The box keeps its size either way so the
    * column of numbers to its right stays aligned. */
-  _sparkSvg(id) {
+  _sparkSvg(id, scale) {
     const W = 56, H = 18;
     const empty = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"></svg>`;
     const raw = this._history[id];
@@ -69,7 +69,7 @@ Object.assign(PurdyShellCard.prototype, {
     const pts = raw
       .map((p) => ({ t: p.t, v: parseFloat(p.s) }))
       .filter((p) => Number.isFinite(p.v));
-    const poly = pcSparkPoly(pcDownsample(pts, 28), W, H, 3);
+    const poly = pcSparkPoly(pcDownsample(pts, 28), W, H, 3, null, scale);
     if (!poly) return empty;
     return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <polyline fill="none" stroke="var(--ps-cool)" stroke-width="1.5" opacity=".75"
@@ -95,10 +95,17 @@ Object.assign(PurdyShellCard.prototype, {
     const t0 = t1 - hours * 3600 * 1000;
     const all = inside.concat(outside).filter((p) => p.t >= t0);
     if (all.length < 2) return "";
-    let lo = Math.min.apply(null, all.map((p) => p.v));
-    let hi = Math.max.apply(null, all.map((p) => p.v));
+    const vlo = Math.min.apply(null, all.map((p) => p.v));
+    const vhi = Math.max.apply(null, all.map((p) => p.v));
+    let lo = vlo, hi = vhi;
     const pad = Math.max(1.5, (hi - lo) * 0.18);
     lo -= pad; hi += pad;
+    /* What the plot actually spanned, so a shape can be read as a measurement.
+       The legend carries the two current readings and nothing said what the
+       vertical axis meant — the same line drawn over a two-degree night and a
+       twenty-degree one looks identical. Stashed rather than drawn into the
+       SVG because preserveAspectRatio="none" would stretch any text in it. */
+    this._waveRange = { lo: vlo, hi: vhi };
 
     /* TOP was 24 of 74 — a third of the graph reserved as blank headroom for
        a label that does not live there, showing up as a gap between the
@@ -417,11 +424,28 @@ Object.assign(PurdyShellCard.prototype, {
       `<div class="ps-zc" data-info="${psEsc((sec.outside || {}).temp)}">Outside<b>${ot.toFixed(1)}°</b></div>`;
 
     const spark = sec.room_spark !== false;
+    /* ONE scale down the column. Auto-scaling each room to its own data drew a
+       bedroom drifting half a degree with the same amplitude as a room swinging
+       four, so the list looked like five rooms in trouble and invited a
+       comparison none of the pictures could support. A room genuinely steadier
+       than its neighbours now looks it. */
+    const sparkScale = spark ? (() => {
+      let lo = Infinity, hi = -Infinity;
+      (sec.rooms || []).forEach((r) => {
+        (this._history[r.temp] || []).forEach((p) => {
+          const v = parseFloat(p.s);
+          if (!Number.isFinite(v)) return;
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        });
+      });
+      return Number.isFinite(lo) && Number.isFinite(hi) && hi > lo ? { lo, hi } : null;
+    })() : null;
     const rooms = (sec.rooms || []).map((r) => {
       const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
       return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
           <span class="ps-rn ps-trunc">${psEsc(r.name || pcName(h, r.temp))}</span>
-          ${spark ? `<span class="ps-spark">${this._sparkSvg(r.temp)}</span>` : ""}
+          ${spark ? `<span class="ps-spark">${this._sparkSvg(r.temp, sparkScale)}</span>` : ""}
           <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
           <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
         </div>`;
@@ -463,7 +487,19 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-chero">
         <div class="ps-ring" style="width:92px;height:92px" data-info="${psEsc(sec.goal || sec.thermostat)}">
           ${this._ringSvg(92, 7.5, [[frac, col]], goalFrac, "var(--ps-text)")}
-          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>now</small></div>
+          ${/* "now" invited the reading that this is the house temperature,
+                and then neither zone chip below it agreed — three numbers on
+                one card with no stated relationship. It is the thermostat's
+                own sensor, in ONE room (the kitchen, here), so naming that
+                room is the entire explanation.
+
+                `hero_label` rather than the word "thermostat": that was tried
+                and it overflowed the ring, clipping to "HERMOSTAT". A ring
+                caption has about seven characters, which a room name fits and
+                a job title does not. Defaults to "now" so an install that
+                does not set it is unchanged. */""}
+          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>${
+            psEsc(sec.hero_label || "now")}</small></div>
         </div>
         <div class="ps-grow">
           <div class="ps-row">
@@ -493,6 +529,8 @@ Object.assign(PurdyShellCard.prototype, {
         </div>
         <div class="ps-wave" data-scrub="wave">
         <div class="ps-cross" hidden></div>
+        ${this._waveRange ? `<span class="ps-wax hi">${this._waveRange.hi.toFixed(0)}°</span>
+        <span class="ps-wax lo">${this._waveRange.lo.toFixed(0)}°</span>` : ""}
         ${wave}</div>` : ""}`;
   },
 
@@ -513,11 +551,28 @@ Object.assign(PurdyShellCard.prototype, {
     const h = this._hass;
     const rows = [];
 
-    const np = this._nowPlaying();
-    if (np) {
-      const a = np.st.attributes;
+    /* Every room that is playing, not just the first one. _nowPlaying answers
+       with a single player because the dock bar has room for exactly one — but
+       this section is the answer to "what is on right now", and while the
+       foreign-app_id reject was in place multi-room simply never happened, so
+       one row was always enough by accident. Two rooms now routinely play
+       different things. */
+    (this._config.now_playing || {}).players?.forEach((p) => {
+      const st = this._hass.states[p.entity];
+      if (!psLiveMusic(st)) return;
+      const a = st.attributes;
+      const np = { ...p, st, playing: st.state === "playing" };
       const art = a.entity_picture_local;
-      const sub = [a.media_artist, a.media_album_name].filter(Boolean).join(" — ") || np.name;
+      /* The album is dropped when it merely restates the track, which is what
+         a single reports — "Danza Kuduro X Beautiful" printed a line below
+         itself. The room name is the fallback, never a second copy of the
+         title. */
+      const album = a.media_album_name && a.media_album_name !== a.media_title
+        ? a.media_album_name : null;
+      /* The room is always named. With one row it was implied and could be
+         left out; with two it is the only thing telling them apart. */
+      const sub = [[a.media_artist, album].filter(Boolean).join(" — "), np.name]
+        .filter(Boolean).join(" · ");
       rows.push(`<div class="ps-npr" data-sheet="music" role="button" tabindex="0">
           <div class="ps-npart">${art
             ? `<img src="${psEsc(art)}" alt="" />`
@@ -531,7 +586,7 @@ Object.assign(PurdyShellCard.prototype, {
             <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
               ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
         </div>`);
-    }
+    });
 
     (sec.tvs || []).forEach((t) => {
       const st = pcState(h, t.media_player);
