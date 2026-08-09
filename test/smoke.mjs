@@ -1647,6 +1647,35 @@ check('malformed dismissal store is ignored, not fatal', (() => {
   return Object.keys(shp._dismissals()).length === 0;
 })());
 
+/* A NUMERIC group rule — five consumables all below a threshold. _firedAt's
+   group branch compared every member against the string "on", which only ever
+   made sense for a boolean rule: a numeric one matched nothing, came back 0,
+   and a dismissal is always newer than 0. Dismissing it would have hidden the
+   row forever instead of for dismiss_hours. */
+const shwear = new SH();
+shwear.setConfig({
+  dismiss_store: 'input_text.dis', dismiss_hours: 12,
+  attention: [{ key: 'wear', match: '^sensor\\.jeeves_.*_left$', below: 20,
+    severity: 'warn', title: 'consumables low' }],
+  sections: [{ type: 'people', key: 'p', people: [] }],
+});
+shwear._hass = { states: {
+  'sensor.jeeves_filter_left': { state: '14', attributes: { friendly_name: 'Jeeves Filter Left' },
+    last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
+  'sensor.jeeves_main_brush_left': { state: '57', attributes: { friendly_name: 'Jeeves Main Brush Left' },
+    last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
+  'input_text.dis': { state: '', attributes: {} },
+} };
+check('a numeric group rule fires on the members below the threshold',
+  shwear._raised().length === 1 && shwear._raised()[0].title === '1 consumables low');
+check('a numeric group rule reports a real fire time, not 0',
+  shwear._raised()[0].firedAt > NOW_S - 3600);
+shwear._hass.states['input_text.dis'] = { state: 'wear:' + (NOW_S - 60), attributes: {} };
+check('a numeric group rule can be dismissed', shwear._faults().length === 0);
+shwear._hass.states['input_text.dis'] = { state: 'wear:' + (NOW_S - 1200), attributes: {} };
+check('and comes back when it re-fires — it is not hidden forever',
+  shwear._faults().length === 1);
+
 // the store is a 255-char input_text, so the oldest keys must be dropped
 let written = null;
 shp._hass.callService = (d, sv, data) => { written = data.value; };
