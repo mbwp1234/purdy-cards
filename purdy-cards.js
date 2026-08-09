@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.50.0";
+const PC_VERSION = "1.51.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -11179,29 +11179,24 @@ Object.assign(PurdyShellCard.prototype, {
  * purdy-shell-card — the `crew` section
  *
  * Replaces the `quick` tile grid AND the `systems` robot rows, which were two
- * views of the same three machines: Jeeves, the litter box and the washer each
- * appeared twice, costing ~610px of column. PurdyNAS moved out to its own mode,
- * so the systems section had nothing left that was not a duplicate.
+ * views of the same three machines.
  *
- * Two rules the tiles broke and this does not:
+ * TWO INDEPENDENT ZONES, not one section expand (v1.51.0). The robots share a
+ * row but nothing else: one is a floor cleaner you dispatch to a room, the
+ * other is a litter box you read trends off. A single section-level expand made
+ * opening either one dump both control sets into a wall of chips — the
+ * screenshot of v1.50.0 is a whole screen of room pills with the litter box's
+ * two buttons stranded at the bottom. So each card owns its own open state and
+ * its own panel, and both can be open, or neither.
  *
- * A NUMBER NEEDS ITS NOUN. The old tiles read "Jeeves 10 %" and "Litter 16 %".
- * Those are the dirty-water tank and the waste drawer, the tile never said so,
- * and they point opposite ways — 10% dirty is good, 16% full is good, 90% litter
- * is good. Same "84.1% of what?" problem already fixed on the PurdyNAS pages.
+ * A NUMBER NEEDS ITS NOUN. The old tiles read "Jeeves 10 %" and "Litter 16 %" —
+ * the dirty-water tank and the waste drawer, unlabelled, pointing opposite ways.
  * Every figure here is drawn next to what it measures.
  *
  * ZERO IS NOT MISSING. Everything reads through psCrewNum, which returns null
- * rather than 0 for an absent sensor, and a null renders as "—". A robot that
- * is offline must not look like a robot whose tank is empty.
- *
- * COLLAPSED is two gauges and the washer strip; EXPANDED is dispatch for both
- * machines. Tapping either card opens the same expansion — the section has one
- * open state, like every other section, so there is no per-card accordion to
- * get out of sync with the chevron.
+ * rather than 0 for an absent sensor; null renders as "—" and an empty ring.
  * ========================================================================== */
 
-/* A percentage that is honestly absent rather than zero. */
 function psCrewNum(hass, id) {
   if (!id) return null;
   return pcNum(hass, id);
@@ -11212,17 +11207,13 @@ function psCrewPct(v) {
 }
 
 /* Dreame publishes its selects as slugs — select.jeeves_cleaning_mode is
-   "mopping", not "Mopping", and "sweeping_and_mopping" rather than words. Only
-   rendering against real states caught it; the fixture had guessed the pretty
-   form. Same shape as the desk card's "Partlycloudy". */
+   "mopping", not "Mopping". Only rendering against real states caught it. */
 function psCrewWords(s) {
   if (!s || s === "unknown" || s === "unavailable") return "";
   const t = String(s).replace(/_/g, " ").trim();
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-/* "7:42 AM" today, "6 Aug" before that — a bare date for something that
-   happened this morning reads as older than it is. */
 function psCrewWhen(iso) {
   const t = psParseTs(iso);
   if (t == null) return "";
@@ -11235,16 +11226,27 @@ function psCrewWhen(iso) {
     : d.toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
+/* DISTANCE IS DERIVED, AND SAYS SO.
+ *
+ * Dreame publishes 233 entities for this vacuum and not one of them is a
+ * distance — area, time and run count only. Miles therefore come from area
+ * divided by the effective path width, which is an ASSUMPTION (`path_width_m`,
+ * default 0.30 for a D10/L-series mop head), not a measurement. So the figure
+ * carries a "≈" and the width stays in config where it can be corrected.
+ * Presenting it bare would be a guess wearing a sensor's clothes. */
+function psCrewMiles(areaValue, unit, widthM) {
+  if (areaValue == null || !(widthM > 0)) return null;
+  const m2 = /ft/i.test(unit || "") ? areaValue * 0.09290304 : areaValue;
+  return (m2 / widthM) / 1609.344;
+}
+
 Object.assign(PurdyShellCard.prototype, {
 
   /* Two CONCENTRIC horseshoes, not two segments of one.
-   *
-   * _ringSvg stacks its segments head-to-tail around a single track, which is
-   * right when the parts sum to a whole (deep + light = the night's sleep).
-   * Here they do not: charge and dirty water are independent quantities that
-   * point opposite ways, and laid end-to-end they would read as one arc that
-   * changes colour at an arbitrary point. Separate radii say "two things".
-   */
+     _ringSvg stacks segments head-to-tail, which is right when the parts sum to
+     a whole (deep + light = the night). These do not: they are independent and
+     point opposite ways, and laid end-to-end they read as one arc that changes
+     colour at an arbitrary point. Separate radii say "two things". */
   _crewRing(size, outer, inner) {
     const cx = size / 2;
     const ring = (r, stroke, frac, col) => {
@@ -11254,9 +11256,7 @@ Object.assign(PurdyShellCard.prototype, {
           stroke-width="${stroke}" stroke-linecap="round"
           stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}"
           transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
-      /* A null fraction draws the track and nothing else — an empty ring is
-         how "no reading" looks, and it must not look like zero. */
-      if (frac == null) return out;
+      if (frac == null) return out;          // no reading: track only, never zero
       const len = arc * Math.max(0, Math.min(1, frac));
       if (len > 0.2) {
         out += `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="${col}"
@@ -11267,86 +11267,64 @@ Object.assign(PurdyShellCard.prototype, {
       return out;
     };
     const ro = size / 2 - 5;
-    const ri = ro - 9;
     return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
         ${ring(ro, 7, outer.frac, outer.col)}
-        ${ring(ri, 4, inner.frac, inner.col)}
+        ${ring(ro - 9, 4, inner.frac, inner.col)}
       </svg>`;
-  },
-
-  /* "5,562 ft² over 219 runs" — the odometer. Deliberately below the gauge and
-     in the quiet colour: it is the fact you enjoy, not the one you act on. */
-  _crewMileage(v) {
-    const h = this._hass;
-    const m = v.mileage || {};
-    const area = psCrewNum(h, m.area);
-    const runs = psCrewNum(h, m.runs);
-    const mins = psCrewNum(h, m.time);
-    const bits = [];
-    if (area != null) {
-      const st = h.states[m.area];
-      const unit = st && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "ft²";
-      bits.push(`${Math.round(area).toLocaleString()} ${unit}`);
-    }
-    if (runs != null) bits.push(`${Math.round(runs)} runs`);
-    if (mins != null && bits.length < 2) bits.push(`${Math.round(mins / 60)} h`);
-    if (!bits.length) return "";
-    return `<div class="ps-cwmile">${psEsc(bits.join(" · "))}</div>`;
   },
 
   _crewLine(label, valueHtml) {
     return `<div class="ps-cwl"><em>${psEsc(label)}</em>${valueHtml}</div>`;
   },
 
-  _crewVacCard(v) {
+  _crewCardHead(name, open, running, zone) {
+    return `<div class="ps-cwtop">
+        <span class="ps-cwdot ${running ? "on" : ""}"></span>
+        <span class="ps-cwnm">${psEsc(name)}</span>
+        <span class="ps-cwcv ${open ? "open" : ""}">${this._chev()}</span>
+      </div>`;
+  },
+
+  /* ---- collapsed faces ---- */
+
+  _crewVacCard(v, open) {
     const h = this._hass;
     const st = pcState(h, v.entity);
     const running = st === "cleaning" || st === "returning";
     const batt = psCrewNum(h, v.battery);
-    const dirty = psCrewNum(h, v.dirty_water);
+    const water = psCrewNum(h, v.dirty_water);
     const filter = psCrewNum(h, v.filter);
 
-    /* While he is actually running the charge is not the interesting number —
-       progress is. The ring keeps its shape and changes what it means, and the
-       caption under it changes with it so the two can never disagree. */
+    /* While he is running the charge is not the interesting number — progress
+       is. The ring keeps its shape and changes what it means, and the caption
+       changes with it so the two can never disagree. */
     const prog = running ? psCrewNum(h, v.progress) : null;
-    const outerVal = running && prog != null ? prog : batt;
-    const outerLbl = running && prog != null ? "cleaned" : "charged";
+    const outerVal = prog != null ? prog : batt;
+    const outerLbl = prog != null ? "job" : "battery";
 
-    const ring = this._crewRing(92,
-      { frac: outerVal == null ? null : outerVal / 100, col: "var(--ps-cool)" },
-      { frac: dirty == null ? null : dirty / 100, col: "var(--ps-warn)" });
+    const m = v.mileage || {};
+    const areaSt = m.area && h.states[m.area];
+    const miles = psCrewMiles(psCrewNum(h, m.area),
+      areaSt && areaSt.attributes.unit_of_measurement, m.path_width_m || 0.3);
+    const runs = psCrewNum(h, m.runs);
 
-    /* The third row must EARN its line. It used to read "Status · Docked",
-       which the dot beside the name and the section chip already say — three
-       statements of the same fact on one card. While he is running the useful
-       third fact is the room; while he is docked it is when he last ran. */
-    const room = pcState(h, v.current_room);
-    const busyRoom = running && room && room !== "unknown" && room !== "unavailable";
-    const thirdLabel = busyRoom ? "Room" : "Last run";
-    const thirdValue = busyRoom ? room : (psCrewWhen(pcState(h, v.last_run)) || "—");
-
-    return `<button class="ps-cwcard" type="button" data-open="${psEsc(this._crewKey)}">
-        <div class="ps-cwtop">
-          <span class="ps-cwdot ${running ? "on" : ""}"></span>
-          <span class="ps-cwnm">${psEsc(v.name || "Jeeves")}</span>
-        </div>
-        <div class="ps-cwring">${ring}
-          <div class="ps-cwrv"><b>${psCrewPct(outerVal)}</b><span>${psEsc(outerLbl)}</span></div>
-        </div>
-        ${this._crewMileage(v)}
-        ${this._crewLine("Dirty water", `<b>${psCrewPct(dirty)}</b>`)}
-        ${this._crewLine("Filter", `<b class="${filter != null && filter <= 20 ? "warn" : ""}">${psCrewPct(filter)}</b>`)}
-        ${this._crewLine(thirdLabel, `<b class="ps-trunc">${psEsc(thirdValue)}</b>`)}
-      </button>`;
+    return `<div class="ps-cwcard ${open ? "open" : ""}">
+        <button class="ps-cwface" type="button" data-crewzone="vac">
+          ${this._crewCardHead(v.name || "Jeeves", open, running)}
+          <div class="ps-cwring">
+            ${this._crewRing(92,
+              { frac: outerVal == null ? null : outerVal / 100, col: "var(--ps-cool)" },
+              { frac: water == null ? null : water / 100, col: "var(--ps-warn)" })}
+            <div class="ps-cwrv"><b>${psCrewPct(outerVal)}</b><span>${outerLbl}</span></div>
+          </div>
+          ${this._crewLine("Distance", `<b>${miles == null ? "—" : `≈${miles.toFixed(1)} mi`}</b>`)}
+          ${this._crewLine("Runs", `<b>${runs == null ? "—" : Math.round(runs).toLocaleString()}</b>`)}
+          ${this._crewLine("Filter", `<b class="${filter != null && filter <= 20 ? "warn" : ""}">${psCrewPct(filter)}</b>`)}
+        </button>
+      </div>`;
   },
 
-  _crewVacState(st) {
-    return { docked: "Docked", cleaning: "Cleaning", returning: "Returning",
-      paused: "Paused", idle: "Idle", error: "Error" }[st] || (st ? st.replace(/_/g, " ") : "—");
-  },
-
-  _crewLitterCard(l) {
+  _crewLitterCard(l, open) {
     const h = this._hass;
     const st = pcState(h, l.entity);
     const running = st === "cleaning";
@@ -11356,40 +11334,281 @@ Object.assign(PurdyShellCard.prototype, {
     const weight = psCrewNum(h, pet.weight);
     const visits = psCrewNum(h, pet.visits);
     const scoops = psCrewNum(h, pet.scoops);
-
-    const ring = this._crewRing(92,
-      { frac: litter == null ? null : litter / 100, col: "var(--ps-good)" },
-      { frac: drawer == null ? null : drawer / 100, col: "var(--ps-warn)" });
-
-    const petName = pet.name || "Cat";
     const wUnit = (() => {
       const s = pet.weight && h.states[pet.weight];
       return s && s.attributes.unit_of_measurement ? s.attributes.unit_of_measurement : "lb";
     })();
 
-    return `<button class="ps-cwcard" type="button" data-open="${psEsc(this._crewKey)}">
-        <div class="ps-cwtop">
-          <span class="ps-cwdot ${running ? "on" : ""}"></span>
-          <span class="ps-cwnm">${psEsc(l.name || "Litter box")}</span>
-        </div>
-        <div class="ps-cwring">${ring}
-          <div class="ps-cwrv"><b>${psCrewPct(litter)}</b><span>litter</span></div>
-        </div>
-        ${scoops == null || scoops <= 0
-          /* A counter that has never been seeded is not an achievement of zero,
-             so it does not print "0 scoops saved". It also must not fall back to
-             the visit count — the row below already carries that, and the live
-             render showed the same fact twice on one card. Say why it is empty. */
-          ? `<div class="ps-cwmile ps-cwquiet">counting scoops from today</div>`
-          : `<div class="ps-cwmile">${Math.round(scoops).toLocaleString()} scoops saved</div>`}
-        ${this._crewLine("Waste drawer", `<b class="${drawer != null && drawer >= 75 ? "warn" : ""}">${psCrewPct(drawer)}</b>`)}
-        ${this._crewLine(petName, `<b>${weight == null ? "—" : `${weight.toFixed(1)} ${wUnit}`}</b>`)}
-        ${this._crewLine("Visits today", `<b>${visits == null ? "—" : Math.round(visits)}</b>`)}
+    return `<div class="ps-cwcard ${open ? "open" : ""}">
+        <button class="ps-cwface" type="button" data-crewzone="litter">
+          ${this._crewCardHead(l.name || "Litter box", open, running)}
+          <div class="ps-cwring">
+            ${this._crewRing(92,
+              { frac: litter == null ? null : litter / 100, col: "var(--ps-good)" },
+              { frac: drawer == null ? null : drawer / 100, col: "var(--ps-warn)" })}
+            <div class="ps-cwrv"><b>${psCrewPct(litter)}</b><span>litter</span></div>
+          </div>
+          ${this._crewLine("Scoops", `<b>${scoops == null ? "—" : Math.round(scoops).toLocaleString()}</b>`)}
+          ${this._crewLine("Visits today", `<b>${visits == null ? "—" : Math.round(visits)}</b>`)}
+          ${this._crewLine(pet.name || "Weight", `<b>${weight == null ? "—" : `${weight.toFixed(1)} ${wUnit}`}</b>`)}
+        </button>
+      </div>`;
+  },
+
+  /* ---- vacuum panel: dispatch ---- */
+
+  /* Thirteen room pills over six rows was most of a phone screen. The rooms
+     belong to a FLOOR, and the vacuum already knows which floor its map is on,
+     so the floor is a tab and only that floor's rooms are drawn — six or seven
+     chips, one or two rows. The prefix ("1F - ") is the grouping key AND is
+     stripped from the chip, because printing it on every pill repeats the tab. */
+  _crewRooms(v) {
+    const h = this._hass;
+    const sel = v.room_select && h.states[v.room_select];
+    if (!sel || !Array.isArray(sel.attributes.options)) return "";
+    const opts = sel.attributes.options;
+    const cur = sel.state;
+
+    const groups = [];
+    opts.forEach((o) => {
+      const i = String(o).indexOf(" - ");
+      const g = i > 0 ? o.slice(0, i) : "";
+      const label = i > 0 ? o.slice(i + 3) : o;
+      let bucket = null;
+      groups.forEach((x) => { if (x.name === g) bucket = x; });
+      if (!bucket) { bucket = { name: g, rooms: [] }; groups.push(bucket); }
+      bucket.rooms.push({ option: o, label });
+    });
+
+    /* Which tab is showing follows the SELECTION, so the chosen room is always
+       visible — a tab that hid the current pick would look like nothing was
+       selected at all. */
+    let active = groups[0] && groups[0].name;
+    groups.forEach((g) => { g.rooms.forEach((r) => { if (r.option === cur) active = g.name; }); });
+    if (this._crewFloor != null) {
+      groups.forEach((g) => { if (g.name === this._crewFloor) active = g.name; });
+    }
+
+    const tabs = groups.length > 1
+      ? `<div class="ps-cwtabs">${groups.map((g) =>
+        `<button class="ps-cwtab ${g.name === active ? "on" : ""}" type="button"
+           data-crewfloor="${psEsc(g.name)}">${psEsc(g.name)}</button>`).join("")}</div>`
+      : "";
+
+    let chips = "";
+    groups.forEach((g) => {
+      if (g.name !== active) return;
+      chips = g.rooms.map((r) =>
+        `<button class="ps-cwroom ${r.option === cur ? "on" : ""}" type="button"
+           data-crewroom="${psEsc(v.room_select)}" data-val="${psEsc(r.option)}">${psEsc(r.label)}</button>`).join("");
+    });
+    return `${tabs}<div class="ps-cwrooms">${chips}</div>`;
+  },
+
+  _crewBtn(label, icon, attrs) {
+    return `<button class="ps-cwbtn" type="button" ${attrs}>
+        <ha-icon icon="${psEsc(icon)}"></ha-icon><span>${psEsc(label)}</span>
       </button>`;
   },
 
-  /* The washer has one number and no shape, so it gets a strip rather than a
-     gauge — a ring drawn for a three-state select would be decoration. */
+  _crewVacPanel(v) {
+    const h = this._hass;
+    const st = pcState(h, v.entity);
+    const busy = st === "cleaning" || st === "returning";
+    const mode = psCrewWords(pcState(h, v.cleaning_mode));
+    const suction = psCrewWords(pcState(h, v.suction));
+    const sel = v.room_select && h.states[v.room_select];
+    const pick = sel ? String(sel.state).replace(/^\S+ - /, "") : "";
+    const sub = [mode, suction].filter(Boolean).join(" · ");
+
+    /* Only the consumables that are actually low earn a line. "Filter 14%" is
+       worth a nag; "Main brush 57%" is noise. Deep clean is gone — it named a
+       house-cleaning routine that is no longer used. */
+    const wear = [];
+    (v.wear || []).forEach((w) => {
+      const pct = psCrewNum(h, w.entity);
+      if (pct != null && pct <= (w.warn_below == null ? 25 : w.warn_below)) {
+        wear.push(`${w.label} ${Math.round(pct)}%`);
+      }
+    });
+
+    return `<div class="ps-cwpanel">
+        <button class="ps-cwhero" type="button" data-crewgo="${psEsc(v.entity)}"
+          data-script="${psEsc(v.room_script || "")}">
+          <span class="ps-cwplay">${busy
+            ? `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5v14M15 5v14"/></svg>`
+            : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M7 4.5 19 12 7 19.5Z"/></svg>`}</span>
+          <span class="ps-grow">
+            <span class="ps-cwt">${busy ? "Pause" : pick ? `Clean ${psEsc(pick)}` : "Start cleaning"}</span>
+            ${sub ? `<span class="ps-cwd ps-trunc">${psEsc(sub)}</span>` : ""}
+          </span>
+        </button>
+        ${this._crewRooms(v)}
+        <div class="ps-cwpair">
+          ${this._crewBtn("Dock", "mdi:home-import-outline",
+            `data-crewact="vacuum.return_to_base" data-target="${psEsc(v.entity)}"`)}
+          ${v.emptied_button
+            ? this._crewBtn("Emptied tank", "mdi:cup-water",
+              `data-crewact="input_button.press" data-target="${psEsc(v.emptied_button)}"`)
+            : ""}
+        </div>
+        ${wear.length ? `<div class="ps-cwnote">${psEsc(wear.join(" · "))}</div>` : ""}
+      </div>`;
+  },
+
+  /* ---- litter panel: trends ---- */
+
+  /* A weight line and a visits bar chart, both off the recorder. Weight is the
+     one that matters — a cat losing weight quietly is the thing a litter box is
+     uniquely able to notice — so it gets the line and its own min/max labels
+     rather than a bare sparkline nobody can read a number off. */
+  _crewTrend(id, days, kind, colour) {
+    const rows = (this._crewHist || {})[id];
+    if (rows == null) return `<div class="ps-cwempty">loading…</div>`;
+    if (!rows.length) return `<div class="ps-cwempty">no history yet</div>`;
+
+    const W = 300;
+    const H = 56;
+    if (kind === "bars") {
+      /* Visits are counted per day, so they are bars — a line between daily
+         totals would imply values in between that were never measured. */
+      const buckets = {};
+      const now = new Date();
+      for (let d = days - 1; d >= 0; d--) {
+        const day = new Date(now.getTime() - d * 86400000);
+        buckets[`${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`] = 0;
+      }
+      rows.forEach((r) => {
+        const d = new Date(r.t);
+        const k = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+        if (k in buckets && r.v > buckets[k]) buckets[k] = r.v;
+      });
+      const keys = Object.keys(buckets);
+      const vals = keys.map((k) => buckets[k]);
+      const max = Math.max(1, ...vals);
+      const bw = W / keys.length;
+      const bars = vals.map((v, i) => {
+        const bh = Math.max(1.5, (v / max) * (H - 10));
+        return `<rect x="${(i * bw + bw * 0.18).toFixed(1)}" y="${(H - bh).toFixed(1)}"
+          width="${(bw * 0.64).toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5"
+          fill="${i === vals.length - 1 ? colour : "rgba(255,255,255,.22)"}"/>`;
+      }).join("");
+      return `<svg class="ps-cwchart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+        aria-hidden="true">${bars}</svg>
+        <div class="ps-cwaxis"><span>${days}d ago</span><span>max ${max}</span><span>today</span></div>`;
+    }
+
+    /* pcSparkPoly takes {t,v} rows, not bare numbers, and returns null rather
+       than a flat line when there is nothing to draw — an invented straight
+       line through an empty box is the same lie as a ring reading zero.
+       minSpan is 0.5 lb, not the 1.0 the temperature callers use: half a pound
+       on a ten-pound cat is a real change and must not be flattened away. */
+    const pts = pcSparkPoly(pcDownsample(rows, 60), W, H - 8, 4, 0.5);
+    if (!pts) return `<div class="ps-cwempty">not enough history yet</div>`;
+    const vals = rows.map((r) => r.v);
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    return `<svg class="ps-cwchart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="${pts}" fill="none" stroke="${colour}" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="ps-cwaxis"><span>${lo.toFixed(1)}</span><span>${days}d</span><span>${hi.toFixed(1)}</span></div>`;
+  },
+
+  _crewLitterPanel(l) {
+    const h = this._hass;
+    const st = pcState(h, l.entity);
+    const pet = l.pet || {};
+    const days = l.trend_days || 30;
+    return `<div class="ps-cwpanel">
+        <div class="ps-cwpair">
+          ${this._crewBtn(st === "cleaning" ? "Cycling…" : "Cycle now", "mdi:reload",
+            `data-crewact="vacuum.start" data-target="${psEsc(l.entity)}"`)}
+          ${l.reset_button
+            ? this._crewBtn("Reset", "mdi:restart",
+              `data-crewact="button.press" data-target="${psEsc(l.reset_button)}"`)
+            : ""}
+        </div>
+        ${pet.weight ? `<div class="ps-cwsub">${psEsc(pet.name || "Cat")} weight · ${days}d</div>
+          ${this._crewTrend(pet.weight, days, "line", "var(--ps-cool)")}` : ""}
+        ${pet.visits ? `<div class="ps-cwsub">Visits per day · 14d</div>
+          ${this._crewTrend(pet.visits, 14, "bars", "var(--ps-good)")}` : ""}
+      </div>`;
+  },
+
+  /* ---- history for the litter trends ----
+     Its own fetch, not the shared 26h one: the graphs and room sparklines have
+     no use for a month, and two entities over 30 days is a smaller query than
+     widening the window everything else already shares.
+     `end_time` is ALWAYS sent — /api/history/period defaults it to start + 1 day,
+     so every window longer than 24h silently stops short. See pcNowIso. */
+  _fetchCrewHistory() {
+    const c = this._config;
+    if (!c || !this._hass) return;
+    let sec = null;
+    (c.sections || []).forEach((s) => { if (s.type === "crew") sec = s; });
+    if (!sec) return;
+    const pet = (sec.litter || {}).pet || {};
+    const ids = [pet.weight, pet.visits].filter(Boolean);
+    if (!ids.length) return;
+    const days = sec.trend_days || (sec.litter || {}).trend_days || 30;
+    const start = new Date(Date.now() - days * 86400000).toISOString();
+    const url = `history/period/${start}?end_time=${encodeURIComponent(pcNowIso())}`
+      + `&filter_entity_id=${ids.join(",")}&minimal_response&significant_changes_only`;
+    this._hass.callApi("GET", url).then((res) => {
+      const out = {};
+      ids.forEach((id) => { out[id] = []; });
+      (res || []).forEach((series) => {
+        if (!series || !series.length) return;
+        const id = series[0].entity_id;
+        if (!(id in out)) return;
+        series.forEach((row) => {
+          const v = parseFloat(row.state);
+          if (!isNaN(v)) out[id].push({ t: Date.parse(row.last_changed), v });
+        });
+      });
+      this._crewHist = out;
+      this._render();
+    }).catch(() => {
+      const out = {};
+      ids.forEach((id) => { out[id] = []; });
+      this._crewHist = out;
+      this._render();
+    });
+  },
+
+  _secCrew(sec) {
+    const h = this._hass;
+    if (!h) return "";
+    const v = sec.vacuum || {};
+    const l = sec.litter || {};
+    const w = sec.washer || {};
+    const open = this._crewOpen || {};
+
+    const states = [v.entity, l.entity].filter(Boolean).map((e) => pcState(h, e));
+    const busy = states.filter((s) => s === "cleaning" || s === "returning").length;
+    const bad = states.filter((s) => s === "error").length;
+    const chip = bad
+      ? `<span class="ps-chip bad"><span class="ps-dot"></span>${bad} error${bad > 1 ? "s" : ""}</span>`
+      : busy
+        ? `<span class="ps-chip cool"><span class="ps-dot"></span>${busy} running</span>`
+        : `<span class="ps-chip good"><span class="ps-dot"></span>All docked</span>`;
+
+    const cards = [
+      v.entity ? this._crewVacCard(v, !!open.vac) : "",
+      l.entity ? this._crewLitterCard(l, !!open.litter) : "",
+    ].filter(Boolean).join("");
+
+    /* The panels sit BELOW the grid at full width, not inside the 50% card —
+       a dispatch panel squeezed into half the screen is what made the room
+       chips wrap six rows deep. */
+    return `${this._head(sec, chip)}
+      <div class="ps-cwgrid">${cards}</div>
+      ${open.vac && v.entity ? this._crewVacPanel(v) : ""}
+      ${open.litter && l.entity ? this._crewLitterPanel(l) : ""}
+      ${w.entity ? this._crewWasher(w) : ""}`;
+  },
+
   _crewWasher(w) {
     const h = this._hass;
     const st = pcState(h, w.entity);
@@ -11411,117 +11630,30 @@ Object.assign(PurdyShellCard.prototype, {
       </div>`;
   },
 
-  /* ---- dispatch: what the expansion is FOR ---- */
-
-  /* Room chips come from the input_select's own options, not from config and
-     not from the vacuum's `rooms` attribute — the script that actually does the
-     cleaning reads that helper, so anything else would be a second list that
-     could disagree with the one being obeyed. */
-  _crewRooms(v) {
-    const h = this._hass;
-    const sel = v.room_select && h.states[v.room_select];
-    if (!sel || !Array.isArray(sel.attributes.options)) return "";
-    const cur = sel.state;
-    const chips = sel.attributes.options.map((o) =>
-      `<button class="ps-cwroom ${o === cur ? "on" : ""}" type="button"
-         data-crewroom="${psEsc(v.room_select)}" data-val="${psEsc(o)}">${psEsc(o)}</button>`).join("");
-    return `<div class="ps-cwrooms">${chips}</div>`;
-  },
-
-  _crewBtn(label, icon, attrs) {
-    return `<button class="ps-cwbtn" type="button" ${attrs}>
-        <ha-icon icon="${psEsc(icon)}"></ha-icon><span>${psEsc(label)}</span>
-      </button>`;
-  },
-
-  _crewDispatch(sec) {
-    const h = this._hass;
-    const v = sec.vacuum || {};
-    const l = sec.litter || {};
-    let out = "";
-
-    if (v.entity) {
-      const st = pcState(h, v.entity);
-      const busy = st === "cleaning" || st === "returning";
-      const mode = psCrewWords(pcState(h, v.cleaning_mode));
-      const rooms = this._crewRooms(v);
-      out += `<div class="ps-cwsub">${psEsc(v.name || "Jeeves")}</div>
-        <button class="ps-cwhero" type="button" data-crewgo="${psEsc(v.entity)}"
-          data-script="${psEsc(v.room_script || "")}">
-          <span class="ps-cwplay">${busy
-            ? `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5v14M15 5v14"/></svg>`
-            : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M7 4.5 19 12 7 19.5Z"/></svg>`}</span>
-          <span class="ps-grow">
-            <span class="ps-cwt">${busy ? "Pause" : rooms ? "Send to the selected room" : "Start cleaning"}</span>
-            ${mode ? `<span class="ps-cwd">${psEsc(mode)}</span>` : ""}
-          </span>
-        </button>
-        ${rooms}
-        <div class="ps-cwpair">
-          ${this._crewBtn("Dock", "mdi:home-import-outline",
-            `data-crewact="vacuum.return_to_base" data-target="${psEsc(v.entity)}"`)}
-          ${v.emptied_button
-            ? this._crewBtn("Emptied tank", "mdi:cup-water",
-              `data-crewact="input_button.press" data-target="${psEsc(v.emptied_button)}"`)
-            : ""}
-        </div>`;
-
-      const maint = pcState(h, v.maintenance);
-      const deep = pcState(h, v.deep_clean);
-      const notes = [];
-      if (maint && maint !== "unknown" && maint !== "OK") notes.push(maint);
-      if (deep && deep !== "unknown") notes.push(`Deep clean ${deep}`);
-      if (notes.length) out += `<div class="ps-cwnote">${psEsc(notes.join(" · "))}</div>`;
-    }
-
-    if (l.entity) {
-      const st = pcState(h, l.entity);
-      out += `<div class="ps-cwsub">${psEsc(l.name || "Litter box")}</div>
-        <div class="ps-cwpair">
-          ${this._crewBtn(st === "cleaning" ? "Cycling…" : "Cycle now", "mdi:reload",
-            `data-crewact="vacuum.start" data-target="${psEsc(l.entity)}"`)}
-          ${l.reset_button
-            ? this._crewBtn("Reset", "mdi:restart",
-              `data-crewact="button.press" data-target="${psEsc(l.reset_button)}"`)
-            : ""}
-        </div>`;
-    }
-
-    return out;
-  },
-
-  _secCrew(sec) {
-    const h = this._hass;
-    if (!h) return "";
-    this._crewKey = sec.key;
-    const v = sec.vacuum || {};
-    const l = sec.litter || {};
-    const w = sec.washer || {};
-
-    const states = [v.entity, l.entity].filter(Boolean).map((e) => pcState(h, e));
-    const busy = states.filter((s) => s === "cleaning" || s === "returning").length;
-    const bad = states.filter((s) => s === "error").length;
-    const chip = bad
-      ? `<span class="ps-chip bad"><span class="ps-dot"></span>${bad} error${bad > 1 ? "s" : ""}</span>`
-      : busy
-        ? `<span class="ps-chip cool"><span class="ps-dot"></span>${busy} running</span>`
-        : `<span class="ps-chip good"><span class="ps-dot"></span>All docked</span>`;
-
-    const cards = [
-      v.entity ? this._crewVacCard(v) : "",
-      l.entity ? this._crewLitterCard(l) : "",
-    ].filter(Boolean).join("");
-
-    return `${this._head(sec, chip)}
-      <div class="ps-cwgrid">${cards}</div>
-      ${w.entity ? this._crewWasher(w) : ""}
-      <div class="ps-xtra">${this._crewDispatch(sec)}</div>`;
-  },
-
-  /* Bound once per element per selector, like every other handler — see _each.
-     No handler closes over hass or config; they read this._hass live, because
-     the shell patches and a handler outlives many repaints. */
+  /* Bound once per element per selector — see _each. No handler closes over
+     hass or config; they read this._hass live, because the shell patches and a
+     handler outlives many repaints. */
   _bindCrew() {
+    this._each("[data-crewzone]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const z = el.getAttribute("data-crewzone");
+        if (!this._crewOpen) this._crewOpen = {};
+        this._crewOpen[z] = !this._crewOpen[z];
+        /* The trends are only worth fetching once someone opens the panel. */
+        if (z === "litter" && this._crewOpen[z] && !this._crewHist) this._fetchCrewHistory();
+        this._render();
+      });
+    });
+
+    this._each("[data-crewfloor]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._crewFloor = el.getAttribute("data-crewfloor");
+        this._render();
+      });
+    });
+
     this._each("[data-crewroom]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -11540,9 +11672,6 @@ Object.assign(PurdyShellCard.prototype, {
       });
     });
 
-    /* Start is "clean the selected room" when a room script is configured and a
-       room is picked, and a plain whole-floor start otherwise. Pausing a running
-       robot goes through the same button, so there is one place to press. */
     this._each("[data-crewgo]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -12157,43 +12286,40 @@ const PS_STYLES = `
       .ps-at { display: block; font-size: var(--pc-fs-md); font-weight: 650; }
       .ps-ad { display: block; font-size: var(--pc-fs-xs); color: var(--ps-muted); }
 
-      /* crew — the two robots and the washer.
+      /* crew — two independently expanding zones plus the washer strip.
          Every size, radius and fill is a token step; nothing loose. */
       .ps-cwgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
       .ps-cwcard { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
-                   border-radius: var(--pc-r-lg); padding: 12px 12px 11px;
-                   display: block; width: 100%; text-align: left; }
+                   border-radius: var(--pc-r-lg); overflow: hidden; }
+      .ps-cwcard.open { background: var(--pc-fill-2); border-color: rgba(77,208,225,.28); }
+      .ps-cwface { display: block; width: 100%; text-align: left; padding: 12px 12px 11px; }
       .ps-cwtop { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
       .ps-cwdot { width: 6px; height: 6px; border-radius: 50%; background: var(--ps-dim); flex: 0 0 auto; }
       .ps-cwdot.on { background: var(--ps-good); }
       .ps-cwnm { font-size: var(--pc-fs-xs); font-weight: 680; flex: 1; min-width: 0; }
-      .ps-cwring { position: relative; width: 92px; height: 92px; margin: 2px auto 8px; }
+      .ps-cwcv { color: var(--ps-dim); display: flex; flex: 0 0 auto; }
+      .ps-cwcard.open .ps-cwcv { color: var(--ps-cool); }
+      .ps-cwcv svg { transform: rotate(90deg); }
+      .ps-cwcard.open .ps-cwcv svg { transform: rotate(-90deg); }
+      .ps-cwring { position: relative; width: 92px; height: 92px; margin: 2px auto 9px; }
       .ps-cwrv { position: absolute; inset: 0; display: flex; flex-direction: column;
                  align-items: center; justify-content: center; line-height: 1.05; }
       .ps-cwrv b { font-size: var(--pc-fs-xl); font-weight: 680; font-variant-numeric: tabular-nums; }
       .ps-cwrv span { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
                       color: var(--ps-dim); font-weight: 650; margin-top: 3px; }
-      .ps-cwmile { font-size: var(--pc-fs-micro); color: var(--ps-dim); text-align: center;
-                   padding-bottom: 8px; font-variant-numeric: tabular-nums; }
-      .ps-cwquiet { font-style: italic; opacity: .72; }
       .ps-cwl { display: flex; align-items: baseline; gap: 6px; font-size: var(--pc-fs-xs);
                 padding-top: 4px; border-top: 1px solid var(--ps-hair-soft); }
       .ps-cwl em { font-style: normal; color: var(--ps-dim); flex: 1; min-width: 0; }
       .ps-cwl b { font-weight: 650; font-variant-numeric: tabular-nums; min-width: 0; }
       .ps-cwl b.warn { color: var(--ps-warn); }
 
-      .ps-cwwash { display: flex; align-items: center; gap: 10px; margin-top: 11px;
-                   background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
-                   border-radius: var(--pc-r-md); padding: 10px 12px; }
-      .ps-cwwash.alert { background: rgba(242,193,78,.10); border-color: rgba(242,193,78,.24); }
-      .ps-cwbadge { width: 34px; height: 34px; border-radius: var(--pc-r-sm); display: grid;
-                    place-items: center; background: var(--pc-fill-2); color: var(--ps-muted); flex: 0 0 auto; }
-      .ps-cwbadge ha-icon { --mdc-icon-size: 18px; }
-      .ps-cwt { font-size: var(--pc-fs-md); font-weight: 650; }
-      .ps-cwd { font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 1px; }
-
+      /* The panel is full width UNDER the grid, never inside a 50% card —
+         squeezing dispatch into half the screen is what wrapped the room
+         chips six rows deep. */
+      .ps-cwpanel { margin-top: 11px; padding-top: 12px;
+                    border-top: 1px solid var(--ps-hair); }
       .ps-cwsub { font-size: var(--pc-fs-micro); letter-spacing: .13em; text-transform: uppercase;
-                  color: var(--ps-dim); font-weight: 650; padding: 13px 0 8px; }
+                  color: var(--ps-dim); font-weight: 650; padding: 13px 0 7px; }
       .ps-cwhero { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
                    background: linear-gradient(150deg, rgba(77,208,225,.14), rgba(77,208,225,.04));
                    border: 1px solid rgba(77,208,225,.22); border-radius: var(--pc-r-lg);
@@ -12202,7 +12328,12 @@ const PS_STYLES = `
                    background: var(--ps-cool); color: #06131a; display: grid; place-items: center; }
       .ps-cwplay .ps-ico { width: 18px; height: 18px; }
       .ps-cwplay .ps-ico path { fill: currentColor; stroke: none; }
-      .ps-cwrooms { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .ps-cwtabs { display: flex; gap: 6px; margin-top: 11px; }
+      .ps-cwtab { font-size: var(--pc-fs-xs); font-weight: 680; padding: 5px 12px;
+                  border-radius: var(--pc-r-pill); background: var(--pc-fill-1);
+                  color: var(--ps-dim); }
+      .ps-cwtab.on { background: var(--pc-fill-3); color: var(--ps-text); }
+      .ps-cwrooms { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
       .ps-cwroom { font-size: var(--pc-fs-xs); font-weight: 650; padding: 6px 10px;
                    border-radius: var(--pc-r-pill); background: var(--pc-fill-2);
                    color: var(--ps-muted); border: 1px solid transparent; }
@@ -12215,6 +12346,25 @@ const PS_STYLES = `
                   font-weight: 650; }
       .ps-cwbtn ha-icon { --mdc-icon-size: 17px; }
       .ps-cwnote { font-size: var(--pc-fs-xs); color: var(--ps-warn); margin-top: 10px; }
+
+      .ps-cwchart { display: block; width: 100%; height: 56px; }
+      .ps-cwaxis { display: flex; justify-content: space-between; font-size: var(--pc-fs-micro);
+                   color: var(--ps-dim); font-variant-numeric: tabular-nums; margin-top: 2px; }
+      /* An empty box, never a flat line — a straight line through the middle
+         is a claim about the cat. */
+      .ps-cwempty { height: 56px; border-radius: var(--pc-r-sm); background: var(--pc-fill-1);
+                    display: grid; place-items: center; font-size: var(--pc-fs-xs);
+                    color: var(--ps-dim); }
+
+      .ps-cwwash { display: flex; align-items: center; gap: 10px; margin-top: 11px;
+                   background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                   border-radius: var(--pc-r-md); padding: 10px 12px; }
+      .ps-cwwash.alert { background: rgba(242,193,78,.10); border-color: rgba(242,193,78,.24); }
+      .ps-cwbadge { width: 34px; height: 34px; border-radius: var(--pc-r-sm); display: grid;
+                    place-items: center; background: var(--pc-fill-2); color: var(--ps-muted); flex: 0 0 auto; }
+      .ps-cwbadge ha-icon { --mdc-icon-size: 18px; }
+      .ps-cwt { font-size: var(--pc-fs-md); font-weight: 650; }
+      .ps-cwd { font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 1px; }
 
       /* fade + dock
        *
