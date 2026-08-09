@@ -599,43 +599,40 @@ const PS_STYLES = `
       .ps-at { display: block; font-size: var(--pc-fs-md); font-weight: 650; }
       .ps-ad { display: block; font-size: var(--pc-fs-xs); color: var(--ps-muted); }
 
-      /* crew — the two robots and the washer.
+      /* crew — two independently expanding zones plus the washer strip.
          Every size, radius and fill is a token step; nothing loose. */
       .ps-cwgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
       .ps-cwcard { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
-                   border-radius: var(--pc-r-lg); padding: 12px 12px 11px;
-                   display: block; width: 100%; text-align: left; }
+                   border-radius: var(--pc-r-lg); overflow: hidden; }
+      .ps-cwcard.open { background: var(--pc-fill-2); border-color: rgba(77,208,225,.28); }
+      .ps-cwface { display: block; width: 100%; text-align: left; padding: 12px 12px 11px; }
       .ps-cwtop { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
       .ps-cwdot { width: 6px; height: 6px; border-radius: 50%; background: var(--ps-dim); flex: 0 0 auto; }
       .ps-cwdot.on { background: var(--ps-good); }
       .ps-cwnm { font-size: var(--pc-fs-xs); font-weight: 680; flex: 1; min-width: 0; }
-      .ps-cwring { position: relative; width: 92px; height: 92px; margin: 2px auto 8px; }
+      .ps-cwcv { color: var(--ps-dim); display: flex; flex: 0 0 auto; }
+      .ps-cwcard.open .ps-cwcv { color: var(--ps-cool); }
+      .ps-cwcv svg { transform: rotate(90deg); }
+      .ps-cwcard.open .ps-cwcv svg { transform: rotate(-90deg); }
+      .ps-cwring { position: relative; width: 92px; height: 92px; margin: 2px auto 9px; }
       .ps-cwrv { position: absolute; inset: 0; display: flex; flex-direction: column;
                  align-items: center; justify-content: center; line-height: 1.05; }
       .ps-cwrv b { font-size: var(--pc-fs-xl); font-weight: 680; font-variant-numeric: tabular-nums; }
       .ps-cwrv span { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
                       color: var(--ps-dim); font-weight: 650; margin-top: 3px; }
-      .ps-cwmile { font-size: var(--pc-fs-micro); color: var(--ps-dim); text-align: center;
-                   padding-bottom: 8px; font-variant-numeric: tabular-nums; }
-      .ps-cwquiet { font-style: italic; opacity: .72; }
       .ps-cwl { display: flex; align-items: baseline; gap: 6px; font-size: var(--pc-fs-xs);
                 padding-top: 4px; border-top: 1px solid var(--ps-hair-soft); }
       .ps-cwl em { font-style: normal; color: var(--ps-dim); flex: 1; min-width: 0; }
       .ps-cwl b { font-weight: 650; font-variant-numeric: tabular-nums; min-width: 0; }
       .ps-cwl b.warn { color: var(--ps-warn); }
 
-      .ps-cwwash { display: flex; align-items: center; gap: 10px; margin-top: 11px;
-                   background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
-                   border-radius: var(--pc-r-md); padding: 10px 12px; }
-      .ps-cwwash.alert { background: rgba(242,193,78,.10); border-color: rgba(242,193,78,.24); }
-      .ps-cwbadge { width: 34px; height: 34px; border-radius: var(--pc-r-sm); display: grid;
-                    place-items: center; background: var(--pc-fill-2); color: var(--ps-muted); flex: 0 0 auto; }
-      .ps-cwbadge ha-icon { --mdc-icon-size: 18px; }
-      .ps-cwt { font-size: var(--pc-fs-md); font-weight: 650; }
-      .ps-cwd { font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 1px; }
-
+      /* The panel is full width UNDER the grid, never inside a 50% card —
+         squeezing dispatch into half the screen is what wrapped the room
+         chips six rows deep. */
+      .ps-cwpanel { margin-top: 11px; padding-top: 12px;
+                    border-top: 1px solid var(--ps-hair); }
       .ps-cwsub { font-size: var(--pc-fs-micro); letter-spacing: .13em; text-transform: uppercase;
-                  color: var(--ps-dim); font-weight: 650; padding: 13px 0 8px; }
+                  color: var(--ps-dim); font-weight: 650; padding: 13px 0 7px; }
       .ps-cwhero { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
                    background: linear-gradient(150deg, rgba(77,208,225,.14), rgba(77,208,225,.04));
                    border: 1px solid rgba(77,208,225,.22); border-radius: var(--pc-r-lg);
@@ -644,7 +641,12 @@ const PS_STYLES = `
                    background: var(--ps-cool); color: #06131a; display: grid; place-items: center; }
       .ps-cwplay .ps-ico { width: 18px; height: 18px; }
       .ps-cwplay .ps-ico path { fill: currentColor; stroke: none; }
-      .ps-cwrooms { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .ps-cwtabs { display: flex; gap: 6px; margin-top: 11px; }
+      .ps-cwtab { font-size: var(--pc-fs-xs); font-weight: 680; padding: 5px 12px;
+                  border-radius: var(--pc-r-pill); background: var(--pc-fill-1);
+                  color: var(--ps-dim); }
+      .ps-cwtab.on { background: var(--pc-fill-3); color: var(--ps-text); }
+      .ps-cwrooms { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
       .ps-cwroom { font-size: var(--pc-fs-xs); font-weight: 650; padding: 6px 10px;
                    border-radius: var(--pc-r-pill); background: var(--pc-fill-2);
                    color: var(--ps-muted); border: 1px solid transparent; }
@@ -657,6 +659,25 @@ const PS_STYLES = `
                   font-weight: 650; }
       .ps-cwbtn ha-icon { --mdc-icon-size: 17px; }
       .ps-cwnote { font-size: var(--pc-fs-xs); color: var(--ps-warn); margin-top: 10px; }
+
+      .ps-cwchart { display: block; width: 100%; height: 56px; }
+      .ps-cwaxis { display: flex; justify-content: space-between; font-size: var(--pc-fs-micro);
+                   color: var(--ps-dim); font-variant-numeric: tabular-nums; margin-top: 2px; }
+      /* An empty box, never a flat line — a straight line through the middle
+         is a claim about the cat. */
+      .ps-cwempty { height: 56px; border-radius: var(--pc-r-sm); background: var(--pc-fill-1);
+                    display: grid; place-items: center; font-size: var(--pc-fs-xs);
+                    color: var(--ps-dim); }
+
+      .ps-cwwash { display: flex; align-items: center; gap: 10px; margin-top: 11px;
+                   background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                   border-radius: var(--pc-r-md); padding: 10px 12px; }
+      .ps-cwwash.alert { background: rgba(242,193,78,.10); border-color: rgba(242,193,78,.24); }
+      .ps-cwbadge { width: 34px; height: 34px; border-radius: var(--pc-r-sm); display: grid;
+                    place-items: center; background: var(--pc-fill-2); color: var(--ps-muted); flex: 0 0 auto; }
+      .ps-cwbadge ha-icon { --mdc-icon-size: 18px; }
+      .ps-cwt { font-size: var(--pc-fs-md); font-weight: 650; }
+      .ps-cwd { font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 1px; }
 
       /* fade + dock
        *

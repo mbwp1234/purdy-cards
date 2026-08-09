@@ -2885,22 +2885,23 @@ check('every accepted section type has a renderer, and vice versa', (() => {
 })());
 
 /* ---------------------------------------------------------------------------
-   crew — the two robots and the washer, replacing the quick grid AND the
-   systems robot rows (which were the same three machines twice).
+   crew — TWO INDEPENDENT ZONES. The robots share a row and nothing else: one
+   is dispatched to a room, the other is read for trends. A single section-level
+   expand dumped both control sets on screen at once.
    --------------------------------------------------------------------------- */
 const crewCfg = {
   type: 'crew', key: 'crew', title: 'Crew',
   vacuum: { entity: 'vacuum.j', name: 'Jeeves', battery: 'sensor.batt',
     dirty_water: 'sensor.dirty', filter: 'sensor.filt', progress: 'sensor.prog',
-    current_room: 'sensor.room', maintenance: 'sensor.maint', deep_clean: 'sensor.deep',
+    current_room: 'sensor.room', cleaning_mode: 'select.mode', suction: 'select.suck',
     room_select: 'input_select.room', room_script: 'script.clean_room',
-    emptied_button: 'input_button.emptied', cleaning_mode: 'select.mode',
-    last_run: 'sensor.lastrun',
-    mileage: { area: 'sensor.area', runs: 'sensor.runs' } },
+    emptied_button: 'input_button.emptied',
+    wear: [{ label: 'Filter', entity: 'sensor.filt' }, { label: 'Main brush', entity: 'sensor.brush' }],
+    mileage: { area: 'sensor.area', runs: 'sensor.runs', path_width_m: 0.3 } },
   litter: { entity: 'vacuum.l', name: 'Litter box', litter_level: 'sensor.lit',
-    waste_drawer: 'sensor.drawer', reset_button: 'button.reset',
+    waste_drawer: 'sensor.drawer', reset_button: 'button.reset', trend_days: 30,
     pet: { name: 'Crouton', weight: 'sensor.wt', visits: 'sensor.visits',
-      scoops: 'counter.scoops' } },
+      scoops: 'sensor.cycles' } },
   washer: { entity: 'input_select.washer', name: 'Washer', start_time: 'input_datetime.ws' },
 };
 const crewStates = {
@@ -2908,32 +2909,34 @@ const crewStates = {
   'sensor.batt': { state: '100', attributes: { unit_of_measurement: '%' } },
   'sensor.dirty': { state: '10', attributes: { unit_of_measurement: '%' } },
   'sensor.filt': { state: '14', attributes: { unit_of_measurement: '%' } },
-  'sensor.prog': { state: '0', attributes: {} },
+  'sensor.brush': { state: '57', attributes: { unit_of_measurement: '%' } },
+  'sensor.prog': { state: 'unavailable', attributes: {} },
   'sensor.room': { state: 'Front Entryway', attributes: {} },
-  'sensor.maint': { state: 'Filter 14%', attributes: {} },
-  'sensor.deep': { state: '122 days ago', attributes: {} },
+  'select.mode': { state: 'mopping', attributes: {} },
+  'select.suck': { state: 'standard', attributes: {} },
   'sensor.area': { state: '59868.86', attributes: { unit_of_measurement: 'ft²' } },
   'sensor.runs': { state: '219', attributes: {} },
-  'select.mode': { state: 'mopping', attributes: {} },
-  'sensor.lastrun': { state: '2026-08-08T11:42:51+00:00', attributes: {} },
   'input_select.room': { state: '1F - Living Room',
-    attributes: { options: ['1F - Living Room', '1F - Kitchen', '2F - Office'] } },
+    attributes: { options: ['1F - Living Room', '1F - Kitchen', '2F - Office', '2F - Nursery'] } },
   'vacuum.l': { state: 'docked', attributes: {} },
   'sensor.lit': { state: '90', attributes: { unit_of_measurement: '%' } },
   'sensor.drawer': { state: '16', attributes: { unit_of_measurement: '%' } },
   'sensor.wt': { state: '10.09', attributes: { unit_of_measurement: 'lb' } },
   'sensor.visits': { state: '3', attributes: {} },
-  'counter.scoops': { state: '0', attributes: {} },
+  'sensor.cycles': { state: '2077', attributes: { unit_of_measurement: 'cycles' } },
   'input_select.washer': { state: 'Off', attributes: {} },
   'input_datetime.ws': { state: '2026-08-06 14:33:28', attributes: {} },
 };
-const mkCrew = (over) => {
+const mkCrew = (over, open) => {
   const s = new SH();
   s.setConfig({ sections: [crewCfg] });
   s._hass = { states: { ...crewStates, ...(over || {}) } };
+  if (open) s._crewOpen = open;
   return s;
 };
 const crewHtml = mkCrew()._secCrew(crewCfg);
+const crewVac = mkCrew(null, { vac: true })._secCrew(crewCfg);
+const crewLit = mkCrew(null, { litter: true })._secCrew(crewCfg);
 
 check('setConfig accepts a crew section', (() => {
   try { new SH().setConfig({ sections: [crewCfg] }); return true; } catch (e) { return false; }
@@ -2941,21 +2944,37 @@ check('setConfig accepts a crew section', (() => {
 check('crew draws a card for each robot',
   /Jeeves/.test(crewHtml) && /Litter box/.test(crewHtml));
 check('crew names every number it prints — no bare percentage',
-  /Dirty water/.test(crewHtml) && /Waste drawer/.test(crewHtml));
-/* Scope to the RING, not to the first svg in the section — that one is the
+  /Distance/.test(crewHtml) && /Filter/.test(crewHtml) && /Scoops/.test(crewHtml));
+
+/* Scoped to the RING, not the first svg in the section — that one is the
    header chevron, and reading it made this pass for the wrong reason. */
 const crewRingSvg = (html) => /<div class="ps-cwring">([\s\S]*?)<\/svg>/.exec(html)[1];
 check('crew rings are CONCENTRIC, not two segments of one track', (() => {
   const radii = (crewRingSvg(crewHtml).match(/ r="([\d.]+)"/g) || [])
     .map((s) => parseFloat(s.slice(4)));
-  return new Set(radii).size === 2 && radii.length === 4;   // track + fill on each
+  return new Set(radii).size === 2 && radii.length === 4;
 })());
-check('crew shows the odometer under the gauge',
-  /59,869 ft²/.test(crewHtml) && /219 runs/.test(crewHtml));
-check('crew reports the cat', /Crouton/.test(crewHtml) && /10\.1 lb/.test(crewHtml));
 
-/* Zero-vs-missing, the rule the old tiles broke. An absent sensor is "—";
-   it must never be rendered as a confident 0%. */
+/* The vacuum's gauge is battery + water; the collapsed rows are distance,
+   runs and filter. Distance is DERIVED from area — Dreame publishes no
+   distance sensor at all — so it must be marked approximate. */
+check('the vacuum gauge reads battery when docked', /battery/.test(crewHtml));
+check('distance is shown in miles', /mi</.test(crewHtml));
+check('a derived distance is marked approximate', /≈/.test(crewHtml));
+check('distance converts ft² through the path width', (() => {
+  const m = /≈([\d.]+) mi/.exec(crewHtml);
+  return m && Math.abs(parseFloat(m[1]) - 11.5) < 0.6;   // 59,869 ft² / 0.3 m
+})());
+check('runs are still shown', /Runs/.test(crewHtml) && /219/.test(crewHtml));
+
+/* The litter card carries scoops, visits and weight — and scoops is the
+   integration's own total_cycles, not a counter we maintain. */
+check('the litter card leads with the lifetime scoop count',
+  /Scoops/.test(crewHtml) && /2,077/.test(crewHtml));
+check('the litter card shows visits and weight',
+  /Visits today/.test(crewHtml) && /10\.1 lb/.test(crewHtml));
+
+/* Zero-vs-missing. An absent sensor is "—", never a confident 0%. */
 const crewGone = mkCrew({ 'sensor.dirty': undefined, 'sensor.batt': undefined })
   ._secCrew(crewCfg);
 check('a missing reading renders as an em dash, never as 0%',
@@ -2963,52 +2982,96 @@ check('a missing reading renders as an em dash, never as 0%',
 check('a missing reading draws the track with no fill arc', (() => {
   const svg = crewRingSvg(crewGone);
   const radii = (svg.match(/ r="([\d.]+)"/g) || []).map((s) => parseFloat(s.slice(4)));
-  /* both readings gone: two track circles and nothing else */
   return !/var\(--ps-cool\)/.test(svg) && !/var\(--ps-warn\)/.test(svg) && radii.length === 2;
 })());
-/* Three findings from rendering against a dump of REAL states, none of which
-   the hand-written fixture had: the cleaning mode is a slug, the litter card
-   printed the visit count twice, and the vacuum's third row said "Docked" for
-   the third time on one card. */
-check('an unseeded scoop counter says nothing rather than claiming zero',
-  !/0 scoops saved/.test(crewHtml) && /counting scoops from today/.test(crewHtml));
-check('the unseeded scoop line does not repeat the visit count', (() => {
-  const card = /Litter box[\s\S]*$/.exec(crewHtml)[0].split('ps-xtra')[0];
-  return (card.match(/visits today/gi) || []).length === 1;
-})());
-check('a slug cleaning mode is rendered as words',
-  /Mopping/.test(crewHtml) && !/>mopping</.test(crewHtml));
-check('the vacuum card does not say "docked" a third time',
-  !/Status/.test(crewHtml) && /Last run/.test(crewHtml));
-check('a seeded scoop counter is shown',
-  /1,204 scoops saved/.test(mkCrew({ 'counter.scoops': { state: '1204', attributes: {} } })
-    ._secCrew(crewCfg)));
+check('a missing area gives no distance rather than zero miles',
+  /—/.test(mkCrew({ 'sensor.area': undefined })._secCrew(crewCfg)));
 
-/* Tapping either card opens the SAME expansion — one open state per section,
-   like every other section, so nothing can desync from the chevron. */
-check('both crew cards open the section itself', (() => {
-  const opens = crewHtml.match(/data-open="crew"/g) || [];
-  return opens.length >= 3;   // header + both cards
+/* TWO ZONES: each card toggles only itself, and neither panel is drawn until
+   its own card is open. */
+check('each card toggles its own zone',
+  /data-crewzone="vac"/.test(crewHtml) && /data-crewzone="litter"/.test(crewHtml));
+check('no panel is drawn while both zones are shut',
+  !/ps-cwpanel/.test(crewHtml));
+check('opening the vacuum draws only the vacuum panel',
+  /data-crewgo/.test(crewVac) && !/ps-cwchart/.test(crewVac) && !/ps-cwempty/.test(crewVac));
+check('opening the litter box draws only its own panel',
+  !/data-crewgo/.test(crewLit) && /data-crewact="vacuum\.start"/.test(crewLit));
+check('both zones can be open at once', (() => {
+  const both = mkCrew(null, { vac: true, litter: true })._secCrew(crewCfg);
+  return /data-crewgo/.test(both) && (both.match(/ps-cwpanel/g) || []).length === 2;
 })());
-check('crew dispatch lives behind the expand', /ps-xtra/.test(crewHtml));
-check('dispatch offers a room per input_select option, not per config entry',
-  (crewHtml.match(/data-crewroom=/g) || []).length === 3);
-check('the selected room is marked', /ps-cwroom on/.test(crewHtml));
+check('an open card is marked open', /ps-cwcard open/.test(crewVac));
+
+/* Thirteen pills over six rows was most of a screen. Rooms group by floor,
+   only the active floor draws, and the prefix is stripped from the chip
+   because the tab already says it. */
+check('rooms are grouped into floor tabs',
+  /data-crewfloor="1F"/.test(crewVac) && /data-crewfloor="2F"/.test(crewVac));
+check('only the active floor draws its rooms',
+  (crewVac.match(/data-crewroom=/g) || []).length === 2);
+check('the floor prefix is stripped from the chip', !/>1F - /.test(crewVac));
+check('the tab follows the selection so the pick is never hidden',
+  /ps-cwtab on[^>]*data-crewfloor="1F"/.test(crewVac));
+check('the selected room is marked', /ps-cwroom on/.test(crewVac));
 check('dispatch reads the room list from the helper the script obeys',
-  /data-crewroom="input_select\.room"/.test(crewHtml));
-check('dispatch surfaces the maintenance and deep-clean notes',
-  /Filter 14%/.test(crewHtml) && /Deep clean 122 days ago/.test(crewHtml));
-check('the litter box can be cycled from dispatch',
-  /data-crewact="vacuum\.start"[^>]*data-target="vacuum\.l"/.test(crewHtml));
+  /data-crewroom="input_select\.room"/.test(crewVac));
+check('the hero names the room it would clean', /Clean Living Room/.test(crewVac));
 
-/* While he is running the ring means progress, not charge — and the caption
-   has to change with it or the two disagree. */
+/* Only consumables that are actually low earn a line; deep clean is gone —
+   it named a house routine no longer in use. */
+check('only a low consumable is called out',
+  /Filter 14%/.test(crewVac) && !/Main brush/.test(crewVac));
+check('deep clean is gone entirely',
+  !/[Dd]eep clean/.test(crewVac) && !/deep_clean/.test(
+    fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8')));
+
+/* While running the ring means progress, and the caption changes with it. */
 const crewBusy = mkCrew({ 'vacuum.j': { state: 'cleaning', attributes: {} },
-  'sensor.prog': { state: '42', attributes: {} } })._secCrew(crewCfg);
-check('a running vacuum shows progress rather than charge',
-  /42%/.test(crewBusy) && /cleaned/.test(crewBusy) && !/charged/.test(crewBusy));
-check('a running vacuum names the room it is in', /Front Entryway/.test(crewBusy));
+  'sensor.prog': { state: '42', attributes: {} } }, { vac: true })._secCrew(crewCfg);
+check('a running vacuum shows job progress rather than battery',
+  /42%/.test(crewBusy) && />job</.test(crewBusy) && !/>battery</.test(crewBusy));
 check('the hero button pauses a running robot', /Pause/.test(crewBusy));
+check('a slug cleaning mode is rendered as words',
+  /Mopping/.test(crewBusy) && !/>mopping</.test(crewBusy));
+check('an unavailable progress sensor falls back to battery, not to zero',
+  /100%/.test(crewHtml) && /battery/.test(crewHtml));
+
+/* The litter panel is trends. A chart with no history is an empty box, never
+   a flat line — the same rule the room sparklines follow. */
+check('the litter panel says it is loading before history arrives',
+  /loading…/.test(crewLit));
+check('an empty history draws a box, never a flat line', (() => {
+  const s = mkCrew(null, { litter: true });
+  s._crewHist = { 'sensor.wt': [], 'sensor.visits': [] };
+  const h = s._secCrew(crewCfg);
+  return /ps-cwempty/.test(h) && !/polyline/.test(h);
+})());
+check('a weight series draws a line with its own min and max', (() => {
+  const s = mkCrew(null, { litter: true });
+  const now = Date.now();
+  s._crewHist = { 'sensor.wt': [
+    { t: now - 20 * 86400000, v: 9.8 }, { t: now - 10 * 86400000, v: 10.4 },
+    { t: now, v: 10.1 }], 'sensor.visits': [] };
+  const h = s._secCrew(crewCfg);
+  return /polyline/.test(h) && /9\.8/.test(h) && /10\.4/.test(h);
+})());
+check('visits are drawn as bars, not as a line between daily totals', (() => {
+  const s = mkCrew(null, { litter: true });
+  const now = Date.now();
+  s._crewHist = { 'sensor.wt': [], 'sensor.visits': [
+    { t: now - 86400000, v: 4 }, { t: now, v: 3 }] };
+  const h = s._secCrew(crewCfg);
+  return /<rect/.test(h) && /max 4/.test(h);
+})());
+check('the litter history fetch always sends end_time', (() => {
+  const src = fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8');
+  const m = /history\/period\/[^`]*`/.exec(src);
+  return m && /end_time=/.test(src.slice(src.indexOf('history/period/'), src.indexOf('history/period/') + 300));
+})());
+check('trends are only fetched once the litter zone is opened',
+  /_crewOpen\[z\] && !this\._crewHist\) this\._fetchCrewHistory/.test(
+    fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8')));
 
 check('a finished washer is flagged rather than merely stated',
   /ps-cwwash alert/.test(mkCrew({ 'input_select.washer': { state: 'Finished', attributes: {} } })
@@ -3016,13 +3079,13 @@ check('a finished washer is flagged rather than merely stated',
 check('crew binds its handlers, they are not merely defined',
   /this\._bindCrew\(\);/.test(shellSrc) && /_bindCrew\(\)/.test(
     fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8')));
-check('no crew handler closes over hass', !/_bindCrew\(\)[\s\S]*?\n  \},/.test('') && (() => {
+check('no crew handler closes over hass', (() => {
   const src = fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8');
   const bind = /_bindCrew\(\) \{([\s\S]*?)\n  \},/.exec(src)[1];
   return /this\._hass/.test(bind) && !/\bconst h = /.test(bind);
 })());
 check('crew styles carry no loose font-size', (() => {
-  const block = /crew — the two robots([\s\S]*?)\/\* fade \+ dock/.exec(SH.styles)[1];
+  const block = /crew — two independently([\s\S]*?)\/\* fade \+ dock/.exec(SH.styles)[1];
   return !/font-size: *\d/.test(block);
 })());
 
