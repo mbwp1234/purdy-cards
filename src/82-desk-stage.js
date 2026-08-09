@@ -37,6 +37,7 @@ Object.assign(PurdyDeskCard.prototype, {
       calendar: () => this._pnlCalendar(sec),
       lights: () => this._pnlLights(sec),
       nowplaying: () => this._pnlNowplaying(sec),
+      weather: () => this._pnlWeather(sec),
       /* A section parked on the stage that has no stage renderer falls back to
          its dock treatment rather than vanishing — moving a section between
          tiers is a `zone:` edit and must never be a blank column. */
@@ -526,6 +527,187 @@ Object.assign(PurdyDeskCard.prototype, {
     return `${naps.length ? `<div class="pd-sub2">Naps today · ${naps.length}</div>${napRows}` : ""}
       ${night ? `<div class="pd-sub2">${night.active ? "Tonight" : "Last night"}</div>${nightRows}` : ""}
       ${spread}`;
+  },
+
+  /* -------------------------------------------------------------- weather --*/
+
+  /* Measured in the balanced face; the forecast when the panel is expanded.
+   *
+   * This was built showing BOTH rails at once, on the reasoning that width is
+   * what a stage panel buys. A screenshot at 1440 killed it: a stage column
+   * among five panels is about 290px wide, so the two rails stacked, the
+   * forecast's day labels were clipped off the bottom of the panel, and the
+   * caption truncated mid-word. Width is what EXPANDING buys — the balanced
+   * face has no more room than the phone does.
+   *
+   * So the measured week is the `full` face, because it is the thing nothing
+   * else on this screen says (the strip already carries current conditions), and
+   * the forecast rides `xtra` with the hourly strip beside it, where there is
+   * genuinely room for both. No tabs: on the desk the second rail is a chevron
+   * away rather than a toggle away.
+   *
+   * Everything numeric comes off borrowed methods — the statistics fetch, the
+   * provider-shape detection, the domain floor, today's live widening and the
+   * capsule's three states. Only the markup is the desk's. */
+  _pnlWeather(sec) {
+    const h = this._hass;
+    const live = this._wxLive(sec);
+    const reading = pcReading(h, sec.sensor);
+    const st = psWeatherStats(this._wxStats || []);
+    const fcSt = sec.forecast && h.states[sec.forecast];
+    const app = sec.feels_from ? pcNumOf(h.states[sec.feels_from], "apparent_temperature") : null;
+    const feels = live != null && app != null && Math.abs(app - live) >= 2;
+
+    const chip = feels
+      ? this._chip(`Feels ${this._wxDeg(app)}`, app > live ? "heat" : "cool")
+      : (fcSt ? this._chip(pcWxText(fcSt.state), "") : "");
+
+    /* Folded, not hidden: opening Climate turns the weather into a number that
+       can still be read. The rails are what goes — a capsule column at a
+       hundred pixels wide is unreadable, and pretending otherwise is worse than
+       dropping it. */
+    const mini = `<div class="pd-mini">
+        ${fcSt ? `<ha-icon class="pd-wxmi" icon="${psEsc(pcWxIcon(fcSt.state))}"></ha-icon>` : ""}
+        ${this._mstat(live == null ? "—" : live.toFixed(1), "outside", "°")}
+        ${st.max == null ? "" : this._mstat(Math.round(st.max), `max ${st.days}d`, "°")}
+        ${chip}
+      </div>`;
+
+    const hero = `<div class="pd-wxhero">
+        <div>
+          <div class="pd-wxbig${reading.ok ? "" : " off"}">${
+            reading.ok && live != null ? `${live.toFixed(1)}<sup>°</sup>` : "—"}</div>
+          ${this._wxDeltaHtml(sec, live)}
+          <div class="pd-wxsrc">${psEsc(reading.ok ? this._wxSrcName(sec)
+            : (reading.why === "missing" ? "Sensor not found" : "Sensor unavailable"))}</div>
+        </div>
+        <div class="pd-wxtiles">
+          ${this._mstat(st.min == null ? "—" : st.min.toFixed(1), `min ${st.days}d`, "°")}
+          ${this._mstat(st.mean == null ? "—" : st.mean.toFixed(1), `avg ${st.days}d`, "°")}
+          ${this._mstat(st.max == null ? "—" : st.max.toFixed(1), `max ${st.days}d`, "°")}
+        </div>
+      </div>`;
+
+    const note = this._wxNoteText(sec);
+    /* The window comes off the CLOSED days, never off the column count.
+       Statistics answers with `days` complete buckets plus the one in progress,
+       so reading the array's length printed "last 8 days" for `days: 7` — and at
+       this panel width it truncated to "last 8 day" as well. */
+    const closed = st.days || sec.days || 7;
+
+    return `${this._head(sec, chip)}
+      ${mini}
+      <div class="pd-pbody pd-full">
+        ${hero}
+        <div class="pd-wxcol">
+          <div class="pd-wxrh"><span class="pd-wxlb">Measured</span>
+            <span class="pd-wxrb">${closed} days</span></div>
+          ${this._deskWxRail(sec, "hist", live)}
+        </div>
+        ${note ? `<div class="pd-wxnote">${psEsc(note)}</div>` : ""}
+        <div class="pd-xtra">
+          <div class="pd-wxrails">
+            <div class="pd-wxcol">
+              <div class="pd-wxrh"><span class="pd-wxlb">Forecast</span>
+                <span class="pd-wxrb">${psEsc(this._wxAttrib(fcSt && fcSt.attributes.attribution) || "high–low")}</span></div>
+              ${this._deskWxRail(sec, "fc", live)}
+            </div>
+            <div class="pd-wxcol">
+              ${this._deskWxHourly(sec)}
+              ${this._deskWxRows(sec)}
+            </div>
+          </div>
+        </div>
+      </div>`;
+  },
+
+  _wxDeltaHtml(sec, live) {
+    const today = (this._wxStats || []).find((d) => d.partial);
+    const from = today && today.min != null && live != null ? live - today.min : null;
+    if (from == null) return "";
+    return `<div class="pd-wxdelta${from < 0 ? " cool" : ""}">${from >= 0 ? "↑" : "↓"} ${
+      Math.abs(from).toFixed(1)}° from today's low</div>`;
+  },
+
+  _deskWxRail(sec, which, live) {
+    const err = which === "fc" ? this._wxFcErr : this._wxStatsErr;
+    if (err) return `<div class="pd-wxbox">${psEsc(err)}</div>`;
+    const raw = which === "fc" ? this._wxFc : this._wxStats;
+    /* null is still loading; [] is an answer with nothing in it. */
+    if (raw == null) return `<div class="pd-wxbox">Reading…</div>`;
+    /* `_wxHistRows` is borrowed rather than reimplemented: it is what stops the
+       live tick floating above the top of today's own capsule. */
+    const rows = which === "fc" ? raw.slice(0, sec.forecast_days || 7) : this._wxHistRows(live);
+    if (!rows.length) {
+      return `<div class="pd-wxbox">${which === "fc"
+        ? `No ${psEsc(this._wxKind(sec).replace("_", " "))} forecast published.`
+        : "No statistics for this sensor yet."}</div>`;
+    }
+    const dom = this._wxDomain(rows, which);
+    if (!dom) return `<div class="pd-wxbox">No temperatures in this range.</div>`;
+
+    const cells = rows.map((d) => {
+      const isNow = which === "fc" ? d.today : d.partial;
+      const hi = which === "fc" ? d.hi : d.max;
+      const lo = which === "fc" ? d.lo : d.min;
+      const pop = which === "fc" && d.pop != null ? `${Math.round(d.pop)}%` : "";
+      return `<div class="pd-wxday${isNow ? " now" : ""}">
+          ${which === "fc"
+            ? `<ha-icon class="pd-wxi" icon="${psEsc(pcWxIcon(d.condition))}"></ha-icon>` : ""}
+          <span class="pd-wxhi">${this._wxDeg(hi)}</span>
+          ${this._wxCapsule(lo, hi, dom, isNow && live != null ? live : null, "pd-wx")}
+          <span class="pd-wxlo">${this._wxDeg(lo)}</span>
+          ${which === "fc" ? `<span class="pd-wxpcp${pop ? "" : " none"}">${pop || "0%"}</span>` : ""}
+          <span class="pd-wxdw">${psEsc(this._wxDow(d.ts, isNow))}</span>
+        </div>`;
+    }).join("");
+    return `<div class="pd-wxbox plot"><div class="pd-wxrail"
+      style="--n:${rows.length}">${cells}</div></div>`;
+  },
+
+  _deskWxHourly(sec) {
+    const hrs = this._wxHrs;
+    if (!hrs || hrs.length < 2) return "";
+    /* Borrowed, so the coolest hour is not a hairline here either. */
+    const { lo, hi } = this._wxHourDomain(hrs);
+    const bars = hrs.map((x) =>
+      `<i style="height:${Math.max(6, ((x.t - lo) / (hi - lo)) * 100).toFixed(1)}%"></i>`).join("");
+    return `<div>
+        <div class="pd-wxrh"><span class="pd-wxlb">Next ${hrs.length} hours</span>
+          <span class="pd-wxrb">${this._wxDeg(hrs[0].t)} → ${this._wxDeg(hrs[hrs.length - 1].t)}</span></div>
+        <div class="pd-wxhrs">${bars}</div>
+      </div>`;
+  },
+
+  /* A row whose value is missing is dropped, not dashed — NWS publishes no
+     apparent temperature and no UV index at all, so a fixed list would be half
+     dashes on the most accurate provider available. */
+  _deskWxRows(sec) {
+    const h = this._hass;
+    const fc = sec.forecast && h.states[sec.forecast];
+    const feels = sec.feels_from && h.states[sec.feels_from];
+    const pick = (k) => {
+      const v = feels ? pcNumOf(feels, k) : null;
+      return v == null ? (fc ? pcNumOf(fc, k) : null) : v;
+    };
+    const out = [];
+    const hum = pick("humidity");
+    const dew = pick("dew_point");
+    if (hum != null) out.push(["Humidity", `${Math.round(hum)}%`]);
+    if (dew != null) out.push(["Dew point", this._wxDeg(dew)]);
+    const ws = pick("wind_speed");
+    if (ws != null) {
+      const unit = (((feels || fc || {}).attributes) || {}).wind_speed_unit || "";
+      out.push(["Wind", `${Math.round(ws)}${unit ? ` ${unit}` : ""}`]);
+    }
+    const uv = pick("uv_index");
+    if (uv != null) out.push(["UV", uv.toFixed(1)]);
+    const g = sec.gttc_outdoor && h.states[sec.gttc_outdoor];
+    const diff = g ? pcNumOf(g, "outdoor_minus_indoor") : null;
+    if (diff != null) out.push(["vs inside", `${diff > 0 ? "+" : ""}${diff.toFixed(1)}°`]);
+    if (!out.length) return "";
+    return `<div class="pd-wxfacts">${out.map(([k, v]) =>
+      this._mstat(v, k)).join("")}</div>`;
   },
 
   /* ---------------------------------------------------------------- music --*/

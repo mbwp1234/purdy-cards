@@ -1,0 +1,20 @@
+{
+  "_note": "Copy to weather.json and fill in your own entity ids, then shoot with `node dev/shoot/shoot.mjs phone-weather`. Real patches are gitignored — they name entities, and this repo is public. A patch is applied in flight on the way into setConfig; Home Assistant is never written to. A missing patch file is logged and the config renders unpatched.",
+
+  "$insertSection": {
+    "index": 2,
+    "section": {
+      "type": "weather",
+      "key": "wx",
+      "title": "Weather",
+      "sensor": "sensor.<your-outdoor-thermometer>",
+      "forecast": "weather.<your-forecast-provider>",
+      "feels_from": "weather.<a-provider-publishing-apparent-temperature>",
+      "gttc_outdoor": "sensor.<gttc-outdoor-temperature>",
+      "sun": "sun.sun",
+      "days": 7,
+      "rail": "history",
+      "hourly": 12
+    }
+  }
+}

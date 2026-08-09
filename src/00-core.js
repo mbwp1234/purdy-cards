@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.53.0";
+const PC_VERSION = "1.54.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -49,6 +49,12 @@ const PC_TOKENS = `
         --pc-fs-lg: 15px;
         --pc-fs-xl: 18px;
         --pc-fs-2xl: 22px;
+        /* One step above the scale's old ceiling, added deliberately rather
+           than as a loose pixel. Every other big number on the card sits inside
+           a ring, which is what gives it its weight; the weather section's
+           reading has no ring, so the numeral itself has to carry the hero
+           role. 2xl at 22px reads as a chip beside the min/avg/max tiles. */
+        --pc-fs-3xl: 40px;
 
         /* radius */
         --pc-r-hair: 2px;

@@ -5,3 +5,7 @@ node_modules/
 # Personal Home Assistant config dumps stay out of this public repo.
 reference/
 *-view-*.json
+# Shoot patches name real entities, so they are local. The committed
+# *.example.json shows the shape with placeholders.
+dev/shoot/patches/*.json
+!dev/shoot/patches/*.example.json

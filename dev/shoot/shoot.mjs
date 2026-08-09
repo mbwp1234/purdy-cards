@@ -40,6 +40,12 @@ const PRESETS = {
   "phone-joel":   [PHONE, SHELL + "&open=joel"],
   "phone-climate":[PHONE, SHELL + "&open=clim"],
   "phone-crew":   [PHONE, SHELL + "&open=crew"],
+  /* The weather rail, both faces and both sources. `patch=` previews the
+     section against LIVE data before it is deployed — the whole point of
+     shooting rather than releasing to find out. */
+  "phone-weather":     [PHONE, SHELL + "&patch=weather&open=wx"],
+  "phone-weather-fc":  [PHONE, SHELL + "&patch=weather&open=wx&wxrail=forecast"],
+  "phone-weather-cold":[PHONE, SHELL + "&patch=weather"],
   lights:         [PHONE, SHELL + "&sheet=lights"],
   music:          [PHONE, SHELL + "&sheet=music"],
   alerts:         [PHONE, SHELL + "&sheet=alerts"],
@@ -49,6 +55,7 @@ const PRESETS = {
   "sys-perf":     [PHONE, SHELL + "&mode=systems&page=perf"],
   "sys-alerts":   [PHONE, SHELL + "&mode=systems&page=alerts"],
   desk:           [DESK, "tag=custom:purdy-desk-card&view=desktop"],
+  "desk-weather": [DESK, "tag=custom:purdy-desk-card&view=desktop&patch=weather-desk"],
 };
 
 const named = argv.filter((a) => !a.startsWith("--") && PRESETS[a]);
