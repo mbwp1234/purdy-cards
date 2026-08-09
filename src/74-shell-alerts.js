@@ -87,8 +87,31 @@ Object.assign(PurdyShellCard.prototype, {
     }
   },
 
+  /* One rule, one predicate. `state` / `state_not` / `above` / `below`, in that
+     order, against a single entity's state. */
+  _ruleHit(r, st) {
+    if (!st) return false;
+    const v = st.state;
+    if (r.state !== undefined) return v === r.state;
+    if (r.state_not !== undefined) return v !== r.state_not && v !== "unavailable" && v !== "unknown";
+    const n = parseFloat(v);
+    if (!Number.isFinite(n)) return false;
+    if (r.above !== undefined) return n > r.above;
+    if (r.below !== undefined) return n < r.below;
+    return false;
+  },
+
   /* When did this rule's condition last change? A dismissal older than that
-     means the fault re-fired, so the row comes back. */
+     means the fault re-fired, so the row comes back.
+
+     The group branch used to ask `state !== (r.state || "on")` outright, which
+     silently assumes every group rule is a boolean one. A numeric group rule —
+     five consumables all below a threshold — has no `r.state`, so every member
+     was compared against the string "on", nothing ever matched, and firedAt
+     came back 0. A dismissal is always newer than 0, so dismissing such a rule
+     would have hidden it FOREVER rather than for `dismiss_hours`. It shares
+     _ruleHit with _raised now, so the two halves cannot disagree about what
+     the rule means. */
   _firedAt(r) {
     const h = this._hass;
     if (r.entity && h.states[r.entity]) {
@@ -98,7 +121,7 @@ Object.assign(PurdyShellCard.prototype, {
       const re = new RegExp(r.match);
       let newest = 0;
       Object.keys(h.states).forEach((id) => {
-        if (!re.test(id) || h.states[id].state !== (r.state || "on")) return;
+        if (!re.test(id) || !this._ruleHit(r, h.states[id])) return;
         const t = Math.floor(new Date(h.states[id].last_changed).getTime() / 1000);
         if (t > newest) newest = t;
       });
@@ -114,17 +137,7 @@ Object.assign(PurdyShellCard.prototype, {
     if (!hass) return [];
     const out = [];
     rules.forEach((r, i) => {
-      const hit = (st) => {
-        if (!st) return false;
-        const v = st.state;
-        if (r.state !== undefined) return v === r.state;
-        if (r.state_not !== undefined) return v !== r.state_not && v !== "unavailable" && v !== "unknown";
-        const n = parseFloat(v);
-        if (!Number.isFinite(n)) return false;
-        if (r.above !== undefined) return n > r.above;
-        if (r.below !== undefined) return n < r.below;
-        return false;
-      };
+      const hit = (st) => this._ruleHit(r, st);
       if (r.match) {
         const re = new RegExp(r.match);
         const names = Object.keys(hass.states)

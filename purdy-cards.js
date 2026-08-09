@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.52.0";
+const PC_VERSION = "1.52.1";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -8563,8 +8563,31 @@ Object.assign(PurdyShellCard.prototype, {
     }
   },
 
+  /* One rule, one predicate. `state` / `state_not` / `above` / `below`, in that
+     order, against a single entity's state. */
+  _ruleHit(r, st) {
+    if (!st) return false;
+    const v = st.state;
+    if (r.state !== undefined) return v === r.state;
+    if (r.state_not !== undefined) return v !== r.state_not && v !== "unavailable" && v !== "unknown";
+    const n = parseFloat(v);
+    if (!Number.isFinite(n)) return false;
+    if (r.above !== undefined) return n > r.above;
+    if (r.below !== undefined) return n < r.below;
+    return false;
+  },
+
   /* When did this rule's condition last change? A dismissal older than that
-     means the fault re-fired, so the row comes back. */
+     means the fault re-fired, so the row comes back.
+
+     The group branch used to ask `state !== (r.state || "on")` outright, which
+     silently assumes every group rule is a boolean one. A numeric group rule —
+     five consumables all below a threshold — has no `r.state`, so every member
+     was compared against the string "on", nothing ever matched, and firedAt
+     came back 0. A dismissal is always newer than 0, so dismissing such a rule
+     would have hidden it FOREVER rather than for `dismiss_hours`. It shares
+     _ruleHit with _raised now, so the two halves cannot disagree about what
+     the rule means. */
   _firedAt(r) {
     const h = this._hass;
     if (r.entity && h.states[r.entity]) {
@@ -8574,7 +8597,7 @@ Object.assign(PurdyShellCard.prototype, {
       const re = new RegExp(r.match);
       let newest = 0;
       Object.keys(h.states).forEach((id) => {
-        if (!re.test(id) || h.states[id].state !== (r.state || "on")) return;
+        if (!re.test(id) || !this._ruleHit(r, h.states[id])) return;
         const t = Math.floor(new Date(h.states[id].last_changed).getTime() / 1000);
         if (t > newest) newest = t;
       });
@@ -8590,17 +8613,7 @@ Object.assign(PurdyShellCard.prototype, {
     if (!hass) return [];
     const out = [];
     rules.forEach((r, i) => {
-      const hit = (st) => {
-        if (!st) return false;
-        const v = st.state;
-        if (r.state !== undefined) return v === r.state;
-        if (r.state_not !== undefined) return v !== r.state_not && v !== "unavailable" && v !== "unknown";
-        const n = parseFloat(v);
-        if (!Number.isFinite(n)) return false;
-        if (r.above !== undefined) return n > r.above;
-        if (r.below !== undefined) return n < r.below;
-        return false;
-      };
+      const hit = (st) => this._ruleHit(r, st);
       if (r.match) {
         const re = new RegExp(r.match);
         const names = Object.keys(hass.states)
@@ -12799,7 +12812,7 @@ const PD_BORROW = [
   /* nursery — the derivation, the fetch and the single clock the fixtures pin */
   "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
   /* faults, dismissals and the notification log */
-  "_dismissals", "_writeDismissals", "_dismiss", "_firedAt", "_raised", "_faults", "_syncLog",
+  "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_raised", "_faults", "_syncLog",
   /* music: which room is the target, and how a URI gets played there */
   "_musicSec", "_targets", "_activePlayer", "_isPicked", "_togglePick", "_nowPlaying",
   "_playUri", "_enqueueUri", "_toast", "_queueSearch", "_runSearch", "_paintResults",

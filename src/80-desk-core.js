@@ -78,7 +78,7 @@ const PD_BORROW = [
   /* nursery — the derivation, the fetch and the single clock the fixtures pin */
   "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
   /* faults, dismissals and the notification log */
-  "_dismissals", "_writeDismissals", "_dismiss", "_firedAt", "_raised", "_faults", "_syncLog",
+  "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_raised", "_faults", "_syncLog",
   /* music: which room is the target, and how a URI gets played there */
   "_musicSec", "_targets", "_activePlayer", "_isPicked", "_togglePick", "_nowPlaying",
   "_playUri", "_enqueueUri", "_toast", "_queueSearch", "_runSearch", "_paintResults",
