@@ -143,16 +143,48 @@ function pcSparkPoly(points, w, h, pad, minSpan) {
    player is showing *music* only when the app or the content type says so —
    otherwise a TV episode raises a phantom now-playing row. */
 const PC_MUSIC_TYPES = ["music", "playlist", "track", "album", "radio"];
+/* Apps that stream video however they label their content. Matched as a
+   substring so the short slug ("twitch") and the android package
+   ("tv.twitch.android.app") are both covered by one entry. */
+const PC_VIDEO_APPS = ["twitch", "netflix", "youtube", "disney", "amazonvideo",
+  "primevideo", "peacock", "jellyfin", "hulu", "hbo", "max", "plex", "f1tv",
+  "formula1", "emby", "kodi", "paramount", "crunchyroll"];
 function pcIsMusicState(st) {
   if (!st) return false;
   const a = st.attributes || {};
   if (a.app_id === "music_assistant") return true;
-  /* The content type alone is not enough. A Twitch stream on the living room
-     television comes back through its MA mirror as media_content_type "music"
-     with app_id "twitch" — only the missing media_title kept it from raising a
-     phantom now-playing row beside the real one. A foreign app_id is the source
-     device saying outright that this is not the music queue. */
-  if (a.app_id) return false;
+  /* "Any foreign app_id is not music" was the first fix for a Twitch stream
+     arriving through its MA mirror as media_content_type "music" with app_id
+     "twitch" — and it over-corrected badly. Spotify on the kitchen speaker and
+     a sleep-sounds app in the bedroom are both genuinely music with a foreign
+     app_id, and both were silently missing from the now-playing section, the
+     dock bar and the room list the whole time they played. Hiding real music
+     produces no error and no gap, so it goes unnoticed; a phantom row does not.
+     Name the video apps instead of rejecting everything unfamiliar. */
+  const app = String(a.app_id || "").toLowerCase();
+  if (app && PC_VIDEO_APPS.some((v) => app.indexOf(v) >= 0)) return false;
+  /* Two guards that hold whatever the app is. The content type has to agree,
+     and a foreign app needs a title — the missing title is the only thing that
+     kept the original Twitch stream from raising a row, since it claimed
+     "music" outright. */
+  if (app && !a.media_title) return false;
   return PC_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
+}
+
+/* A player's media_title is not evidence that anything is playing. An idle
+   Music Assistant player KEEPS its title and its artwork for hours — the living
+   room still reported "Bluey Theme Tune" long after it stopped — so reading the
+   attribute without the state is how a silent house grows a now-playing row.
+   The title is only true while the queue is; a paused track still is.
+
+   This is one function rather than the check written out at each surface
+   because it had already been inlined four times and was wrong in two of them:
+   the desk card was fixed for it and the shell's music sheet and pin button
+   never were, which is precisely what "the same rule in four places" buys. */
+function pcLiveMusicState(st) {
+  if (!st) return null;
+  if (st.state !== "playing" && st.state !== "paused") return null;
+  if (!pcIsMusicState(st) || !st.attributes.media_title) return null;
+  return st;
 }
 

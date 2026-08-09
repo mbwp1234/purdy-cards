@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.51.1";
+const PC_VERSION = "1.52.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -240,17 +240,49 @@ function pcSparkPoly(points, w, h, pad, minSpan) {
    player is showing *music* only when the app or the content type says so —
    otherwise a TV episode raises a phantom now-playing row. */
 const PC_MUSIC_TYPES = ["music", "playlist", "track", "album", "radio"];
+/* Apps that stream video however they label their content. Matched as a
+   substring so the short slug ("twitch") and the android package
+   ("tv.twitch.android.app") are both covered by one entry. */
+const PC_VIDEO_APPS = ["twitch", "netflix", "youtube", "disney", "amazonvideo",
+  "primevideo", "peacock", "jellyfin", "hulu", "hbo", "max", "plex", "f1tv",
+  "formula1", "emby", "kodi", "paramount", "crunchyroll"];
 function pcIsMusicState(st) {
   if (!st) return false;
   const a = st.attributes || {};
   if (a.app_id === "music_assistant") return true;
-  /* The content type alone is not enough. A Twitch stream on the living room
-     television comes back through its MA mirror as media_content_type "music"
-     with app_id "twitch" — only the missing media_title kept it from raising a
-     phantom now-playing row beside the real one. A foreign app_id is the source
-     device saying outright that this is not the music queue. */
-  if (a.app_id) return false;
+  /* "Any foreign app_id is not music" was the first fix for a Twitch stream
+     arriving through its MA mirror as media_content_type "music" with app_id
+     "twitch" — and it over-corrected badly. Spotify on the kitchen speaker and
+     a sleep-sounds app in the bedroom are both genuinely music with a foreign
+     app_id, and both were silently missing from the now-playing section, the
+     dock bar and the room list the whole time they played. Hiding real music
+     produces no error and no gap, so it goes unnoticed; a phantom row does not.
+     Name the video apps instead of rejecting everything unfamiliar. */
+  const app = String(a.app_id || "").toLowerCase();
+  if (app && PC_VIDEO_APPS.some((v) => app.indexOf(v) >= 0)) return false;
+  /* Two guards that hold whatever the app is. The content type has to agree,
+     and a foreign app needs a title — the missing title is the only thing that
+     kept the original Twitch stream from raising a row, since it claimed
+     "music" outright. */
+  if (app && !a.media_title) return false;
   return PC_MUSIC_TYPES.indexOf(a.media_content_type) >= 0;
+}
+
+/* A player's media_title is not evidence that anything is playing. An idle
+   Music Assistant player KEEPS its title and its artwork for hours — the living
+   room still reported "Bluey Theme Tune" long after it stopped — so reading the
+   attribute without the state is how a silent house grows a now-playing row.
+   The title is only true while the queue is; a paused track still is.
+
+   This is one function rather than the check written out at each surface
+   because it had already been inlined four times and was wrong in two of them:
+   the desk card was fixed for it and the shell's music sheet and pin button
+   never were, which is precisely what "the same rule in four places" buys. */
+function pcLiveMusicState(st) {
+  if (!st) return null;
+  if (st.state !== "playing" && st.state !== "paused") return null;
+  if (!pcIsMusicState(st) || !st.attributes.media_title) return null;
+  return st;
 }
 
 const CPC_VERSION = "1.1.4";
@@ -3442,7 +3474,14 @@ class PurdyNotificationsCard extends PcBaseCard {
     detail = detail.replace(/^(critical|warn|info)\s*·?\s*/, "").replace(/·\s*$/, "").trim();
     return {
       uid: it.uid,
-      summary: it.summary,
+      /* "Notice [PURDYNAS] - Version update ac65..33a6" spends its first twenty
+         characters saying what the severity dot beside it already says, then
+         pushes the real subject onto a second line or off the end. The systems
+         page learned this in v1.46.2 and the log never did — same feed, same
+         rows, two renderers. Stripped here so the fix covers the items already
+         written as well as the ones to come. */
+      summary: String(it.summary || "Notification")
+        .replace(/^\s*(Notice|Alert|Warning|Info)\s*\[[^\]]*\]\s*[-–—]\s*/i, ""),
       severity: sev ? sev[1] : "info",
       detail,
       at: iso ? new Date(iso[1]).getTime() : null,
@@ -3470,8 +3509,8 @@ class PurdyNotificationsCard extends PcBaseCard {
       <div class="n ${p.done ? "done" : ""}">
         <span class="dot ${p.severity}"></span>
         <div class="grow">
-          <div class="t">${p.summary}</div>
-          ${p.detail ? `<div class="d">${p.detail}</div>` : ""}
+          <div class="t">${pcEsc(p.summary)}</div>
+          ${p.detail ? `<div class="d">${pcEsc(p.detail)}</div>` : ""}
         </div>
         <span class="when num">${this._rel(p.at)}</span>
         ${p.done
@@ -3522,8 +3561,12 @@ class PurdyNotificationsCard extends PcBaseCard {
       </style>
       <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
         <div class="hd">
-          <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
-          <span class="lbl">${this._config.title}</span>
+          ${/* The shell blanks a hosted card's title because the sheet chrome
+                already names itself — which left this bell sitting alone on an
+                otherwise empty row. An icon with nothing to label is not a
+                header. */
+            this._config.title ? `<ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
+          <span class="lbl">${pcEsc(this._config.title)}</span>` : ""}
           <span class="spacer"></span>
           ${done.length ? `<button class="clear" type="button" id="clear">Clear history</button>` : ""}
         </div>
@@ -5183,6 +5226,7 @@ function psMins(hhmm) {
    particular had already drifted from the other three. */
 const psEsc = pcEsc;
 const psIsMusic = pcIsMusicState;
+const psLiveMusic = pcLiveMusicState;
 
 class PurdyShellCard extends PcBaseCard {
   static getStubConfig() {
@@ -6531,7 +6575,8 @@ class PurdyShellCard extends PcBaseCard {
      reachable from a test that evals it. This is the seam they come out of. */
   static get helpers() {
     return {
-      minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
+      minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic,
+      liveMusic: psLiveMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
@@ -8143,8 +8188,7 @@ Object.assign(PurdyShellCard.prototype, {
   _pinnable() {
     const target = this._activePlayer();
     const tst = target && this._hass.states[target];
-    const src = tst && psIsMusic(tst) && tst.attributes.media_title
-      ? { st: tst } : this._nowPlaying();
+    const src = psLiveMusic(tst) ? { st: tst } : this._nowPlaying();
     if (!src) return null;
     const a = src.st.attributes;
     const uri = a.media_playlist_content_id || a.media_content_id;
@@ -8686,7 +8730,7 @@ Object.assign(PurdyShellCard.prototype, {
       /* The header shows what the TARGET room is playing, not what some other
          room is: pointing the controls at Kitchen while the artwork shows the
          Living Room's track is how you skip the wrong song. */
-      const tmusic = tst && psIsMusic(tst) && tst.attributes.media_title ? tst : null;
+      const tmusic = psLiveMusic(tst);
       const art = tmusic && tmusic.attributes.entity_picture_local;
       const vol = tst && tst.attributes.volume_level != null ? tst.attributes.volume_level : 0;
       const muted = !!(tst && tst.attributes.is_volume_muted);
@@ -9525,7 +9569,7 @@ Object.assign(PurdyShellCard.prototype, {
         <div class="ps-jrs">
           ${todayNaps.length ? todayNaps.map((s) => `
             <div class="ps-jr"><span class="ps-l">${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
-              <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " …" : ""}</span>
+              <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " so far" : ""}</span>
               <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
                 !s.active && s.asleepMinutes < catnapUnder ? "short" : s.interventions ? s.interventions + " in" : ""}</span></div>`).join("")
             : `<div class="ps-jr"><span class="ps-l">No naps yet today</span></div>`}
@@ -14052,10 +14096,10 @@ Object.assign(PurdyDeskCard.prototype, {
     const st = target && h.states[target];
     const playing = st && st.state === "playing";
     /* An idle MA player KEEPS its media_title and its artwork — the living
-       room reports "Bluey Theme Tune" hours after it stopped. Reading the
-       attribute without the state is how a silent house grows a now-playing
-       row: the title is only true while the queue is. */
-    const live = !!st && (st.state === "playing" || st.state === "paused");
+       room reports "Bluey Theme Tune" hours after it stopped. psLiveMusic is
+       the shared rule; this used to be written out here, which is how the
+       shell's copies stayed broken after this one was fixed. */
+    const live = !!psLiveMusic(st);
     const title = live ? st.attributes.media_title : null;
     const art = live ? st.attributes.entity_picture_local : null;
     const artist = live ? (st.attributes.media_artist || st.attributes.media_album_name) : null;
@@ -15054,7 +15098,7 @@ Object.assign(PurdyDeskCard.prototype, {
     const h = this._hass;
     const target = this._activePlayer();
     const st = target && h.states[target];
-    const live = !!st && (st.state === "playing" || st.state === "paused");
+    const live = !!psLiveMusic(st);
     const playing = !!st && st.state === "playing";
     const title = live ? st.attributes.media_title : null;
     const art = live ? st.attributes.entity_picture_local : null;

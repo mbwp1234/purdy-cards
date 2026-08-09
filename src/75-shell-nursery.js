@@ -720,7 +720,7 @@ Object.assign(PurdyShellCard.prototype, {
         <div class="ps-jrs">
           ${todayNaps.length ? todayNaps.map((s) => `
             <div class="ps-jr"><span class="ps-l">${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
-              <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " …" : ""}</span>
+              <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " so far" : ""}</span>
               <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
                 !s.active && s.asleepMinutes < catnapUnder ? "short" : s.interventions ? s.interventions + " in" : ""}</span></div>`).join("")
             : `<div class="ps-jr"><span class="ps-l">No naps yet today</span></div>`}

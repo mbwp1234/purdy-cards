@@ -3358,6 +3358,38 @@ check('a player with no app id is still judged on content type',
   isMusic({ attributes: { media_content_type: 'playlist' } }) &&
   !isMusic({ attributes: { media_content_type: 'tvshow' } }));
 
+/* The Twitch fix was "any foreign app_id is not music", and it over-corrected:
+   Spotify in the kitchen and a sleep-sounds app in the bedroom were BOTH
+   playing and BOTH invisible — no now-playing section, no dock bar, no live
+   dot. Hiding real music produces no error and no gap, so it went unnoticed. */
+check('Spotify on a speaker is music',
+  isMusic({ attributes: { app_id: 'spotify', media_content_type: 'music', media_title: 'As Long As You Love Me' } }));
+check('a sleep-sounds app is music',
+  isMusic({ attributes: { app_id: 'relaxing_sounds', media_content_type: 'music', media_title: 'Ocean sounds' } }));
+check('a named video app is still rejected however it labels its content',
+  !isMusic({ attributes: { app_id: 'netflix', media_content_type: 'music', media_title: 'Some Show' } }) &&
+  !isMusic({ attributes: { app_id: 'tv.twitch.android.app', media_content_type: 'music', media_title: 'A Stream' } }));
+check('a foreign app with no title raises nothing',
+  !isMusic({ attributes: { app_id: 'spotify', media_content_type: 'music' } }));
+
+/* An idle MA player keeps its title and artwork for hours. Reading the
+   attribute without the state is how a silent house grows a now-playing row —
+   the desk card was fixed for this and the shell's two copies were not. */
+const liveMusic = SH.helpers.liveMusic;
+const bluey = { media_content_type: 'music', media_title: 'Bluey Theme Tune', app_id: 'music_assistant' };
+check('an idle player with a stale title is not live music',
+  !liveMusic({ state: 'idle', attributes: bluey }));
+check('a playing player is live music',
+  !!liveMusic({ state: 'playing', attributes: bluey }));
+check('a paused track is still the current one',
+  !!liveMusic({ state: 'paused', attributes: bluey }));
+check('an off player is not live music',
+  !liveMusic({ state: 'off', attributes: bluey }) && !liveMusic(null));
+check('the live-music rule is shared, not written out per surface',
+  ['73-shell-music.js', '74-shell-alerts.js', '82-desk-stage.js', '85-desk-systems.js']
+    .every((f) => /psLiveMusic\(/.test(
+      fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf8'))));
+
 /* ---- climate setpoint: optimistic, and steppable more than once ---- */
 /* GTTC takes several seconds to acknowledge a setpoint. The stepper read the
    live attribute to compute the next value, so a second tap inside that window
