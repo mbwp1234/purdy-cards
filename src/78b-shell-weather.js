@@ -278,10 +278,21 @@ Object.assign(PurdyShellCard.prototype, {
     try {
       const hrs = await ask("hourly");
       this._wxHrs = (hrs || [])
-        .map((e) => ({ ts: Date.parse(e.datetime), t: Number(e.temperature), condition: e.condition }))
+        .map((e) => ({
+          ts: Date.parse(e.datetime),
+          t: Number(e.temperature),
+          condition: e.condition,
+          /* Kept because the strip scrolls now: over a full day "when does the
+             rain start" is a real question, and it is answered by the hour
+             column rather than by the daily probability. */
+          pop: e.precipitation_probability == null || !Number.isFinite(Number(e.precipitation_probability))
+            ? null : Number(e.precipitation_probability),
+        }))
         .filter((x) => Number.isFinite(x.ts) && Number.isFinite(x.t))
         .sort((a, b) => a.ts - b.ts)
-        .slice(0, sec.hourly || 12);
+        /* A day, not half of one. NWS answers with 168 hours, so the only cost
+           of a wider window is the width of a strip that scrolls anyway. */
+        .slice(0, sec.hourly === true ? 24 : (sec.hourly || 24));
     } catch (e) {
       this._wxHrs = null;
     }
@@ -478,25 +489,74 @@ Object.assign(PurdyShellCard.prototype, {
     return { lo: lo - (hi - lo) * 0.22, hi };
   },
 
+  _wxClock(ms) {
+    const d = new Date(ms);
+    const h12 = d.getHours() % 12 === 0 ? 12 : d.getHours() % 12;
+    return `${h12}${d.getHours() >= 12 ? "p" : "a"}`;
+  },
+
+  /* The hourly columns, as data. Each carries its own bar height, so the shell
+     and the desk cannot draw the same hour at two different heights. */
+  _wxHourCols(hrs) {
+    const { lo, hi } = this._wxHourDomain(hrs);
+    let prevDay = null;
+    return hrs.map((x, i) => {
+      const day = pcDayKey(x.ts);
+      /* A new local day gets a divider and takes the weekday in place of the
+         hour — "12a" repeated every 24 columns says nothing about which day it
+         is the midnight of, and a scrollable strip is exactly where you lose
+         track. */
+      const newDay = prevDay != null && day !== prevDay;
+      prevDay = day;
+      return {
+        ts: x.ts,
+        t: x.t,
+        pop: x.pop,
+        condition: x.condition,
+        h: Math.max(6, ((x.t - lo) / (hi - lo)) * 100),
+        now: i === 0,
+        newDay,
+        label: i === 0 ? "Now"
+          : newDay ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(x.ts).getDay()]
+            : this._wxClock(x.ts),
+      };
+    });
+  },
+
+  /* Scrollable, because twelve hours is not a day and the provider gives 168.
+   *
+   * `overflow-x: auto` and NOTHING ELSE. `touch-action` must not be set on a
+   * sideways-scrolling strip: `pan-x pan-y` is not equivalent to the default
+   * `auto` — it restricts the element to panning and makes the browser's
+   * per-gesture axis commitment stickier, so a slightly diagonal swipe locks to
+   * vertical and the strip goes dead. purdy-rooms-card's strip has always been
+   * plain flex + overflow-x and has always worked. `overscroll-behavior-x`
+   * keeps a fling at the end of the strip from becoming a page gesture.
+   *
+   * Phone v2 had deliberately gone to zero sideways-scrolling surfaces in
+   * v1.20.0 (the music rooms and schedule tabs wrap; the room strip is a grid).
+   * This is the one place where wrapping would be wrong rather than merely
+   * different: a time axis that wraps to a second line is two axes, and the
+   * eye reads the wrap as a jump back in time. */
   _wxHourly(sec) {
     const hrs = this._wxHrs;
     if (!hrs || hrs.length < 2) return "";
-    const { lo, hi } = this._wxHourDomain(hrs);
-    const bars = hrs.map((x) => {
-      const h = Math.max(6, ((x.t - lo) / (hi - lo)) * 100);
-      return `<i style="height:${h.toFixed(1)}%"></i>`;
-    }).join("");
-    const clock = (ms) => {
-      const d = new Date(ms);
-      const h12 = d.getHours() % 12 === 0 ? 12 : d.getHours() % 12;
-      return `${h12}${d.getHours() >= 12 ? "p" : "a"}`;
-    };
+    const cols = this._wxHourCols(hrs);
+    /* A probability row costs a line of height on every column, so it is drawn
+       only if some hour in the window actually expects rain. */
+    const wet = cols.some((c) => c.pop != null && c.pop >= 20);
+    const body = cols.map((c) => `<div class="ps-wxhr${c.now ? " now" : ""}${c.newDay ? " nd" : ""}">
+        <span class="ps-wxht">${this._wxDeg(c.t)}</span>
+        <div class="ps-wxhbar"><i style="height:${c.h.toFixed(1)}%"></i></div>
+        ${wet ? `<span class="ps-wxhp">${c.pop != null && c.pop >= 20 ? `${Math.round(c.pop)}%` : ""}</span>` : ""}
+        <span class="ps-wxhl">${psEsc(c.label)}</span>
+      </div>`).join("");
+
+    const temps = cols.map((c) => c.t);
     return `<div>
-        <div class="ps-wxrh"><span class="ps-wxlb">Next ${hrs.length} hours</span>
-          <span class="ps-wxrb">${this._wxDeg(hrs[0].t)} → ${this._wxDeg(hrs[hrs.length - 1].t)}</span></div>
-        <div class="ps-wxhrs">${bars}</div>
-        <div class="ps-railticks"><span>${psEsc(clock(hrs[0].ts))}</span
-          ><span>${psEsc(clock(hrs[hrs.length - 1].ts))}</span></div>
+        <div class="ps-wxrh"><span class="ps-wxlb">Next ${cols.length} hours</span>
+          <span class="ps-wxrb">${this._wxDeg(Math.min(...temps))} – ${this._wxDeg(Math.max(...temps))}</span></div>
+        <div class="ps-wxhrs">${body}</div>
       </div>`;
   },
 

@@ -710,9 +710,26 @@ const PD_STYLES = `
       .pd-wxmark { position: absolute; left: -3px; right: -3px; height: 2px; z-index: 2;
                    background: #fff; border-radius: var(--pc-r-hair);
                    box-shadow: 0 0 6px rgba(255,255,255,.7); }
-      .pd-wxhrs { display: flex; gap: 3px; align-items: flex-end; height: 44px; }
-      .pd-wxhrs i { flex: 1; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
-                    background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      /* Scrolls, like the phone's. Plain overflow-x and no touch-action — see
+         the note on .ps-wxhrs; the rule is the same on a trackpad. */
+      .pd-wxhrs { display: flex; gap: 2px; align-items: flex-end;
+                  overflow-x: auto; overscroll-behavior-x: contain;
+                  scrollbar-width: thin; scrollbar-color: var(--pc-fill-3) transparent;
+                  padding-bottom: 3px; }
+      .pd-wxhr { flex: 0 0 auto; width: 30px; display: flex; flex-direction: column;
+                 align-items: center; gap: 3px; }
+      .pd-wxhr.nd { border-left: 1px solid var(--ps-hair); margin-left: 3px; padding-left: 3px; }
+      .pd-wxht { font-size: var(--pc-fs-micro); color: var(--ps-muted); font-weight: 620;
+                 font-variant-numeric: tabular-nums; line-height: 1; }
+      .pd-wxhbar { width: 100%; height: 44px; display: flex; align-items: flex-end; }
+      .pd-wxhbar i { width: 100%; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
+                     background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      .pd-wxhp { font-size: var(--pc-fs-micro); color: var(--ps-cool); font-weight: 600;
+                 font-variant-numeric: tabular-nums; line-height: 1; min-height: 10px; }
+      .pd-wxhl { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-weight: 620;
+                 line-height: 1; white-space: nowrap; }
+      .pd-wxhr.now .pd-wxht { color: var(--ps-heat); }
+      .pd-wxhr.now .pd-wxhl { color: var(--ps-text); }
       .pd-wxfacts { display: flex; gap: 18px; flex-wrap: wrap; }
       .pd-wxnote { font-size: var(--pc-fs-xs); color: var(--ps-muted); line-height: 1.5; }
 

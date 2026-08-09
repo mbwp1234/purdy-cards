@@ -1503,7 +1503,18 @@ globalThis.document = savedDoc;
 check('the music room strip wraps rather than scrolling', /\.ps-mroom \{[^}]*flex-wrap: wrap/.test(shs) && !/\.ps-mroom \{[^}]*overflow-x/.test(shs));
 check('the schedule tabs wrap rather than scrolling', /\.ps-tabs \{[^}]*flex-wrap: wrap/.test(shs) && !/\.ps-tabs \{[^}]*overflow-x/.test(shs));
 check('the rooms strip is a grid rather than a scroller', /\.ps-rstrip \{[^}]*display: grid/.test(shs) && !/\.ps-rstrip \{[^}]*overflow-x/.test(shs));
-check('no horizontal scroller is left in the view', !/overflow-x: auto/.test(shs));
+/* One deliberate exception, added 2026-08-09: the weather section's hourly strip.
+ *
+ * The three above wrap or grid because nothing was lost by it — a room is a room
+ * wherever it sits on the line. A TIME AXIS that wraps is two axes, and the eye
+ * reads the wrap as a jump backwards in time, so the hours scroll instead. It
+ * follows the rule that made purdy-rooms-card's strip work for a year: plain
+ * flex + overflow-x and NO touch-action. See the .ps-wxhrs assertions. */
+check('the only horizontal scroller in the view is the hourly strip', (() => {
+  const scrollers = (shs.match(/\.ps-[a-z-]+ \{[^}]*overflow-x: auto/g) || [])
+    .map((m) => /^\.([a-z-]+)/.exec(m)[1]);
+  return scrollers.length === 1 && scrollers[0] === 'ps-wxhrs';
+})());
 check('a cancelled slider gesture releases the repaint lock', src.includes('would leave _dragging stuck'));
 check('sheet has a taller schedule variant', shs.includes('.ps-sheet.tall'));
 
@@ -4765,6 +4776,108 @@ check('twelve flat hours do not draw as a sawtooth', (() => {
     .map((x) => Number(/([0-9.]+)/.exec(x)[1]));
   return Math.max(...hs) - Math.min(...hs) < 20;
 })());
+
+/* ---- the scrollable hourly strip ---- */
+
+const WHRS = (n, from) => Array.from({ length: n }, (_, i) => ({
+  ts: (from == null ? WNOW : from) + i * 3600000, t: 90 - (i % 14), pop: i > 6 ? 40 : 0,
+}));
+
+check('every hour gets its own labelled column', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = WHRS(24);
+  const html = s._wxHourly(s._config.sections[0]);
+  /* Anchored so the container's own `ps-wxhrs` class does not count as a 25th
+     column — it matched `ps-wxhr` plus a trailing s. */
+  return (html.match(/class="ps-wxhr(?:"| )/g) || []).length === 24
+    && /Next 24 hours/.test(html);
+})());
+
+check('the first column is labelled Now, not with a clock time', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = WHRS(24);
+  const html = s._wxHourly(s._config.sections[0]);
+  return /ps-wxhr now/.test(html) && /ps-wxhl">Now</.test(html);
+})());
+
+check('a midnight column takes the weekday instead of repeating 12a', (() => {
+  /* 12a says nothing about WHICH day's midnight it is, which is precisely what
+     you lose track of in a strip you have scrolled sideways. */
+  const s = mkW(WSTATES);
+  s._wxHrs = WHRS(24, new Date(2026, 7, 8, 20, 0, 0).getTime());   // Sat 8pm -> crosses into Sun
+  const html = s._wxHourly(s._config.sections[0]);
+  return /ps-wxhr nd/.test(html) && /ps-wxhl">Sun</.test(html);
+})());
+
+check('a window inside one day draws no divider', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = WHRS(6, new Date(2026, 7, 8, 9, 0, 0).getTime());
+  return !/ps-wxhr nd/.test(s._wxHourly(s._config.sections[0]));
+})());
+
+check('the probability row appears only when some hour expects rain', (() => {
+  const s = mkW(WSTATES);
+  const dry = WHRS(12).map((x) => ({ ...x, pop: 0 }));
+  s._wxHrs = dry;
+  const noRain = s._wxHourly(s._config.sections[0]);
+  s._wxHrs = WHRS(12).map((x, i) => ({ ...x, pop: i === 5 ? 60 : 0 }));
+  const rain = s._wxHourly(s._config.sections[0]);
+  /* A row of empty cells on a dry day is a line of height on every column that
+     says nothing. */
+  return !/ps-wxhp/.test(noRain) && /ps-wxhp">60%</.test(rain);
+})());
+
+check('a dry hour inside a wet window keeps its cell but prints nothing', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = WHRS(12).map((x, i) => ({ ...x, pop: i === 5 ? 60 : 0 }));
+  const html = s._wxHourly(s._config.sections[0]);
+  /* The empty cell holds the column's height so the hour labels stay in a row —
+     the same reason the forecast rail's probability cell is hidden, not absent. */
+  return (html.match(/ps-wxhp/g) || []).length === 12 && /ps-wxhp"><\/span>/.test(html);
+})());
+
+check('a missing probability is not drawn as 0%', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = WHRS(12).map((x, i) => ({ ...x, pop: i === 5 ? 60 : null }));
+  const html = s._wxHourly(s._config.sections[0]);
+  return /ps-wxhp">60%</.test(html) && !/ps-wxhp">0%</.test(html);
+})());
+
+check('the caption gives the range, not just the endpoints', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = [{ ts: WNOW, t: 80 }, { ts: WNOW + 3600000, t: 95 }, { ts: WNOW + 7200000, t: 84 }];
+  /* First-to-last hid the peak: 80 -> 84 across a window that reached 95. */
+  return /80° – 95°/.test(s._wxHourly(s._config.sections[0]));
+})());
+
+check('the hourly strip scrolls and claims no touch-action', (() => {
+  /* Setting touch-action on a sideways-scrolling strip — even pan-x pan-y — is
+     NOT equivalent to the default auto: it restricts the element to panning and
+     makes the axis commitment stickier, so a slightly diagonal swipe locks to
+     vertical and the strip goes dead. That killed purdy-rooms-card once. */
+  const block = shs.slice(shs.indexOf('.ps-wxhrs {'), shs.indexOf('.ps-wxrows'));
+  return /overflow-x: auto/.test(block) && /overscroll-behavior-x: contain/.test(block)
+    && !/touch-action/.test(block);
+})());
+
+check('the desk strip scrolls under the same rule', (() => {
+  /* Read locally: the desk suite's own fixtures are block-scoped below this. */
+  const d = defined['purdy-desk-card'].styles;
+  const block = d.slice(d.indexOf('.pd-wxhrs {'), d.indexOf('.pd-wxfacts'));
+  return /overflow-x: auto/.test(block) && /overscroll-behavior-x: contain/.test(block)
+    && !/touch-action/.test(block);
+})());
+
+check('the hourly columns are derived once and shared with the desk', () => {
+  const core = fs.readFileSync(new URL('../src/80-desk-core.js', import.meta.url), 'utf8');
+  const stage = fs.readFileSync(new URL('../src/82-desk-stage.js', import.meta.url), 'utf8');
+  return /"_wxHourCols"/.test(core) && /_wxHourCols\(hrs\)/.test(stage);
+});
+
+check('a wider hourly window is fetched now that the strip scrolls', () => {
+  const wsrc = fs.readFileSync(new URL('../src/78b-shell-weather.js', import.meta.url), 'utf8');
+  return /sec\.hourly \|\| 24/.test(wsrc) && /precipitation_probability/.test(wsrc);
+});
 
 /* ---- wiring ---- */
 

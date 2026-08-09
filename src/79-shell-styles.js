@@ -556,9 +556,33 @@ const PS_STYLES = `
                    background: #fff; border-radius: var(--pc-r-hair);
                    box-shadow: 0 0 6px rgba(255,255,255,.7); }
 
-      .ps-wxhrs { display: flex; gap: 3px; align-items: flex-end; height: 46px; }
-      .ps-wxhrs i { flex: 1; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
-                    background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      /* The hourly strip SCROLLS sideways — twelve hours is not a day, and the
+         provider publishes 168. Plain overflow-x and nothing else: setting
+         touch-action here (even pan-x pan-y) restricts the element to panning
+         and makes the browser's axis commitment stickier, so a slightly diagonal
+         swipe locks to vertical and the strip goes dead. purdy-rooms-card's
+         strip has always been plain flex + overflow-x and has always worked.
+         overscroll-behavior-x stops a fling at the end becoming a page gesture. */
+      .ps-wxhrs { display: flex; gap: 2px; align-items: flex-end;
+                  overflow-x: auto; overscroll-behavior-x: contain;
+                  scrollbar-width: none; padding-bottom: 2px; }
+      .ps-wxhrs::-webkit-scrollbar { display: none; }
+      .ps-wxhr { flex: 0 0 auto; width: 30px; display: flex; flex-direction: column;
+                 align-items: center; gap: 3px; }
+      /* A midnight column reads as "12a" whichever day it is the midnight of,
+         which is exactly what you lose track of in a strip you have scrolled. */
+      .ps-wxhr.nd { border-left: 1px solid var(--ps-hair); margin-left: 3px; padding-left: 3px; }
+      .ps-wxht { font-size: var(--pc-fs-micro); color: var(--ps-muted); font-weight: 620;
+                 font-variant-numeric: tabular-nums; line-height: 1; }
+      .ps-wxhbar { width: 100%; height: 46px; display: flex; align-items: flex-end; }
+      .ps-wxhbar i { width: 100%; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
+                     background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      .ps-wxhp { font-size: var(--pc-fs-micro); color: var(--ps-cool); font-weight: 600;
+                 font-variant-numeric: tabular-nums; line-height: 1; min-height: 10px; }
+      .ps-wxhl { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-weight: 620;
+                 line-height: 1; white-space: nowrap; }
+      .ps-wxhr.now .ps-wxht { color: var(--ps-heat); }
+      .ps-wxhr.now .ps-wxhl { color: var(--ps-text); }
       .ps-wxrows { display: flex; flex-direction: column; }
       .ps-wxrow { display: flex; align-items: center; gap: 9px; padding: 8px 0;
                   border-top: 1px solid var(--ps-hair-soft); font-size: var(--pc-fs-sm); }
