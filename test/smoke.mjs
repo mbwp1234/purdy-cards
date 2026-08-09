@@ -5667,6 +5667,111 @@ globalThis.document = savedDoc2;
 
 }
 
+
+/* ======================== weather motion ========================
+   The effect rides .ps-ground, which _mount builds once and no patch ever
+   rewrites. Two things have to hold or it is silently dead: the paint has to
+   be CALLED (a method can be complete and never invoked — _bindScrub sat
+   written and uninvoked through three releases), and a condition with no
+   effect must clear the attribute rather than leave the last one running. */
+
+const wxSrc = fs.readFileSync(new URL('../src/78b-shell-weather.js', import.meta.url), 'utf8');
+const coreSrc = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+
+check('the weather paint is actually called from the render tail',
+  /this\._paintWxFx\(\);/.test(coreSrc));
+check('weather_fx joins the watched set, being top-level and not a section',
+  /push\(\(c\.weather_fx \|\| \{\}\)\.entity\)/.test(coreSrc));
+
+function wxGround() {
+  const el = {
+    dataset: {}, _st: {},
+    hasAttribute: (n) => n === 'data-wx' && el.dataset.wx !== undefined,
+    removeAttribute: (n) => { if (n === 'data-wx') delete el.dataset.wx; },
+    style: {
+      setProperty: (k, v) => { el._st[k] = String(v); },
+      getPropertyValue: (k) => el._st[k] || '',
+    },
+  };
+  return el;
+}
+function wxPaint(cfg, states) {
+  const sh = new SH();
+  const g = wxGround();
+  sh.shadowRoot = { querySelector: (q) => (q === '.ps-wxfx' ? g : null) };
+  sh._config = { sections: [], weather_fx: cfg };
+  sh._hass = { states: states || {} };
+  sh._paintWxFx();
+  return g;
+}
+const WXE = 'weather.kcho';
+const wxSt = (s) => ({ [WXE]: { state: s, attributes: {} } });
+
+check('rain draws rain', wxPaint({ entity: WXE }, wxSt('rainy')).dataset.wx === 'rain');
+check('pouring gets its own heavier tile', wxPaint({ entity: WXE }, wxSt('pouring')).dataset.wx === 'pour');
+check('a thunderstorm draws the flash, not just rain',
+  wxPaint({ entity: WXE }, wxSt('lightning-rainy')).dataset.wx === 'storm');
+check('snow draws snow', wxPaint({ entity: WXE }, wxSt('snowy')).dataset.wx === 'snow');
+
+/* Zero-versus-missing, one level out: a clear sky, an unreporting provider and
+   no config at all must all draw NOTHING, and none of them may draw a stand-in. */
+check('a clear sky draws nothing at all',
+  wxPaint({ entity: WXE }, wxSt('sunny')).dataset.wx === undefined);
+check('clear night draws nothing either',
+  wxPaint({ entity: WXE }, wxSt('clear-night')).dataset.wx === undefined);
+check('cloudy is deliberately unmapped — it is on almost always',
+  wxPaint({ entity: WXE }, wxSt('cloudy')).dataset.wx === undefined);
+check('an unavailable provider draws nothing rather than a clear sky',
+  wxPaint({ entity: WXE }, wxSt('unavailable')).dataset.wx === undefined);
+check('a missing entity draws nothing', wxPaint({ entity: WXE }, {}).dataset.wx === undefined);
+check('no weather_fx block draws nothing', wxPaint(undefined, wxSt('rainy')).dataset.wx === undefined);
+
+check('the weather clearing up takes the rain away with it', (() => {
+  const sh = new SH();
+  const g = wxGround();
+  sh.shadowRoot = { querySelector: () => g };
+  sh._config = { sections: [], weather_fx: { entity: WXE } };
+  sh._hass = { states: wxSt('rainy') };
+  sh._paintWxFx();
+  if (g.dataset.wx !== 'rain') return false;
+  sh._hass = { states: wxSt('sunny') };
+  sh._paintWxFx();
+  return g.dataset.wx === undefined;
+})());
+
+check('force: previews a condition the sky is not doing',
+  wxPaint({ entity: WXE, force: 'rainy' }, wxSt('sunny')).dataset.wx === 'rain');
+check('strength is clamped, so no config can paint the column out',
+  wxPaint({ entity: WXE, strength: 8 }, wxSt('rainy'))._st['--ps-wxstr'] === '1.5');
+check('a non-numeric strength falls back to full rather than to nothing',
+  wxPaint({ entity: WXE, strength: 'loud' }, wxSt('rainy'))._st['--ps-wxstr'] === '1');
+
+/* The stylesheet half. A tile that does not travel exactly one tile height
+   cannot loop seamlessly, so the 200px pairing is asserted, not assumed. */
+check('the effect layer carries both precipitation layers', /\.ps-wxfx::before, \.ps-wxfx::after/.test(shs));
+check('the fall keyframe travels exactly one tile height',
+  /@keyframes ps-wxfall \{\s*from \{ transform: translate3d\(0, -200px, 0\); \}/.test(shs));
+check('every rain tile is 200px tall, so the loop cannot jump',
+  (shs.match(/--ps-wx-[a-z]+-(near|far)-size: \d+px 200px;/g) || []).length === 6);
+check('the drops are discrete, not a repeating-linear-gradient hatch',
+  shs.includes('--ps-wx-rain-near:') && !/--ps-wx[^;]*repeating-linear-gradient/.test(shs));
+check('reduced motion stops the weather, not just transitions',
+  /\.ps-wxfx, \.ps-wxfx::before, \.ps-wxfx::after \{ animation: none !important; \}/.test(shs));
+
+/* The column blurs its backdrop by 26px, so an effect BEHIND it is invisible.
+   This is the assertion that a mockup without frosted glass cannot make. */
+check('the effect sits in front of the glass, not behind it',
+  /\.ps-wxfx \{[^}]*z-index: 6/.test(shs));
+check('and under the dock, the scrim and the sheets',
+  /\.ps-scrim \{[^}]*z-index: 8/.test(shs) && /\.ps-dockwrap \{[^}]*z-index: 7/.test(shs));
+check('the effect layer is mounted once, in the skeleton',
+  /<div class="ps-wxfx"><\/div>/.test(coreSrc));
+check('it never eats a tap', /\.ps-wxfx \{[^}]*pointer-events: none/.test(shs));
+check('an unmapped condition has no rule to match', !/data-wx="cloudy"/.test(shs));
+check('the condition map is keyed on HA states, not invented ones',
+  /const PS_WXFX = \{/.test(wxSrc) && /"lightning-rainy": "storm"/.test(wxSrc));
+
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

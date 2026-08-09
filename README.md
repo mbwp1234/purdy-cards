@@ -467,6 +467,28 @@ that width is what a stage panel buys — a screenshot at 1440 killed it: a stag
 column among five panels is ~290px, so the rails stacked and the forecast's day
 labels clipped off the bottom. Width is what *expanding* buys.
 
+## `purdy-shell-card` — weather motion
+
+Condition-driven precipitation across the whole view. `weather_fx` is a **top-level** key, not a section: it paints over every section rather than living in one.
+
+```yaml
+type: custom:purdy-shell-card
+weather_fx:
+  entity: weather.<your_provider>   # the CONDITION source, not the temperature
+  strength: 1                       # 0–1.5, clamped
+  # force: rainy                    # preview a condition the sky is not doing
+```
+
+`rainy` · `hail` · `snowy-rainy` draw rain, `pouring` a heavier tile, `lightning-rainy` adds a flash, `snowy` drifts, `fog` washes. **Everything else draws nothing** — including `cloudy`, deliberately: it is the commonest condition by a wide margin, and an effect that is on almost always stops being a signal and becomes the ground. A clear sky and a provider that is not reporting both draw nothing, and neither draws a stand-in.
+
+Three things about it are load-bearing, and two of them were only found by shooting the real card:
+
+- **It rides its own layer, mounted once by `_mount` and never patched**, driven by one `data-wx` attribute write. An animation inside a patched string restarts from zero on every state change — that was the v1.45.2 lamp chip, and it is why this is not drawn inside the weather section, whose rendered string changes on every sensor tick.
+- **It sits in FRONT of the glass column.** The column carries `backdrop-filter: blur(26px)`, so a layer on the ground behind it is blurred into nothing — invisible on the real card while looking perfect in a mockup that has no frosted glass. `z-index: 6` puts it over the column and under the dock, the scrim and the sheets.
+- **The drops fall straight down, and travel exactly one tile height.** A slanted tile cannot loop on a vertical translate: the skewed lattice lands off its own period and the pattern visibly jumps every cycle. Rain is drawn as discrete elongated `radial-gradient` drops scattered in a repeating tile — *not* a `repeating-linear-gradient` hatch, which has no gaps and whose angle argument sets the gradient axis, putting the stripes perpendicular to the angle asked for.
+
+`prefers-reduced-motion` stops it. Two composited layers, no JS loop, no canvas.
+
 ## `purdy-shell-card` — systems mode
 
 A whole server behind its own bottom bar. `server:` is a **top-level** key, not a section, because the pages are alternatives to each other rather than neighbours in a scrolling column — and because it swaps the dock as well as the column.

@@ -42,6 +42,26 @@
  *    that draws as a stub rather than as a capsule from nowhere.
  * ========================================================================== */
 
+/* HA condition → ground effect. Keyed on HA's CLOSED set of weather states, so
+ * a provider cannot introduce one silently; anything unlisted draws nothing.
+ *
+ * The omissions are the argument. `cloudy` and `partlycloudy` are the commonest
+ * states here by a wide margin, and an effect that is on almost always is one
+ * nobody reads — it becomes the ground rather than a signal. `windy` and
+ * `exceptional` have no honest picture at all: neither says whether anything is
+ * falling. `sunny` and `clear-night` draw nothing on purpose, which is the same
+ * rule as a missing reading never rendering as a zero. */
+const PS_WXFX = {
+  rainy: "rain",
+  hail: "rain",
+  "snowy-rainy": "rain",
+  pouring: "pour",
+  "lightning-rainy": "storm",
+  lightning: "storm",
+  snowy: "snow",
+  fog: "fog",
+};
+
 /* Daily statistics rows → one record per day.
  *
  * `start` comes back as epoch ms from a modern recorder and as an ISO string
@@ -706,6 +726,53 @@ Object.assign(PurdyShellCard.prototype, {
     if (/met\.no|norwegian/i.test(t)) return "met.no";
     if (/openweather/i.test(t)) return "OpenWeatherMap";
     return t.length > 24 ? `${t.slice(0, 23)}…` : t;
+  },
+
+  /* ------------------------------------------------------------- motion fx --*/
+
+  /* Drive the ground's precipitation layer.
+   *
+   * This is an ATTRIBUTE WRITE on a node _mount built once and no patch ever
+   * rewrites. It sits in FRONT of the glass column: the column blurs whatever
+   * is behind it by 26px, so a layer on .ps-ground is invisible under it — a
+   * mockup with no frosted glass cannot show you that, and a shot of the real
+   * card can — the same shape as the desk writing grid-template-columns onto
+   * the surviving #pd-stage node, and the reason the animation is not drawn
+   * inside the weather section: a section's innerHTML is replaced whenever its
+   * rendered string changes, which for this section is every sensor tick, and
+   * an animation on a replaced node restarts from zero every time (v1.45.2).
+   *
+   * Cloudy deliberately maps to nothing. It is by far the commonest condition
+   * here, and a haze that is drawn almost always is one nobody reads — the
+   * effect earns its place by marking weather that is an EVENT.
+   */
+  _paintWxFx() {
+    const el = this.shadowRoot && this.shadowRoot.querySelector(".ps-wxfx");
+    if (!el) return;
+    const cfg = this._config.weather_fx;
+
+    /* No config, no entity, an entity that is not reporting, or a condition
+       with no effect all land in the same place: no attribute, so the CSS
+       draws nothing. A missing reading must not render as a clear sky any
+       more than it may render as a zero. */
+    const id = cfg && cfg.entity;
+    const st = id && this._hass && this._hass.states[id];
+    const cond = cfg && (cfg.force || (st && st.state));
+    const kind = (cfg && cond && PS_WXFX[cond]) || "";
+
+    if (kind) {
+      if (el.dataset.wx !== kind) el.dataset.wx = kind;
+    } else if (el.hasAttribute("data-wx")) {
+      el.removeAttribute("data-wx");
+    }
+
+    /* Clamped rather than trusted: a strength of 8 would paint the column out
+       entirely, and there is no way to reach the config from the phone. */
+    const raw = cfg && cfg.strength != null ? Number(cfg.strength) : 1;
+    const str = String(Math.max(0, Math.min(1.5, isNaN(raw) ? 1 : raw)));
+    if (el.style.getPropertyValue("--ps-wxstr") !== str) {
+      el.style.setProperty("--ps-wxstr", str);
+    }
   },
 
   /* --------------------------------------------------------------- section --*/
