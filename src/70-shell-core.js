@@ -19,7 +19,7 @@
    "Configuration error" — not just the one section. */
 const PS_SECTIONS = [
   "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
-  "nowplaying", "nursery", "lights", "crew",
+  "nowplaying", "nursery", "lights", "crew", "weather",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
@@ -96,6 +96,16 @@ class PurdyShellCard extends PcBaseCard {
     this._nursery = null;
     this._nurseryErr = null;
     this._nurseryTimer = null;
+    /* Weather, and null for the same reason: the min–max rail has to tell "the
+       recorder has not answered yet" from "the week was flat", and [] reads as
+       the second. See 78b-shell-weather.js. */
+    this._wxStats = null;
+    this._wxStatsErr = null;
+    this._wxFc = null;
+    this._wxFcErr = null;
+    this._wxHrs = null;
+    this._wxPick = null;      // which rail the user last tapped, for the session
+    this._wxTimer = null;
     /* An optimistic setpoint, so the goal moves on the tap rather than on the
        round trip. See _optGoal. */
     this._goalOpt = null;
@@ -162,6 +172,7 @@ class PurdyShellCard extends PcBaseCard {
     this._expandWatched();
     this._startHistory();
     this._startNursery();
+    this._startWeather();
     this._fetchEvents();
     this._fetchSchedule();
     this._fetchRecent();
@@ -195,6 +206,7 @@ class PurdyShellCard extends PcBaseCard {
     if (this._historyTimer) clearInterval(this._historyTimer);
     if (this._eventTimer) clearInterval(this._eventTimer);
     if (this._nurseryTimer) clearInterval(this._nurseryTimer);
+    if (this._wxTimer) clearInterval(this._wxTimer);
     clearTimeout(this._goalSend);
     this._goalSend = null;
     this._clock = null;
@@ -204,6 +216,7 @@ class PurdyShellCard extends PcBaseCard {
        "running" by the handle, so leaving it set would stack a second poller
        on every return to the view. */
     this._nurseryTimer = null;
+    this._wxTimer = null;
   }
 
   /* Everything the shell reads, so a state change repaints exactly once. */
@@ -248,6 +261,13 @@ class PurdyShellCard extends PcBaseCard {
       }
       if (s.type === "nursery") {
         push(s.hatch); push(s.door); push(s.hatch_wifi); push(s.light);
+      }
+      /* The hero number is a watched state, not part of the weather fetch, so
+         the reading on screen moves with the thermometer rather than waiting up
+         to fifteen minutes for the next statistics poll. */
+      if (s.type === "weather") {
+        push(s.sensor); push(s.forecast); push(s.feels_from);
+        push(s.gttc_outdoor); push(s.sun);
       }
       if (s.type === "lights") {
         (s.lights || []).forEach((x) => {
@@ -553,12 +573,6 @@ class PurdyShellCard extends PcBaseCard {
     const wTemp = c.weather && this._hass.states[c.weather]
       ? this._hass.states[c.weather].attributes.temperature : null;
     const wState = pcState(this._hass, c.weather);
-    const wIcons = {
-      rainy: "mdi:weather-rainy", pouring: "mdi:weather-pouring", sunny: "mdi:weather-sunny",
-      clear: "mdi:weather-night", "clear-night": "mdi:weather-night", cloudy: "mdi:weather-cloudy",
-      partlycloudy: "mdi:weather-partly-cloudy", snowy: "mdi:weather-snowy", fog: "mdi:weather-fog",
-      windy: "mdi:weather-windy", lightning: "mdi:weather-lightning", hail: "mdi:weather-hail",
-    };
 
     const sections = [];
     c.sections.forEach((raw, i) => {
@@ -581,6 +595,7 @@ class PurdyShellCard extends PcBaseCard {
         nursery: () => this._secNursery(sec),
         lights: () => this._secLights(sec),
         crew: () => this._secCrew(sec),
+        weather: () => this._secWeather(sec),
       }[sec.type]();
       if (!body) return;   // a self-hiding section takes its divider with it
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
@@ -607,7 +622,7 @@ class PurdyShellCard extends PcBaseCard {
         </div>
         <div class="ps-rt">
           ${wTemp == null ? "" : `<div class="ps-wx" data-info="${psEsc(c.weather)}">
-            <ha-icon icon="${wIcons[wState] || "mdi:weather-partly-cloudy"}"></ha-icon>${Math.round(wTemp)}°</div>`}
+            <ha-icon icon="${pcWxIcon(wState)}"></ha-icon>${Math.round(wTemp)}°</div>`}
           ${pcOffline(this._hass)
             /* Everything below is last-known-good from here on. Saying so beats
                a screen of confidently stale numbers. */
@@ -803,6 +818,32 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const id = el.dataset.tvoff;
         this._hass.callService(id.split(".")[0], "turn_off", { entity_id: id });
+      });
+    });
+
+    /* The weather rail's source toggle. A plain re-render is right here: the
+       tab is a discrete tap, not a continuous gesture, so there is no focused
+       field and no element under a moving finger to detach. `stopPropagation`
+       keeps it off the section header's expand. */
+    this._each("[data-wxrail]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._wxPick = el.dataset.wxrail;
+        this._last = null;
+        this._render();
+      });
+    });
+    this._each("[data-wxretry]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        /* Back to "still loading" rather than leaving the error on screen while
+           the request is in flight — a retry that looks like nothing happened
+           gets pressed again. */
+        this._wxStatsErr = null;
+        this._wxFcErr = null;
+        this._last = null;
+        this._render();
+        this._fetchWeather();
       });
     });
 
@@ -1425,6 +1466,8 @@ class PurdyShellCard extends PcBaseCard {
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
+      weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
+      wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
     };
   }
 

@@ -36,7 +36,7 @@
    to a throw from setConfig. A test asserts the two halves name the same set. */
 const PD_SECTIONS = [
   "climate", "nursery", "music", "calendar", "lights",
-  "people", "quick", "rooms", "systems", "nowplaying",
+  "people", "quick", "rooms", "systems", "nowplaying", "weather",
 ];
 
 /* Which tier a section lands in when it does not say. The strip is a glance,
@@ -44,7 +44,7 @@ const PD_SECTIONS = [
    design plan, expressed as a default rather than as required config. */
 const PD_ZONE_DEFAULT = {
   climate: "stage", nursery: "stage", music: "stage", calendar: "stage",
-  lights: "stage", nowplaying: "stage",
+  lights: "stage", nowplaying: "stage", weather: "stage",
   people: "strip",
   quick: "dock", rooms: "dock", systems: "dock",
 };
@@ -77,6 +77,16 @@ const PD_BORROW = [
   "_collectWatched", "_historyEntities", "_startHistory", "_fetchHistory", "_fetchEvents",
   /* nursery — the derivation, the fetch and the single clock the fixtures pin */
   "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
+  /* weather — the statistics fetch, the provider-shape detection and the rail's
+     scale. `_wxCapsule` is here too, taking a class prefix: the three states it
+     draws (a stub for a half-published day, a hatch for an absent one, a
+     visible cap for a flat one) ARE the zero-versus-missing rules, and a second
+     copy on the desk could regress on its own with nothing to say so. The
+     markup-emitting cousins — `_secWeather`, `_wxRows`, `_wxHourly` — are not
+     borrowed: they describe a phone column. */
+  "_weatherSection", "_wxKind", "_startWeather", "_fetchWeather", "_fetchWxStats",
+  "_fetchWxFc", "_wxLive", "_wxRail", "_wxDomain", "_wxCapsule", "_wxDow", "_wxDeg",
+  "_wxAttrib", "_wxNoteText", "_wxHistRows", "_wxSrcName", "_wxHourDomain",
   /* faults, dismissals and the notification log */
   "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_serverFaults",
   "_raised", "_faults", "_syncLog",
@@ -155,6 +165,15 @@ class PurdyDeskCard extends PcBaseCard {
     this._nursery = null;
     this._nurseryErr = null;
     this._nurseryTimer = null;
+    /* Weather, null for the same reason: the rail must tell "not answered yet"
+       from "the week was flat". The borrowed fetch writes these. */
+    this._wxStats = null;
+    this._wxStatsErr = null;
+    this._wxFc = null;
+    this._wxFcErr = null;
+    this._wxHrs = null;
+    this._wxPick = null;
+    this._wxTimer = null;
     this._events = [];
     this._goalOpt = null;      // optimistic setpoint, see _optGoal
     this._goalSend = null;
@@ -214,6 +233,7 @@ class PurdyDeskCard extends PcBaseCard {
   _start() {
     this._startHistory();
     this._startNursery();
+    this._startWeather();
     this._fetchEvents();
   }
 
@@ -234,6 +254,7 @@ class PurdyDeskCard extends PcBaseCard {
     if (this._historyTimer) clearInterval(this._historyTimer);
     if (this._eventTimer) clearInterval(this._eventTimer);
     if (this._nurseryTimer) clearInterval(this._nurseryTimer);
+    if (this._wxTimer) clearInterval(this._wxTimer);
     clearTimeout(this._goalSend);
     this._goalSend = null;
     /* Nulled rather than merely cleared: connectedCallback tells "stopped"
@@ -243,6 +264,7 @@ class PurdyDeskCard extends PcBaseCard {
     this._historyTimer = null;
     this._eventTimer = null;
     this._nurseryTimer = null;
+    this._wxTimer = null;
   }
 
   /* Sections in a zone, in config order. Re-ranking the screen is a config

@@ -161,6 +161,9 @@ function buildHass(states) {
       fetch("/h/states").then((r) => r.json()),
       fetch("/h/config?" + new URLSearchParams({
         view: P.get("view") || "phone2", tag: TAG, ...(P.get("index") ? { index: P.get("index") } : {}),
+        /* A section that is not deployed yet still has to be photographable —
+           see patchConfig() in server.mjs. Nothing in HA is touched. */
+        ...(P.get("patch") ? { patch: P.get("patch") } : {}),
       })).then((r) => r.json()),
     ]);
     if (cfgRes && cfgRes.error) throw new Error("config: " + cfgRes.error);
@@ -195,6 +198,9 @@ function buildHass(states) {
       if (P.get("page")) { el._page = P.get("page"); touched = true; }
       if (P.get("open")) { el._open = P.get("open"); touched = true; }
       if (P.get("sheet")) { el._sheet = P.get("sheet"); touched = true; }
+      /* Which weather rail is showing. The card's own field, same as the four
+         above — a preset drives the card rather than faking a tap on its tab. */
+      if (P.get("wxrail")) { el._wxPick = P.get("wxrail"); touched = true; }
       if (touched) { if (el._expandWatched) el._expandWatched(); el._render(); }
     };
 

@@ -15,22 +15,10 @@
  * clear, red with a count when not, and the list itself lives in a popover.
  * ========================================================================== */
 
-/* Weather states are slugs with no separator to split on, so the generic
-   humaniser can only capitalise them: `partlycloudy` came out "Partlycloudy",
-   and `clear-night` would have come out "Clear-night". These are a closed set
-   published by HA, so they are named rather than transformed. */
-const PD_WX_TEXT = {
-  "clear-night": "Clear", partlycloudy: "Partly cloudy", "lightning-rainy": "Thunderstorms",
-  "snowy-rainy": "Sleet", "windy-variant": "Windy", exceptional: "Severe",
-  pouring: "Heavy rain", hail: "Hail", lightning: "Lightning",
-};
-
-const PD_WX = {
-  rainy: "mdi:weather-rainy", pouring: "mdi:weather-pouring", sunny: "mdi:weather-sunny",
-  clear: "mdi:weather-night", "clear-night": "mdi:weather-night", cloudy: "mdi:weather-cloudy",
-  partlycloudy: "mdi:weather-partly-cloudy", snowy: "mdi:weather-snowy", fog: "mdi:weather-fog",
-  windy: "mdi:weather-windy", lightning: "mdi:weather-lightning", hail: "mdi:weather-hail",
-};
+/* The condition maps live in 05-shared.js. There were four copies of the icon
+   map across this bundle and every one of them was missing `lightning-rainy`
+   and `exceptional` — which is most of a thunderstorm week from the National
+   Weather Service, drawn as no glyph at all. See pcWxIcon / pcWxText. */
 
 Object.assign(PurdyDeskCard.prototype, {
 
@@ -85,10 +73,10 @@ Object.assign(PurdyDeskCard.prototype, {
     const oH = pcReading(this._hass, out.humidity);
     return `<div class="pd-z pd-z-wx" data-info="${psEsc(c.weather)}" role="button" tabindex="0">
         <div class="pd-wxmain">
-          <ha-icon icon="${PD_WX[st.state] || "mdi:weather-partly-cloudy"}"></ha-icon>
+          <ha-icon icon="${pcWxIcon(st.state)}"></ha-icon>
           <div>
             <div class="pd-wxt">${temp == null ? "—" : Math.round(temp) + "°"}</div>
-            <div class="pd-wxs">${psEsc(PD_WX_TEXT[st.state] || this._humanize(st.state))}</div>
+            <div class="pd-wxs">${psEsc(pcWxText(st.state) || this._humanize(st.state))}</div>
           </div>
         </div>
         <div class="pd-wxout">

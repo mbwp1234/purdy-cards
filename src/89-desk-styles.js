@@ -653,6 +653,69 @@ const PD_STYLES = `
         flex: 0 0 52px; text-align: right; font-weight: 650;
         font-variant-numeric: tabular-nums; color: var(--ps-text);
       }
+      /* ---------------------------------------------------------- weather --*/
+      /* Both rails side by side. Width is what a stage panel buys, so the desk
+         shows what the week did AND what it is about to do without a toggle;
+         the phone needs the toggle because it has one column to spend. Below
+         720px of panel the two stack, because six capsules across half of a
+         narrow panel is the truncated-label bug in a new costume. */
+      .pd-wxhero { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+      .pd-wxbig {
+        font-size: var(--pc-fs-3xl); font-weight: 620; letter-spacing: -.045em;
+        line-height: .94; font-variant-numeric: tabular-nums;
+      }
+      .pd-wxbig sup { font-size: .42em; font-weight: 600; vertical-align: top;
+                      position: relative; top: .25em; }
+      .pd-wxbig.off { color: var(--ps-dim); }
+      .pd-wxdelta { font-size: var(--pc-fs-xs); color: var(--ps-heat); font-weight: 620;
+                    margin-top: 6px; font-variant-numeric: tabular-nums; }
+      .pd-wxdelta.cool { color: var(--ps-cool); }
+      .pd-wxsrc { font-size: var(--pc-fs-micro); color: var(--ps-dim); letter-spacing: .08em;
+                  text-transform: uppercase; font-weight: 620; margin-top: 5px; }
+      .pd-wxtiles { margin-left: auto; display: flex; gap: 16px; align-items: flex-start; }
+      .pd-wxmi { --mdc-icon-size: 20px; color: var(--ps-muted); }
+
+      .pd-wxrails { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                    gap: 14px; }
+      .pd-wxcol { min-width: 0; }
+      .pd-wxrh { display: flex; align-items: baseline; gap: 8px; margin: 0 0 7px; }
+      .pd-wxlb { font-size: var(--pc-fs-micro); letter-spacing: .12em; text-transform: uppercase;
+                 color: var(--ps-dim); font-weight: 620; }
+      .pd-wxrb { margin-left: auto; font-size: var(--pc-fs-micro); color: var(--ps-dim); }
+      .pd-wxbox { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                  border-radius: var(--pc-r-sm); padding: 12px 10px;
+                  font-size: var(--pc-fs-xs); color: var(--ps-dim); text-align: center; }
+      .pd-wxbox.plot { padding: 10px 9px 8px; text-align: left; }
+      .pd-wxrail { display: grid; grid-template-columns: repeat(var(--n, 7), minmax(0, 1fr)); gap: 5px; }
+      .pd-wxday { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+      .pd-wxhi, .pd-wxlo { font-size: var(--pc-fs-xs); font-variant-numeric: tabular-nums;
+                           font-weight: 620; line-height: 1; color: var(--ps-muted); }
+      .pd-wxlo { color: var(--ps-dim); font-weight: 600; }
+      .pd-wxdw { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-weight: 620;
+                 letter-spacing: .04em; }
+      .pd-wxday.now .pd-wxhi { color: var(--ps-heat); }
+      .pd-wxday.now .pd-wxdw { color: var(--ps-text); }
+      .pd-wxi { --mdc-icon-size: 15px; color: var(--ps-muted); }
+      .pd-wxpcp { font-size: var(--pc-fs-micro); color: var(--ps-cool); font-weight: 600;
+                  font-variant-numeric: tabular-nums; }
+      .pd-wxpcp.none { visibility: hidden; }
+      .pd-wxtrack { position: relative; width: 100%; max-width: 22px; height: 104px;
+                    border-radius: var(--pc-r-pill); background: var(--ps-track); overflow: hidden; }
+      .pd-wxtrack.empty { background: repeating-linear-gradient(135deg,
+                            rgba(255,255,255,.05) 0 4px, transparent 4px 8px); }
+      .pd-wxcap { position: absolute; left: 0; right: 0; border-radius: var(--pc-r-pill);
+                  background: linear-gradient(to top, var(--ps-cool), #8fb9d8 42%,
+                              #e8c39a 72%, var(--ps-heat)); }
+      .pd-wxcap.stub { height: 4px; opacity: .75; }
+      .pd-wxmark { position: absolute; left: -3px; right: -3px; height: 2px; z-index: 2;
+                   background: #fff; border-radius: var(--pc-r-hair);
+                   box-shadow: 0 0 6px rgba(255,255,255,.7); }
+      .pd-wxhrs { display: flex; gap: 3px; align-items: flex-end; height: 44px; }
+      .pd-wxhrs i { flex: 1; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
+                    background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      .pd-wxfacts { display: flex; gap: 18px; flex-wrap: wrap; }
+      .pd-wxnote { font-size: var(--pc-fs-xs); color: var(--ps-muted); line-height: 1.5; }
+
       .pd-sstats { display: flex; gap: 8px; flex-wrap: wrap; }
       .pd-sstat {
         flex: 1; min-width: 62px; background: var(--pc-fill-1);

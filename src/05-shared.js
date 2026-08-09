@@ -201,3 +201,68 @@ function pcLiveMusicState(st) {
   return st;
 }
 
+
+/* ---------------------------------------------------------------- weather --*/
+/* One condition map. There were FOUR — the climate panel, the home cards, the
+   shell's status strip and the desk's — and every one of them was missing
+   `lightning-rainy`, `exceptional`, `snowy-rainy` and `windy-variant`, which
+   between them are what the National Weather Service returns for most of a
+   thunderstorm week. A name the map does not have draws no icon at all: the
+   row silently loses its glyph and measures narrower than its neighbours,
+   which is precisely the bug class the shoot harness's dotted box exists to
+   catch. HA publishes a CLOSED set of conditions, so it is named in full.
+
+   Text as well as icons, for the same reason the desk needed it: the states
+   are slugs with no separator, so a generic humaniser turns `partlycloudy`
+   into "Partlycloudy" and `clear-night` into "Clear-night". */
+const PC_WX_ICON = {
+  "clear-night": "mdi:weather-night",
+  clear: "mdi:weather-night",
+  cloudy: "mdi:weather-cloudy",
+  /* Not a bare alert triangle. In a row of weather glyphs that reads as a
+     rendering error rather than as weather — and NWS uses `exceptional` for heat
+     advisories, which is a kind of weather. */
+  exceptional: "mdi:weather-sunny-alert",
+  fog: "mdi:weather-fog",
+  hail: "mdi:weather-hail",
+  lightning: "mdi:weather-lightning",
+  "lightning-rainy": "mdi:weather-lightning-rainy",
+  partlycloudy: "mdi:weather-partly-cloudy",
+  pouring: "mdi:weather-pouring",
+  rainy: "mdi:weather-rainy",
+  snowy: "mdi:weather-snowy",
+  "snowy-rainy": "mdi:weather-snowy-rainy",
+  sunny: "mdi:weather-sunny",
+  windy: "mdi:weather-windy",
+  "windy-variant": "mdi:weather-windy-variant",
+};
+
+const PC_WX_TEXT = {
+  "clear-night": "Clear", clear: "Clear", partlycloudy: "Partly cloudy",
+  "lightning-rainy": "Thunderstorms", "snowy-rainy": "Sleet",
+  "windy-variant": "Windy", exceptional: "Severe", pouring: "Heavy rain",
+  hail: "Hail", lightning: "Lightning", fog: "Fog", cloudy: "Cloudy",
+  rainy: "Rain", snowy: "Snow", sunny: "Sunny", windy: "Windy",
+};
+
+/* An unknown condition falls back to a neutral glyph rather than to nothing —
+   a blank where every sibling has an icon reads as a rendering fault. */
+function pcWxIcon(cond) {
+  return PC_WX_ICON[String(cond || "")] || "mdi:weather-cloudy";
+}
+
+function pcWxText(cond) {
+  const c = String(cond || "");
+  if (!c) return "";
+  if (PC_WX_TEXT[c]) return PC_WX_TEXT[c];
+  return c.charAt(0).toUpperCase() + c.slice(1).replace(/[-_]+/g, " ");
+}
+
+/* Local day key. toISOString() rolls the day at the wrong moment west of
+   Greenwich: an 8pm reading would file itself under tomorrow, and "last night"
+   would point at the wrong date all morning. The nursery card learned this
+   once already. */
+function pcDayKey(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

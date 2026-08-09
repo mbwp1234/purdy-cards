@@ -468,6 +468,114 @@ const PS_STYLES = `
                       font-size: var(--pc-fs-micro); color: var(--ps-dim);
                       font-variant-numeric: tabular-nums; }
 
+      /* ---------------------------------------------------------- weather --*/
+      /* The reading, the seven-day tiles, and a capsule per day.
+         The capsule gradient runs cool at the low end to heat at the high end,
+         which is the same two-pole temperature language the rings and the
+         climate chips already speak — the reference card this is adapted from
+         used its own blue-to-sand ramp, and importing that would have made
+         temperature mean one thing here and another everywhere else. */
+      .ps-wxhero { display: flex; align-items: flex-start; gap: 10px; }
+      .ps-wxheronum { min-width: 0; }
+      .ps-wxbig { font-size: var(--pc-fs-3xl); font-weight: 640; letter-spacing: -.045em;
+                  line-height: .94; font-variant-numeric: tabular-nums; }
+      .ps-wxbig sup { font-size: .42em; font-weight: 600; letter-spacing: 0;
+                      vertical-align: top; position: relative; top: .25em; }
+      /* An unreporting sensor must not print its last number in the hero
+         colour as though it were current. */
+      .ps-wxbig.off { color: var(--ps-dim); }
+      .ps-wxdelta { font-size: var(--pc-fs-xs); color: var(--ps-heat); font-weight: 640;
+                    margin-top: 7px; font-variant-numeric: tabular-nums; }
+      .ps-wxdelta.cool { color: var(--ps-cool); }
+      /* One line. The real sensor name here is "Outside Thermometer & Humidity
+         Temperature", which wrapped to two lines of uppercase micro type under
+         the hero number — see _wxSrcName, which shortens it; this is the guard
+         for whatever the next sensor is called. */
+      .ps-wxsrc { font-size: var(--pc-fs-micro); color: var(--ps-dim); letter-spacing: .06em;
+                  text-transform: uppercase; font-weight: 660; margin-top: 5px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                  max-width: 190px; }
+      .ps-wxtiles { margin-left: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: 6px; min-width: 0; }
+      .ps-wxtile { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                   border-radius: var(--pc-r-sm); padding: 7px 8px 8px; min-width: 58px; }
+      /* A truncated label is a MISSING label, and a wrapped one is worse — the
+         three tiles read "MIN / 7D", "AVG / 7D", "MAX / 7D" stacked when the
+         window was in the label. The window is named once, on the rail caption. */
+      .ps-wxtile span { display: block; font-size: var(--pc-fs-micro); letter-spacing: .09em;
+                        text-transform: uppercase; color: var(--ps-dim); font-weight: 660;
+                        white-space: nowrap; }
+      .ps-wxtile b { display: block; font-size: var(--pc-fs-lg); font-weight: 640; margin-top: 3px;
+                     letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+      .ps-wxtile b.lo { color: var(--ps-cool); }
+      .ps-wxtile b.hi { color: var(--ps-heat); }
+
+      .ps-wxtabs { display: flex; gap: 6px; margin: 14px 0 0; }
+      .ps-wxtab { font-size: var(--pc-fs-micro); font-weight: 660; padding: 5px 11px;
+                  border-radius: var(--pc-r-pill); background: var(--pc-fill-1);
+                  color: var(--ps-dim); border: 1px solid transparent; position: relative; }
+      .ps-wxtab.on { background: rgba(77,208,225,.16); color: var(--ps-cool);
+                     border-color: rgba(77,208,225,.28); }
+      /* The drawn size stays; the target grows behind the paint. */
+      .ps-wxtab::after { content: ""; position: absolute; inset: -9px -4px; }
+
+      .ps-wxrh { display: flex; align-items: baseline; gap: 8px; margin: 14px 0 8px; }
+      .ps-wxlb { font-size: var(--pc-fs-micro); letter-spacing: .14em; text-transform: uppercase;
+                 color: var(--ps-dim); font-weight: 660; }
+      .ps-wxrb { margin-left: auto; font-size: var(--pc-fs-micro); color: var(--ps-dim); }
+
+      .ps-wxrail { display: grid; grid-template-columns: repeat(var(--n, 7), minmax(0, 1fr)); gap: 5px; }
+      .ps-wxday { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+      .ps-wxhi, .ps-wxlo { font-size: var(--pc-fs-xs); font-variant-numeric: tabular-nums;
+                           font-weight: 620; line-height: 1; color: var(--ps-muted); }
+      .ps-wxlo { color: var(--ps-dim); font-weight: 600; }
+      .ps-wxdw { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-weight: 660;
+                 letter-spacing: .04em; }
+      .ps-wxday.now .ps-wxhi { color: var(--ps-heat); }
+      .ps-wxday.now .ps-wxdw { color: var(--ps-text); }
+      .ps-wxi { --mdc-icon-size: 14px; color: var(--ps-muted); }
+      .ps-wxpcp { font-size: var(--pc-fs-micro); color: var(--ps-cool); font-weight: 620;
+                  font-variant-numeric: tabular-nums; }
+      /* Holds the line's height so the day labels stay in a row when a provider
+         publishes no probability at all. */
+      .ps-wxpcp.none { visibility: hidden; }
+
+      .ps-wxtrack { position: relative; width: 100%; max-width: 20px; height: 116px;
+                    border-radius: var(--pc-r-pill); background: var(--ps-track); overflow: hidden; }
+      /* A day the recorder has nothing for is hatched and empty. A flat capsule
+         at the middle of the axis would be a claim about the weather. */
+      .ps-wxtrack.empty { background: repeating-linear-gradient(135deg,
+                            rgba(255,255,255,.05) 0 4px, transparent 4px 8px); }
+      .ps-wxcap { position: absolute; left: 0; right: 0; border-radius: var(--pc-r-pill);
+                  background: linear-gradient(to top, var(--ps-cool), #8fb9d8 42%,
+                              #e8c39a 72%, var(--ps-heat)); }
+      /* One end published and the other not: a marker at what is known, never a
+         capsule running off to the edge of the track. */
+      .ps-wxcap.stub { height: 4px; opacity: .75; }
+      .ps-wxmark { position: absolute; left: -3px; right: -3px; height: 2px; z-index: 2;
+                   background: #fff; border-radius: var(--pc-r-hair);
+                   box-shadow: 0 0 6px rgba(255,255,255,.7); }
+
+      .ps-wxhrs { display: flex; gap: 3px; align-items: flex-end; height: 46px; }
+      .ps-wxhrs i { flex: 1; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
+                    background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      .ps-wxrows { display: flex; flex-direction: column; }
+      .ps-wxrow { display: flex; align-items: center; gap: 9px; padding: 8px 0;
+                  border-top: 1px solid var(--ps-hair-soft); font-size: var(--pc-fs-sm); }
+      .ps-wxrow:first-child { border-top: 0; }
+      .ps-wxrow .k { color: var(--ps-muted); flex: 1; min-width: 0; }
+      .ps-wxrow .v { font-weight: 640; font-variant-numeric: tabular-nums; }
+      .ps-wxrow .v.heat { color: var(--ps-heat); }
+      .ps-wxrow .v.cool { color: var(--ps-cool); }
+      .ps-wxrow .v.warn { color: var(--ps-warn); }
+      .ps-wxrow .v.bad { color: var(--ps-bad); }
+      .ps-wxnote { font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 9px;
+                   line-height: 1.5; }
+      .ps-wxempty { font-size: var(--pc-fs-xs); color: var(--ps-dim); line-height: 1.5;
+                    padding: 14px 2px; text-align: center; }
+      .ps-wxretry { display: inline-block; margin-left: 7px; color: var(--ps-cool);
+                    font-weight: 650; text-decoration: underline; }
+
       /* nursery: nap rings and the one line of live status */
       .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
       .ps-napr { display: flex; flex-direction: column; align-items: center; gap: 3px; }

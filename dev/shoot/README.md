@@ -120,8 +120,9 @@ pixels, and four times the tokens if an agent is reading them).
 
 ```
 phone  phone-joel  phone-climate  phone-crew   lights  music  alerts
+phone-weather  phone-weather-fc  phone-weather-cold
 sys-overview  sys-docker  sys-storage  sys-perf  sys-alerts
-desk
+desk  desk-weather
 ```
 
 Sections are opened by writing the card's own state fields rather than faking
@@ -131,6 +132,34 @@ taps, so any of them can be photographed directly:
 node dev/shoot/shoot.mjs --shot x:390x844:'tag=custom:purdy-shell-card&view=phone2&open=clim'
 node dev/shoot/shoot.mjs --dpr 2 desk
 ```
+
+## Patching the config
+
+A section that is not deployed yet cannot be photographed, and deploying it to
+find out how it looks is the loop this harness exists to replace. So the Lovelace
+config can be patched on its way into `setConfig`:
+
+```bash
+cp dev/shoot/patches/weather.example.json dev/shoot/patches/weather.json
+$EDITOR dev/shoot/patches/weather.json          # fill in your entity ids
+node dev/shoot/shoot.mjs phone-weather
+```
+
+A patch is a partial config. Plain keys are assigned over the top; two
+dollar-keys handle the array that matters:
+
+| key | effect |
+|-----|--------|
+| `$insertSection` | `{ index, section }` — put one section at a position |
+| `$appendSections` | `[ ... ]` — add sections at the end |
+
+**Home Assistant is never written to** — the rewrite happens in flight, in the
+server, on the way to the page. A missing or malformed patch file is logged and
+the config renders unpatched, so a stale preset degrades to the deployed view
+rather than to an error.
+
+Real patches are gitignored: they name entities, and this repo is public. Only
+`*.example.json` is committed.
 
 `?debug=1` on the URL overlays the notes (pinned to a corner, out of the flow,
 so it cannot change the layout it is describing).

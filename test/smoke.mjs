@@ -4348,6 +4348,488 @@ check('the systems page classes it renders all exist', (() => {
 })());
 
 
+/* ==========================================================================
+ * weather — the min→max rail
+ *
+ * Fixtures are pinned to a fixed clock, never derived from the wall clock. The
+ * nursery suite learned this the hard way: six tests anchored to `Date.now()`
+ * passed all afternoon and failed every evening, because a fixture three hours
+ * old is a nap at 2pm and a night at 10pm. A weather day is a time-of-day
+ * question too — "is this bucket today" decides whether it is partial — so the
+ * same seam is used here.
+ * ======================================================================== */
+{
+const wDays = SH.helpers.weatherDays;
+const wStats = SH.helpers.weatherStats;
+const wFc = SH.helpers.weatherFc;
+/* Sat 2026-08-08, 3:00 PM local. */
+const WNOW = new Date(2026, 7, 8, 15, 0, 0).getTime();
+const DAY = (d, min, mean, max) => ({ start: new Date(2026, 7, d, 0, 0, 0).getTime(), min, mean, max });
+
+check('statistics rows become one record per local day, in order', (() => {
+  const d = wDays([DAY(6, 73.8, 81.2, 96.8), DAY(5, 72.5, 79.6, 89.6)], WNOW);
+  return d.length === 2 && d[0].min === 72.5 && d[1].max === 96.8 && d[0].ts < d[1].ts;
+})());
+
+check('an ISO start_time is read as well as epoch ms', (() => {
+  const d = wDays([{ start: new Date(2026, 7, 6, 0, 0, 0).toISOString(), min: 70, mean: 80, max: 90 }], WNOW);
+  return d.length === 1 && d[0].max === 90;
+})());
+
+check('today is flagged partial and a closed day is not', (() => {
+  const d = wDays([DAY(7, 69.4, 78.4, 95.9), DAY(8, 70.5, 76.0, 92.4)], WNOW);
+  return d[0].partial === false && d[1].partial === true;
+})());
+
+/* The local-day-key rule, which is what the flag above depends on. An evening
+   reading filed by toISOString() lands on tomorrow west of Greenwich, and every
+   "today" test would then be wrong for the last few hours of every day. */
+check('the day key is local, so a late-evening bucket is still today', (() => {
+  const late = new Date(2026, 7, 8, 22, 30, 0).getTime();
+  return SH.helpers.localDayKey(late) === '2026-08-08';
+})());
+
+check('a row whose min and max did not survive keeps its slot', (() => {
+  const d = wDays([DAY(5, 72, 79, 89), { start: new Date(2026, 7, 6).getTime(), min: null, mean: null, max: null },
+    DAY(7, 69, 78, 95)], WNOW);
+  /* Three days in the week means three columns. Dropping the empty one would
+     close the gap up and silently shift every later day left. */
+  return d.length === 3 && d[1].min === null && d[2].min === 69;
+})());
+
+check('a non-numeric statistic reads as missing, never as zero', (() => {
+  const d = wDays([{ start: new Date(2026, 7, 6).getTime(), min: 'unknown', mean: null, max: 90 }], WNOW);
+  return d[0].min === null && d[0].max === 90;
+})());
+
+check('the seven-day figures exclude the day still in progress', (() => {
+  const d = wDays([DAY(6, 70, 80, 90), DAY(7, 60, 70, 100), DAY(8, 20, 20, 20)], WNOW);
+  const s = wStats(d);
+  /* Aug 8 is today: its 20° would otherwise take both the min and the mean. */
+  return s.days === 2 && s.min === 60 && s.max === 100 && s.mean === 75;
+})());
+
+check('with no closed days the figures are null, not zero', (() => {
+  const s = wStats(wDays([DAY(8, 70, 76, 92)], WNOW));
+  return s.days === 0 && s.min === null && s.mean === null && s.max === null;
+})());
+
+/* ---- forecast shapes ---- */
+
+check('a daily forecast maps temperature to the high and templow to the low', (() => {
+  const f = wFc([{ datetime: '2026-08-09T16:00:00+00:00', temperature: 90, templow: 74,
+    condition: 'partlycloudy', precipitation: 0.02 }], 'daily', WNOW);
+  return f.length === 1 && f[0].hi === 90 && f[0].lo === 74 && f[0].partial === false;
+})());
+
+/* NWS is the accurate free provider for a US location and publishes NO daily
+   forecast — only day/night pairs. Folding them is what lets the rail point at
+   it at all. */
+check('twice_daily day/night pairs fold into one high and one low', (() => {
+  const f = wFc([
+    { datetime: '2026-08-09T08:00:00-04:00', is_daytime: true, temperature: 95, condition: 'partlycloudy', precipitation_probability: 10 },
+    { datetime: '2026-08-09T18:00:00-04:00', is_daytime: false, temperature: 71, condition: 'clear-night', precipitation_probability: 30 },
+  ], 'twice_daily', WNOW);
+  return f.length === 1 && f[0].hi === 95 && f[0].lo === 71 && f[0].partial === false;
+})());
+
+check('a folded day is labelled by its daytime half, not by its night', (() => {
+  const f = wFc([
+    { datetime: '2026-08-10T06:00:00-04:00', is_daytime: true, temperature: 95, condition: 'lightning-rainy' },
+    { datetime: '2026-08-10T18:00:00-04:00', is_daytime: false, temperature: 72, condition: 'clear-night' },
+  ], 'twice_daily', WNOW);
+  /* Taking the night's condition would label a stormy day "clear" because the
+     sun went down. */
+  return f[0].condition === 'lightning-rainy';
+})());
+
+check('precipitation probability takes the worse half, not the average', (() => {
+  const f = wFc([
+    { datetime: '2026-08-10T06:00:00-04:00', is_daytime: true, temperature: 90, precipitation_probability: 15 },
+    { datetime: '2026-08-10T18:00:00-04:00', is_daytime: false, temperature: 70, precipitation_probability: 60 },
+  ], 'twice_daily', WNOW);
+  return f[0].pop === 60;
+})());
+
+/* Late in the day NWS has no daytime period left to publish, so today arrives
+   as a low with no high. That is a hole in the data and must not draw as a
+   capsule from nowhere. */
+check('a day published with only a night half is partial, not zero', (() => {
+  const f = wFc([
+    { datetime: '2026-08-08T18:00:00-04:00', is_daytime: false, temperature: 71, condition: 'clear-night' },
+    { datetime: '2026-08-09T06:00:00-04:00', is_daytime: true, temperature: 95, condition: 'sunny' },
+    { datetime: '2026-08-09T18:00:00-04:00', is_daytime: false, temperature: 70, condition: 'clear-night' },
+  ], 'twice_daily', WNOW);
+  return f.length === 2 && f[0].partial === true && f[0].hi === null && f[0].lo === 71
+    && f[1].partial === false;
+})());
+
+check('the folded days come back in chronological order', (() => {
+  const mk = (d, day, t) => ({ datetime: `2026-08-${String(d).padStart(2, '0')}T${day ? '06' : '18'}:00:00-04:00`, is_daytime: day, temperature: t });
+  const f = wFc([mk(11, true, 89), mk(9, true, 95), mk(10, true, 93), mk(9, false, 71)], 'twice_daily', WNOW);
+  return f.map((x) => x.hi).join(',') === '95,93,89';
+})());
+
+check('today is marked on the forecast so the live tick has a column', (() => {
+  const f = wFc([
+    { datetime: '2026-08-08T06:00:00-04:00', is_daytime: true, temperature: 92 },
+    { datetime: '2026-08-09T06:00:00-04:00', is_daytime: true, temperature: 95 },
+  ], 'twice_daily', WNOW);
+  return f[0].today === true && f[1].today === false;
+})());
+
+check('an unparseable forecast entry is dropped rather than becoming NaN', (() => {
+  const f = wFc([{ datetime: 'not a date', temperature: 90, templow: 70 },
+    { datetime: '2026-08-09T16:00:00+00:00', temperature: 90, templow: 74 }], 'daily', WNOW);
+  return f.length === 1;
+})());
+
+/* ---- provider-shape detection ---- */
+
+const wsec = (extra) => ({
+  type: 'weather', key: 'wx', title: 'Weather',
+  sensor: 'sensor.out', forecast: 'weather.nws', ...extra,
+});
+const mkW = (states, extra) => {
+  const s = new SH();
+  s.setConfig({ sections: [wsec(extra)] });
+  s._hass = { states, callService: () => {}, callWS: () => {} };
+  return s;
+};
+
+check('a provider with only twice_daily is asked for twice_daily', (() => {
+  /* supported_features 6 = HOURLY | TWICE_DAILY. Asking such a provider for a
+     daily forecast answers with an empty list and NO error, so the rail would
+     be blank forever with nothing to say why. */
+  const s = mkW({ 'weather.nws': { state: 'sunny', attributes: { supported_features: 6 } } });
+  return s._wxKind(s._config.sections[0]) === 'twice_daily';
+})());
+
+check('a provider that has daily is asked for daily', (() => {
+  const s = mkW({ 'weather.nws': { state: 'sunny', attributes: { supported_features: 3 } } });
+  return s._wxKind(s._config.sections[0]) === 'daily';
+})());
+
+check('an explicit forecast_type overrides the detection', (() => {
+  const s = mkW({ 'weather.nws': { state: 'sunny', attributes: { supported_features: 3 } } },
+    { forecast_type: 'twice_daily' });
+  return s._wxKind(s._config.sections[0]) === 'twice_daily';
+})());
+
+/* ---- the rail's scale and the capsule's three states ---- */
+
+check('a flat week is not amplified into a mountain range', (() => {
+  const s = mkW({});
+  const dom = s._wxDomain([{ min: 71, max: 73 }, { min: 71.5, max: 72.5 }], 'hist');
+  /* Same rule as pcSparkPoly's minSpan: an idle range gets a floor, or two
+     degrees of noise fills the whole track. */
+  return dom.span >= 12;
+})());
+
+check('a real spread scales to itself', (() => {
+  const s = mkW({});
+  const dom = s._wxDomain([{ min: 60, max: 100 }], 'hist');
+  return dom.span > 40 && dom.lo < 60 && dom.hi > 100;
+})());
+
+check('a day with nothing draws a hatched empty track, never a flat capsule', (() => {
+  const s = mkW({});
+  const dom = s._wxDomain([{ min: 60, max: 90 }], 'hist');
+  const html = s._wxCapsule(null, null, dom);
+  return /ps-wxtrack empty/.test(html) && !/ps-wxcap/.test(html);
+})());
+
+check('one end published draws a stub at the end that is known', (() => {
+  const s = mkW({});
+  const dom = s._wxDomain([{ min: 60, max: 90 }], 'hist');
+  const html = s._wxCapsule(70, null, dom);
+  return /ps-wxcap stub/.test(html) && !/height:/.test(html);
+})());
+
+check('a day whose low equals its high still draws something', (() => {
+  const s = mkW({});
+  const dom = s._wxDomain([{ min: 60, max: 90 }], 'hist');
+  const m = /height:([0-9.]+)%/.exec(s._wxCapsule(75, 75, dom));
+  return m && Number(m[1]) >= 5;
+})());
+
+check('the live tick is clamped inside the track', (() => {
+  const s = mkW({});
+  const dom = s._wxDomain([{ min: 60, max: 90 }], 'hist');
+  const m = /ps-wxmark[^>]*bottom:([0-9.]+)%/.exec(s._wxCapsule(60, 90, dom, 500));
+  return m && Number(m[1]) === 100;
+})());
+
+check('the capsule takes a class prefix so the desk draws the same geometry', (() => {
+  const s = mkW({});
+  const dom = s._wxDomain([{ min: 60, max: 90 }], 'hist');
+  const html = s._wxCapsule(70, 80, dom, null, 'pd-wx');
+  return /pd-wxtrack/.test(html) && /pd-wxcap/.test(html) && !/ps-wx/.test(html);
+})());
+
+/* ---- the rendered section ---- */
+
+const WSTATES = {
+  'sensor.out': { state: '93.38', attributes: { friendly_name: 'Outside Thermometer', unit_of_measurement: '°F', device_class: 'temperature' } },
+  'weather.nws': { state: 'sunny', attributes: { supported_features: 6, attribution: 'Data from National Weather Service/NOAA' } },
+  'weather.owm': { state: 'cloudy', attributes: { temperature: 88, apparent_temperature: 98, humidity: 66 } },
+};
+
+check('the hero number is the measured sensor, not the weather entity', (() => {
+  const s = mkW(WSTATES, { feels_from: 'weather.owm' });
+  s._wxStats = wDays([DAY(8, 71.42, 76.7, 92.48)], WNOW);
+  const html = s._secWeather(s._config.sections[0]);
+  /* The provider said 88 and the yard said 93.38 on the day this was written.
+     The present comes from the thing that measured it. */
+  return /93\.4/.test(html) && !/>88</.test(html);
+})());
+
+check('an unavailable sensor prints a dash and says so, never a zero', (() => {
+  const s = mkW({ ...WSTATES, 'sensor.out': { state: 'unavailable', attributes: {} } });
+  const html = s._secWeather(s._config.sections[0]);
+  return /Sensor unavailable/.test(html) && />—<\/div>/.test(html) && !/0\.0°/.test(html);
+})());
+
+check('a missing sensor is named as missing rather than as offline', (() => {
+  const s = mkW({ 'weather.nws': WSTATES['weather.nws'] });
+  return /Sensor not found/.test(s._secWeather(s._config.sections[0]));
+})());
+
+check('the delta is anchored to today\'s recorded low', (() => {
+  const s = mkW(WSTATES);
+  s._wxStats = wDays([DAY(8, 71.42, 76.7, 92.48)], WNOW);
+  const html = s._secWeather(s._config.sections[0]);
+  return /22\.0° from today's low/.test(html) && /↑/.test(html);
+})());
+
+check('with no statistics for today there is no delta at all', (() => {
+  const s = mkW(WSTATES);
+  s._wxStats = [];
+  return !/from today's low/.test(s._secWeather(s._config.sections[0]));
+})());
+
+check('a still-loading rail says so rather than reading as a flat week', (() => {
+  const s = mkW(WSTATES);
+  s._wxStats = null;
+  return /Reading the week/.test(s._secWeather(s._config.sections[0]));
+})());
+
+check('a rail that would not load offers a retry', (() => {
+  const s = mkW(WSTATES);
+  s._wxStatsErr = 'recorder said no';
+  const html = s._secWeather(s._config.sections[0]);
+  return /would not load/.test(html) && /data-wxretry/.test(html);
+})());
+
+check('the tab counts come off the arrays, never off days:', (() => {
+  const s = mkW(WSTATES, { days: 7 });
+  s._wxStats = wDays([DAY(6, 70, 80, 90), DAY(7, 71, 81, 91), DAY(8, 72, 76, 92)], WNOW);
+  /* met.no answers with six days where the config asked for seven. A label
+     reading "Next 7 days" over six capsules has invented a day. */
+  s._wxFc = wFc([1, 2, 3, 4, 5, 6].map((i) => ({
+    datetime: `2026-08-0${i + 3}T16:00:00+00:00`, temperature: 90, templow: 70 })), 'daily', WNOW);
+  const html = s._secWeather(s._config.sections[0]);
+  /* Three buckets, one of them today: the rail draws three columns and the tab
+     says TWO days, because the third is labelled "Today". Reading the column
+     count into the tab is how it came out saying "Last 8 days" against a config
+     that asked for 7. */
+  return /Last 2 days/.test(html) && /Next 6 days/.test(html)
+    && /plus today so far/.test(html);
+})());
+
+check('the sensor name is shortened rather than wrapped to two lines', (() => {
+  const s = mkW(WSTATES);
+  /* "Outside Thermometer & Humidity Temperature" wrapped under the hero number
+     and used the word "temperature" to label a temperature. */
+  return s._wxSrcName(s._config.sections[0]) === 'Outside Thermometer';
+})());
+
+check('source_label overrides the friendly name outright', (() => {
+  const s = mkW(WSTATES, { source_label: 'Back deck' });
+  return s._wxSrcName(s._config.sections[0]) === 'Back deck';
+})());
+
+check('a sensor with a sensible name is left alone', (() => {
+  const s = mkW({ ...WSTATES, 'sensor.out': { state: '90', attributes: { friendly_name: 'Back Deck' } } });
+  return s._wxSrcName(s._config.sections[0]) === 'Back Deck';
+})());
+
+check('the forecast rail is reachable and names its provider', (() => {
+  const s = mkW(WSTATES);
+  s._wxPick = 'forecast';
+  s._wxFc = wFc([{ datetime: '2026-08-09T16:00:00+00:00', temperature: 90, templow: 74, condition: 'lightning-rainy', precipitation_probability: 46 }], 'daily', WNOW);
+  const html = s._secWeather(s._config.sections[0]);
+  return /NWS/.test(html) && /46%/.test(html) && /mdi:weather-lightning-rainy/.test(html);
+})());
+
+check('every condition NWS actually returns has an icon', (() => {
+  /* All six of these came back from KCHO in one week. A name the map lacks
+     draws NO glyph, so the row silently measures narrower than its neighbours —
+     the exact bug class the shoot harness's dotted box exists to catch. */
+  const seen = ['lightning-rainy', 'exceptional', 'partlycloudy', 'sunny', 'clear-night', 'rainy'];
+  return seen.every((c) => SH.helpers.wxIcon(c) !== SH.helpers.wxIcon('__nope__')
+    || c === 'cloudy');
+})());
+
+check('an unknown condition falls back to a glyph rather than to nothing', () =>
+  /^mdi:/.test(SH.helpers.wxIcon('brimstone')));
+check('weather conditions read as words', () =>
+  SH.helpers.wxText('lightning-rainy') === 'Thunderstorms' &&
+  SH.helpers.wxText('partlycloudy') === 'Partly cloudy');
+
+check('a probability of zero is drawn and a missing one is not', (() => {
+  const s = mkW(WSTATES);
+  s._wxPick = 'forecast';
+  s._wxFc = wFc([{ datetime: '2026-08-09T16:00:00+00:00', temperature: 90, templow: 74, precipitation_probability: 0 },
+    { datetime: '2026-08-10T16:00:00+00:00', temperature: 91, templow: 75 }], 'daily', WNOW);
+  const html = s._secWeather(s._config.sections[0]);
+  return (html.match(/ps-wxpcp none/g) || []).length === 1;
+})());
+
+check('a detail row with no value is dropped, not dashed', (() => {
+  /* NWS publishes no apparent temperature and no UV index, so a fixed row list
+     would be half dashes on the most accurate provider available. */
+  const s = mkW(WSTATES);
+  const html = s._wxRows(s._config.sections[0]);
+  return !/UV index/.test(html) && !/Dew point/.test(html);
+})());
+
+check('feels-like is the chip and is never repeated as a row', (() => {
+  /* The chip is on screen whether the list is expanded or not, three
+     centimetres above it. The desk shipped this exact duplication once as
+     "Up 2h 0m" beside "Awake 2h 0m". */
+  const s = mkW(WSTATES, { feels_from: 'weather.owm' });
+  const sec = s._config.sections[0];
+  return /feels 98°/.test(s._secWeather(sec)) && !/Feels like/.test(s._wxRows(sec));
+})());
+
+check('the live reading widens today\'s capsule instead of floating above it', (() => {
+  /* Statistics are aggregated on a schedule, so today's bucket lagged at 92.5
+     while the thermometer said 95.2 — and the tick drew above the top of its own
+     capsule. The tick was the honest half. */
+  const s = mkW(WSTATES);
+  s._wxStats = wDays([DAY(7, 70, 80, 96), DAY(8, 71.42, 76.7, 92.48)], WNOW);
+  const rows = s._wxHistRows(95.2);
+  return rows[1].max === 95.2 && rows[1].min === 71.42 && rows[0].max === 96;
+})());
+
+check('a closed day is never widened by the live reading', (() => {
+  const s = mkW(WSTATES);
+  s._wxStats = wDays([DAY(7, 70, 80, 90)], WNOW);
+  return s._wxHistRows(200)[0].max === 90;
+})());
+
+check('the outside-versus-inside row comes from GTTC', (() => {
+  const s = mkW({ ...WSTATES, 'sensor.gttc': { state: '93.38', attributes: { outdoor_minus_indoor: 19.4, optimization_status: 'mild (full setbacks allowed)' } } },
+    { gttc_outdoor: 'sensor.gttc' });
+  const sec = s._config.sections[0];
+  return /\+19\.4°/.test(s._wxRows(sec)) && /full setbacks/.test(s._wxNote(sec));
+})());
+
+check('the note names the first wet day rather than any wet day', (() => {
+  const s = mkW(WSTATES);
+  s._wxFc = wFc([
+    { datetime: '2026-08-08T16:00:00+00:00', temperature: 92, templow: 71, condition: 'sunny' },
+    { datetime: '2026-08-09T16:00:00+00:00', temperature: 90, templow: 74, condition: 'sunny' },
+    { datetime: '2026-08-10T16:00:00+00:00', temperature: 87, templow: 69, condition: 'rainy' },
+  ], 'daily', WNOW);
+  return /Rain Mon/.test(s._wxNote(s._config.sections[0]));
+})());
+
+check('a section with nothing to add says nothing', (() => {
+  const s = mkW(WSTATES);
+  s._wxFc = [];
+  return s._wxNote(s._config.sections[0]) === '';
+})());
+
+check('the hourly strip hides itself rather than drawing one bar', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = [{ ts: WNOW, t: 93 }];
+  return s._wxHourly(s._config.sections[0]) === '';
+})());
+
+check('the coolest hour still draws a bar, not a hairline', (() => {
+  /* At a bare min-max scale the lowest hour lands ON the baseline and draws as a
+     2px sliver, which reads as "no data for that hour". Only visible in a shot. */
+  const s = mkW(WSTATES);
+  s._wxHrs = Array.from({ length: 12 }, (_, i) => ({ ts: WNOW + i * 3600000, t: 90 - i }));
+  const hs = (s._wxHourly(s._config.sections[0]).match(/height:([0-9.]+)%/g) || [])
+    .map((x) => Number(/([0-9.]+)/.exec(x)[1]));
+  return Math.min(...hs) >= 15;
+})());
+
+check('twelve flat hours do not draw as a sawtooth', (() => {
+  const s = mkW(WSTATES);
+  s._wxHrs = Array.from({ length: 12 }, (_, i) => ({ ts: WNOW + i * 3600000, t: 80 + (i % 2) * 0.5 }));
+  const hs = (s._wxHourly(s._config.sections[0]).match(/height:([0-9.]+)%/g) || [])
+    .map((x) => Number(/([0-9.]+)/.exec(x)[1]));
+  return Math.max(...hs) - Math.min(...hs) < 20;
+})());
+
+/* ---- wiring ---- */
+
+check('the weather entities are watched so the reading moves with the sensor', (() => {
+  const s = mkW(WSTATES, { feels_from: 'weather.owm', gttc_outdoor: 'sensor.gttc', sun: 'sun.sun' });
+  return ['sensor.out', 'weather.nws', 'weather.owm', 'sensor.gttc', 'sun.sun']
+    .every((id) => s._watched.includes(id));
+})());
+
+check('the rail toggle and the retry are both bound', (() => {
+  /* A handler wired by a single line is exactly what went missing for three
+     releases when _bindScrub was defined and never called. */
+  const bound = /_each\("\[data-wxrail\]"/.test(shellSrc) && /_each\("\[data-wxretry\]"/.test(shellSrc);
+  return bound;
+})());
+
+check('the weather poll is started and stopped with the others', () =>
+  /this\._startWeather\(\);/.test(shellSrc) &&
+  /if \(this\._wxTimer\) clearInterval\(this\._wxTimer\);/.test(shellSrc) &&
+  /this\._wxTimer = null;/.test(shellSrc));
+
+check('the statistics call asks for a period and never for history', () => {
+  const wsrc = fs.readFileSync(new URL('../src/78b-shell-weather.js', import.meta.url), 'utf8');
+  return /recorder\/statistics_during_period/.test(wsrc) &&
+    !/history\/period\//.test(wsrc) &&
+    /types: \["min", "mean", "max"\]/.test(wsrc);
+});
+
+check('the statistics window starts at local midnight, not at now minus N days', () => {
+  const wsrc = fs.readFileSync(new URL('../src/78b-shell-weather.js', import.meta.url), 'utf8');
+  return /setHours\(0, 0, 0, 0\)/.test(wsrc);
+});
+
+/* No `units:` in the statistics call. Naming one would convert a °C install
+   into °F — the unit belongs to the sensor, not to this card. */
+check('the statistics call names no unit', () => {
+  const wsrc = fs.readFileSync(new URL('../src/78b-shell-weather.js', import.meta.url), 'utf8');
+  return !/units:/.test(wsrc);
+});
+
+check('weather renders no figure through the zero-hiding shape', () => {
+  const wsrc = fs.readFileSync(new URL('../src/78b-shell-weather.js', import.meta.url), 'utf8');
+  return !/\?\? 0\)/.test(wsrc) && !/\|\| 0\)/.test(wsrc);
+});
+
+check('the weather classes it renders all exist in the stylesheet', (() => {
+  const used = ['ps-wxhero', 'ps-wxbig', 'ps-wxdelta', 'ps-wxsrc', 'ps-wxtiles', 'ps-wxtile',
+    'ps-wxtabs', 'ps-wxtab', 'ps-wxrh', 'ps-wxlb', 'ps-wxrb', 'ps-wxrail', 'ps-wxday',
+    'ps-wxhi', 'ps-wxlo', 'ps-wxdw', 'ps-wxi', 'ps-wxpcp', 'ps-wxtrack', 'ps-wxcap',
+    'ps-wxmark', 'ps-wxhrs', 'ps-wxrows', 'ps-wxrow', 'ps-wxnote', 'ps-wxempty', 'ps-wxretry'];
+  /* Using a class is not the same as having one: `.ps-rv.sm` was asked for by
+     the nap rings and had never been defined, so a 36m nap drew its number at
+     the 2xl step and spilled over the ring's stroke. */
+  return used.every((cl) => shs.includes('.' + cl));
+})());
+
+check('weather styles introduce no loose font-size', (() => {
+  const block = shs.slice(shs.indexOf('weather --'), shs.indexOf('nursery: nap rings'));
+  return block.length > 500 && !/font-size:\s*\d/.test(block);
+})());
+
+check('the new type step is published as a token', () =>
+  /--pc-fs-3xl:/.test(src) && /font-size: var\(--pc-fs-3xl\)/.test(shs));
+}
+
 /* Block-scoped: the desk suite declares a lot of fixtures and must not
    collide with the shell's. */
 {

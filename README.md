@@ -119,7 +119,7 @@ Numeric filename prefixes define concatenation order — `00-core.js` first (ver
 node test/smoke.mjs
 ```
 
-950 assertions against DOM stubs — registration, token resolution, the compact and ribbon paths, the split-bar maths, music search and history, section reconciliation, the bind-once guards, failure states, and a duplicate load warning instead of throwing. The shell and the desk each carry a **mini-DOM**, because the plain stub answers `null` to everything and would pass every patching assertion vacuously.
+1100 assertions against DOM stubs — registration, token resolution, the compact and ribbon paths, the split-bar maths, music search and history, section reconciliation, the bind-once guards, failure states, and a duplicate load warning instead of throwing. The shell and the desk each carry a **mini-DOM**, because the plain stub answers `null` to everything and would pass every patching assertion vacuously.
 
 Run it before every release.
 
@@ -141,7 +141,7 @@ Sizes, radii and surface tints come from three scales rather than being written 
 
 | Scale | Steps |
 |-------|-------|
-| `--pc-fs-*` | `micro` 10 · `xs` 11 · `sm` 12 · `md` 13 · `lg` 15 · `xl` 18 · `2xl` 22 |
+| `--pc-fs-*` | `micro` 10 · `xs` 11 · `sm` 12 · `md` 13 · `lg` 15 · `xl` 18 · `2xl` 22 · `3xl` 40 |
 | `--pc-r-*` | `hair` 2 · `xs` 9 · `sm` 11 · `md` 14 · `lg` 17 · `xl` 20 · `2xl` 26 · `pill` 999 |
 | `--pc-fill-*` / `--pc-edge` | `1` .055 · `2` .08 · `3` .11 · edge .10 |
 
@@ -405,6 +405,68 @@ data:
 response_variable: lib
 ```
 
+## `weather` — a min→max rail
+
+One capsule per day, spanning that day's low to its high, so the *shape* of the
+week reads before any single number does. The rail has two sources and a toggle
+between them: what the week actually did, from recorder statistics, and what it
+is about to do, from the forecast provider.
+
+```yaml
+- type: weather
+  key: wx
+  title: Weather
+  sensor: sensor.outside_thermometer          # the MEASURED reading — the hero number
+  forecast: weather.kcho                      # provider for the forecast rail
+  feels_from: weather.openweathermap          # optional: apparent_temperature
+  gttc_outdoor: sensor.gttc_outdoor_temperature   # optional: inside/outside delta
+  sun: sun.sun                                # optional: sunrise / sunset row
+  days: 7                # closed days on the history rail; today is drawn as well
+  rail: history          # which source opens collapsed — history | forecast
+  hourly: 12             # hours in the expanded strip; 0 drops it
+  source_label: Back deck   # optional: overrides the sensor's friendly name
+  tabs: false             # optional: pin one source and hide the toggle
+```
+
+Three things worth knowing before pointing it at a provider:
+
+**The hero number is `sensor:`, not the weather entity.** On the day this was
+written `weather.forecast_home` reported 79 °F while the thermometer in the yard
+read 93.4 °F. A provider is authoritative about the future and merely opinionated
+about the present, so the present comes from the thing that measured it. The
+provider supplies the forecast rail and nothing else.
+
+**Daily min/max comes from `recorder/statistics_during_period`, not from
+history.** History would answer with every state change for a week and the card
+would reduce it to 24 numbers; statistics answers with the 24 numbers. Because
+long-term statistics are not purged with the recorder, the rail is not bound by
+the retention that limits the hypnogram — `days:` could be 365 as cheaply as 7.
+No `units:` is sent, so the sensor's own unit is what comes back.
+
+**Not every provider publishes a `daily` forecast.** The National Weather
+Service — free, keyless, and the most accurate source for a US location because
+the local forecast office edits the grid by hand — supports only `hourly` and
+`twice_daily`. Its day/night pairs *are* a high and a low, so they are folded
+into days. The forecast type is read off `supported_features` rather than
+configured, because asking a provider for a type it does not support answers with
+an empty list and no error: the rail would be blank forever with nothing to say
+why. `forecast_type:` overrides the detection.
+
+Missing data is never drawn as zero. A day the recorder has nothing for hatches
+rather than drawing a flat capsule at the middle of the axis, which would be a
+claim about the weather. A day with one end published — late in the day NWS has
+no daytime period left, so today arrives as a low with no high — draws a stub at
+the end that *is* known. A still-loading rail says so; one that would not load
+offers a retry. And the day in progress gets its own capsule with a tick at the
+live reading, widened to include it, because statistics lag the sensor by a few
+minutes and the tick was the honest half of that disagreement.
+
+On the desktop the measured rail is the balanced face and the forecast rides the
+expand, beside the hourly strip. Both were shown at once first, on the reasoning
+that width is what a stage panel buys — a screenshot at 1440 killed it: a stage
+column among five panels is ~290px, so the rails stacked and the forecast's day
+labels clipped off the bottom. Width is what *expanding* buys.
+
 ## `purdy-shell-card` — systems mode
 
 A whole server behind its own bottom bar. `server:` is a **top-level** key, not a section, because the pages are alternatives to each other rather than neighbours in a scrolling column — and because it swaps the dock as well as the column.
@@ -589,7 +651,7 @@ sheets:
   tv:     { title: Televisions, card: { type: custom:purdy-remote-card, ... } }
 ```
 
-Accepted types: `climate` · `nursery` · `music` · `calendar` · `lights` · `people` · `quick` · `rooms` · `systems` · `nowplaying`. A type must be added to `PD_SECTIONS` **and** to the renderer dispatch — a test asserts the two halves name the same set, because missing the list is not a broken section, it is the whole card replaced by "Configuration error".
+Accepted types: `climate` · `nursery` · `music` · `calendar` · `lights` · `people` · `quick` · `rooms` · `systems` · `nowplaying` · `weather`. A type must be added to `PD_SECTIONS` **and** to the renderer dispatch — a test asserts the two halves name the same set, because missing the list is not a broken section, it is the whole card replaced by "Configuration error".
 
 ### Three faces per panel
 

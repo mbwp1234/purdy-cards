@@ -85,6 +85,9 @@ const WS_OK = new Set([
   "todo/item/list",
   "config/entity_registry/list",
   "config/area_registry/list",
+  /* Daily min/mean/max for the weather rail. A read, and a cheap one: eight
+     rows where history/period would answer with every state change for a week. */
+  "recorder/statistics_during_period",
 ]);
 /* Services that only ANSWER. music_assistant.search and get_queue are how the
  * music sheet gets its results and its up-next line, so refusing them would
@@ -102,6 +105,41 @@ const noteRefusal = (what) => {
   refused.push(what);
   console.log("  refused (read-only harness): " + what);
 };
+
+/* --- config patches ------------------------------------------------------- */
+/* A section that is not deployed yet cannot be photographed, and deploying it to
+ * find out how it looks is the expensive loop this harness exists to replace.
+ * So the fetched Lovelace config can be patched on the way to the page.
+ *
+ * The patch is a partial config in dev/shoot/patches/<name>.json. Plain keys are
+ * assigned over the top; two dollar-keys handle the array that matters:
+ *
+ *   $insertSection  { index, section }   put one section at a position
+ *   $appendSections [ ... ]              add sections at the end
+ *
+ * This changes NOTHING in Home Assistant — it rewrites the config in flight, on
+ * its way into setConfig. */
+function patchConfig(cfg, name) {
+  if (!name) return cfg;
+  if (!/^[a-z0-9-]+$/i.test(name)) { console.log("  bad patch name: " + name); return cfg; }
+  const file = path.join(HERE, "patches", name + ".json");
+  if (!fs.existsSync(file)) { console.log("  no such patch: " + file); return cfg; }
+  let patch;
+  try { patch = JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (e) { console.log("  patch is not JSON: " + e.message); return cfg; }
+
+  const out = { ...cfg };
+  Object.keys(patch).forEach((k) => { if (k[0] !== "$") out[k] = patch[k]; });
+  const sections = [...(out.sections || [])];
+  if (patch.$insertSection) {
+    const { index, section } = patch.$insertSection;
+    sections.splice(index == null ? sections.length : index, 0, section);
+  }
+  if (Array.isArray(patch.$appendSections)) sections.push(...patch.$appendSections);
+  out.sections = sections;
+  console.log(`  patched config with ${name} (${sections.length} sections)`);
+  return out;
+}
 
 /* --- websocket bridge ----------------------------------------------------- */
 /* One connection, multiplexed by id. HA's handshake is auth_required -> auth
@@ -212,7 +250,7 @@ const server = http.createServer(async (req, res) => {
       const cfg = await cardConfig(u.searchParams.get("view") || "phone2",
         u.searchParams.get("tag") || "custom:purdy-shell-card",
         u.searchParams.get("index"));
-      return json(res, 200, cfg);
+      return json(res, 200, patchConfig(cfg, u.searchParams.get("patch")));
     }
 
     /* entity_picture_local is an absolute /api/... path, so the page requests it
