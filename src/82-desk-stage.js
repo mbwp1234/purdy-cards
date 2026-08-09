@@ -536,10 +536,10 @@ Object.assign(PurdyDeskCard.prototype, {
     const st = target && h.states[target];
     const playing = st && st.state === "playing";
     /* An idle MA player KEEPS its media_title and its artwork — the living
-       room reports "Bluey Theme Tune" hours after it stopped. Reading the
-       attribute without the state is how a silent house grows a now-playing
-       row: the title is only true while the queue is. */
-    const live = !!st && (st.state === "playing" || st.state === "paused");
+       room reports "Bluey Theme Tune" hours after it stopped. psLiveMusic is
+       the shared rule; this used to be written out here, which is how the
+       shell's copies stayed broken after this one was fixed. */
+    const live = !!psLiveMusic(st);
     const title = live ? st.attributes.media_title : null;
     const art = live ? st.attributes.entity_picture_local : null;
     const artist = live ? (st.attributes.media_artist || st.attributes.media_album_name) : null;

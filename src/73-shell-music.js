@@ -318,8 +318,7 @@ Object.assign(PurdyShellCard.prototype, {
   _pinnable() {
     const target = this._activePlayer();
     const tst = target && this._hass.states[target];
-    const src = tst && psIsMusic(tst) && tst.attributes.media_title
-      ? { st: tst } : this._nowPlaying();
+    const src = psLiveMusic(tst) ? { st: tst } : this._nowPlaying();
     if (!src) return null;
     const a = src.st.attributes;
     const uri = a.media_playlist_content_id || a.media_content_id;

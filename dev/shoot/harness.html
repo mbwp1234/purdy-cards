@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>harness: booting</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0A0C15; }
+  /* The card must be the only thing on the page: no chrome, no letterboxing,
+   * nothing of ours in the screenshot. #mount fills the viewport exactly so
+   * 100dvh and env(safe-area-inset-*) mean what they mean in HA. */
+  #mount { min-height: 100dvh; }
+  #mount > * { display: block; }
+  /* Only drawn with ?debug=1, and deliberately over the top-right corner
+   * rather than in the flow, so it cannot change the layout it is describing. */
+  #dbg { position: fixed; z-index: 9999; top: 0; right: 0; max-width: 46ch;
+         font: 11px/1.45 ui-monospace, monospace; color: #cdd6e4;
+         background: rgba(6,8,14,.92); border: 1px solid #232a38;
+         border-radius: 0 0 0 8px; padding: 6px 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="mount"></div>
+
+<script>
+/* ---------------------------------------------------------------------------
+ * ha-icon shim.
+ *
+ * The bundle uses <ha-icon> in ~40 places. An undefined custom element is an
+ * inline box of ZERO size, so without this every icon silently collapses and
+ * every row measures narrower than it does in HA -- which would make this
+ * harness worse than useless for the exact bug class it exists to catch
+ * (clipped labels, wrapped rows). So: real MDI path when the server can supply
+ * one, and a visibly-fake placeholder at the CORRECT SIZE when it cannot.
+ * Never nothing.
+ * ------------------------------------------------------------------------- */
+const ICONS = Object.create(null);
+let iconsReady = false;
+
+class HaIconShim extends HTMLElement {
+  static get observedAttributes() { return ["icon"]; }
+  connectedCallback() { this._draw(); }
+  attributeChangedCallback() { this._draw(); }
+  _draw() {
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    const name = this.getAttribute("icon") || "";
+    const d = ICONS[name];
+    const glyph = d
+      ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`
+      /* A dotted box reads as "no glyph here" at a glance, so a screenshot
+       * cannot be mistaken for one with real icons. */
+      : `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17"
+           rx="4" fill="none" stroke="currentColor" stroke-width="1.5"
+           stroke-dasharray="3 2" opacity=".65"/></svg>`;
+    this.shadowRoot.innerHTML = `<style>
+      :host { display: inline-flex; align-items: center; justify-content: center;
+              width: var(--mdc-icon-size, 24px); height: var(--mdc-icon-size, 24px);
+              flex: 0 0 auto; vertical-align: middle; }
+      svg { width: 100%; height: 100%; display: block; fill: currentColor; }
+    </style>${glyph}`;
+  }
+}
+customElements.define("ha-icon", HaIconShim);
+customElements.define("ha-svg-icon", class extends HaIconShim {});
+
+/* ha-card only ever wraps content here; a passthrough keeps any card that
+ * reaches for it from vanishing. */
+customElements.define("ha-card", class extends HTMLElement {
+  connectedCallback() {
+    if (this.shadowRoot) return;
+    this.attachShadow({ mode: "open" }).innerHTML =
+      `<style>:host{display:block}</style><slot></slot>`;
+  }
+});
+</script>
+
+<!-- Loaded before boot so the elements are registered by the time it mounts. -->
+<script src="/purdy-cards.js"></script>
+
+<script>
+const P = new URLSearchParams(location.search);
+const TAG = P.get("tag") || "custom:purdy-shell-card";
+const notes = [];
+const note = (t) => {
+  notes.push(t);
+  console.warn("[harness] " + t);
+  fetch("/h/note", { method: "POST", body: JSON.stringify({ text: t }) }).catch(() => {});
+};
+
+/* Every network read the card makes goes through here so the page can tell
+ * when the view has actually settled. Screenshotting mid-fetch is how you get
+ * a picture of a loading state and call it a layout. */
+let inflight = 0, lastSettled = 0;
+const tracked = async (fn, label) => {
+  inflight++;
+  try { return await fn(); }
+  catch (e) { note(label + " failed: " + (e && e.message || e)); throw e; }
+  finally { inflight--; lastSettled = performance.now(); }
+};
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", body: JSON.stringify(body) });
+  return r.json();
+}
+
+function buildHass(states) {
+  const byId = {};
+  for (const s of states) byId[s.entity_id] = s;
+  return {
+    states: byId,
+    connected: true,
+    language: "en",
+    themes: { darkMode: true, theme: "default" },
+    locale: { language: "en", number_format: "language", time_format: "12", first_weekday: "language" },
+    config: { unit_system: { temperature: "°F", length: "mi" }, time_zone: "America/New_York" },
+    user: { id: "harness", name: "Brian", is_admin: true },
+
+    callApi: (method, apiPath) => tracked(async () => {
+      const r = await post("/h/api", { method, path: apiPath });
+      if (r && r.error) throw new Error(r.error);
+      return r;
+    }, "callApi " + apiPath),
+
+    callWS: (msg) => tracked(async () => {
+      const r = await post("/h/ws", msg);
+      if (r.error) throw new Error(r.error);
+      return r.result;
+    }, "callWS " + (msg && msg.type)),
+
+    /* The harness points at the LIVE house. A screenshot must not be able to
+     * turn a light on. But a few services only ANSWER -- music search and
+     * get_queue are where the music sheet's content comes from -- and those are
+     * forwarded, with the server enforcing the same list independently. The
+     * 6th argument is the bundle's returnResponse flag. */
+    callService: (domain, service, data, target, notifyOnError, returnResponse) => {
+      if (!returnResponse) {
+        note(`callService refused: ${domain}.${service} ` + JSON.stringify(data || {}));
+        return Promise.resolve();
+      }
+      return tracked(async () => {
+        const r = await post("/h/service", { domain, service, data });
+        if (r && r.error) { note(`${domain}.${service} refused: ${r.error}`); return {}; }
+        return r;
+      }, `service ${domain}.${service}`);
+    },
+
+    connection: {
+      /* Only the standalone climate card subscribes (weather forecast). It
+       * degrades to no forecast rather than throwing. */
+      subscribeMessage: () => { note("subscribeMessage stubbed (no live forecast)"); return () => {}; },
+      sendMessagePromise: (msg) => post("/h/ws", msg).then((r) => { if (r.error) throw new Error(r.error); return r.result; }),
+    },
+    formatEntityState: (st) => (st && st.state) || "",
+    localize: (k) => k,
+  };
+}
+
+(async function boot() {
+  try {
+    const [statesRes, cfgRes] = await Promise.all([
+      fetch("/h/states").then((r) => r.json()),
+      fetch("/h/config?" + new URLSearchParams({
+        view: P.get("view") || "phone2", tag: TAG, ...(P.get("index") ? { index: P.get("index") } : {}),
+      })).then((r) => r.json()),
+    ]);
+    if (cfgRes && cfgRes.error) throw new Error("config: " + cfgRes.error);
+    if (!Array.isArray(statesRes)) throw new Error("states: " + JSON.stringify(statesRes).slice(0, 200));
+
+    /* Icons, if the server can build a map. Done before mount so the first
+     * render already measures with them. */
+    try {
+      const names = [...new Set((JSON.stringify(cfgRes).match(/mdi:[a-z0-9-]+/g) || []))];
+      const m = await fetch("/h/icons?names=" + encodeURIComponent(names.join(","))).then((r) => r.json());
+      if (m && m.icons) { Object.assign(ICONS, m.icons); iconsReady = true; }
+      if (m && m.missing && m.missing.length) note(`${m.missing.length} icons unavailable (placeholders)`);
+    } catch { note("no icon map — every icon is a placeholder box"); }
+
+    const hass = buildHass(statesRes);
+    const tag = TAG.replace(/^custom:/, "");
+    await customElements.whenDefined(tag).catch(() => {});
+    if (!customElements.get(tag)) throw new Error(`${tag} never registered — bundle failed to load?`);
+
+    /* HA's order: construct, setConfig, insert, then feed hass. */
+    const el = document.createElement(tag);
+    el.setConfig(cfgRes);
+    document.getElementById("mount").appendChild(el);
+    el.hass = hass;
+    window.__card = el;
+
+    /* Drive the card to the state being photographed without faking taps:
+     * these are the same fields its own handlers write. */
+    const poke = () => {
+      let touched = false;
+      if (P.get("mode")) { el._mode = P.get("mode"); touched = true; }
+      if (P.get("page")) { el._page = P.get("page"); touched = true; }
+      if (P.get("open")) { el._open = P.get("open"); touched = true; }
+      if (P.get("sheet")) { el._sheet = P.get("sheet"); touched = true; }
+      if (touched) { if (el._expandWatched) el._expandWatched(); el._render(); }
+    };
+
+    /* Settled = nothing in flight for 900ms AND at least one turn of the
+     * fetches has come back. The card fires several waves (history, nursery,
+     * calendar, schedule), so a single microtask wait would photograph a
+     * half-loaded view. */
+    const settled = async () => {
+      const t0 = performance.now();
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 150));
+        if (!inflight && lastSettled && performance.now() - lastSettled > 900) return true;
+        if (performance.now() - t0 > 20000) { note("timed out waiting for fetches to settle"); return false; }
+      }
+    };
+
+    await settled();
+    poke();
+    await settled();
+
+    const h = document.getElementById("mount").scrollHeight;
+    document.title = `READY ${tag} ${innerWidth}x${innerHeight} content=${h}px`
+      + (notes.length ? ` NOTES=${notes.length}` : "");
+    if (P.get("debug")) {
+      const d = document.createElement("div");
+      d.id = "dbg";
+      d.textContent = `${tag}  ${innerWidth}x${innerHeight}\ncontent ${h}px  icons ${iconsReady ? "real" : "PLACEHOLDER"}\n`
+        + (notes.length ? notes.map((n) => "• " + n).join("\n") : "• no notes");
+      document.body.appendChild(d);
+    }
+  } catch (e) {
+    document.title = "ERROR " + (e && e.message || e);
+    document.body.innerHTML = `<pre style="color:#ff9c9c;font:12px/1.5 ui-monospace,monospace;padding:16px;white-space:pre-wrap">`
+      + `harness failed\n\n${(e && e.stack) || e}</pre>`;
+  }
+})();
+</script>
+</body>
+</html>

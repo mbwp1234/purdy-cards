@@ -645,7 +645,14 @@ class PurdyNotificationsCard extends PcBaseCard {
     detail = detail.replace(/^(critical|warn|info)\s*·?\s*/, "").replace(/·\s*$/, "").trim();
     return {
       uid: it.uid,
-      summary: it.summary,
+      /* "Notice [PURDYNAS] - Version update ac65..33a6" spends its first twenty
+         characters saying what the severity dot beside it already says, then
+         pushes the real subject onto a second line or off the end. The systems
+         page learned this in v1.46.2 and the log never did — same feed, same
+         rows, two renderers. Stripped here so the fix covers the items already
+         written as well as the ones to come. */
+      summary: String(it.summary || "Notification")
+        .replace(/^\s*(Notice|Alert|Warning|Info)\s*\[[^\]]*\]\s*[-–—]\s*/i, ""),
       severity: sev ? sev[1] : "info",
       detail,
       at: iso ? new Date(iso[1]).getTime() : null,
@@ -673,8 +680,8 @@ class PurdyNotificationsCard extends PcBaseCard {
       <div class="n ${p.done ? "done" : ""}">
         <span class="dot ${p.severity}"></span>
         <div class="grow">
-          <div class="t">${p.summary}</div>
-          ${p.detail ? `<div class="d">${p.detail}</div>` : ""}
+          <div class="t">${pcEsc(p.summary)}</div>
+          ${p.detail ? `<div class="d">${pcEsc(p.detail)}</div>` : ""}
         </div>
         <span class="when num">${this._rel(p.at)}</span>
         ${p.done
@@ -725,8 +732,12 @@ class PurdyNotificationsCard extends PcBaseCard {
       </style>
       <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
         <div class="hd">
-          <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
-          <span class="lbl">${this._config.title}</span>
+          ${/* The shell blanks a hosted card's title because the sheet chrome
+                already names itself — which left this bell sitting alone on an
+                otherwise empty row. An icon with nothing to label is not a
+                header. */
+            this._config.title ? `<ha-icon icon="mdi:bell-outline" style="--mdc-icon-size:18px;color:var(--pc-muted)"></ha-icon>
+          <span class="lbl">${pcEsc(this._config.title)}</span>` : ""}
           <span class="spacer"></span>
           ${done.length ? `<button class="clear" type="button" id="clear">Clear history</button>` : ""}
         </div>

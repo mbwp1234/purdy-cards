@@ -66,6 +66,7 @@ function psMins(hhmm) {
    particular had already drifted from the other three. */
 const psEsc = pcEsc;
 const psIsMusic = pcIsMusicState;
+const psLiveMusic = pcLiveMusicState;
 
 class PurdyShellCard extends PcBaseCard {
   static getStubConfig() {
@@ -1414,7 +1415,8 @@ class PurdyShellCard extends PcBaseCard {
      reachable from a test that evals it. This is the seam they come out of. */
   static get helpers() {
     return {
-      minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic, parseTs: psParseTs,
+      minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic,
+      liveMusic: psLiveMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,

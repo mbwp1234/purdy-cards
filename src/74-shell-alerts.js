@@ -254,7 +254,7 @@ Object.assign(PurdyShellCard.prototype, {
       /* The header shows what the TARGET room is playing, not what some other
          room is: pointing the controls at Kitchen while the artwork shows the
          Living Room's track is how you skip the wrong song. */
-      const tmusic = tst && psIsMusic(tst) && tst.attributes.media_title ? tst : null;
+      const tmusic = psLiveMusic(tst);
       const art = tmusic && tmusic.attributes.entity_picture_local;
       const vol = tst && tst.attributes.volume_level != null ? tst.attributes.volume_level : 0;
       const muted = !!(tst && tst.attributes.is_volume_muted);
