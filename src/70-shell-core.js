@@ -226,6 +226,10 @@ class PurdyShellCard extends PcBaseCard {
     const push = (x) => { if (x) ids.push(x); };
 
     push(c.dismiss_store);
+    /* weather_fx is a TOP-LEVEL key, not a section — it paints the ground
+       behind every section rather than living in one — so the section walk
+       below will never see it. The same treatment the server: block needed. */
+    push((c.weather_fx || {}).entity);
     (c.attention || []).forEach((r) => push(r.entity));
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
@@ -428,6 +432,7 @@ class PurdyShellCard extends PcBaseCard {
     this.shadowRoot.innerHTML = `
       <style>${PurdyShellCard.styles}</style>
       <div class="ps-ground"></div>
+      <div class="ps-wxfx"></div>
       <div class="ps-stat" id="ps-stat"></div>
       <div class="ps-col" id="ps-col"></div>
       <div id="ps-sheetslot"></div>
@@ -638,6 +643,8 @@ class PurdyShellCard extends PcBaseCard {
     this._mountSheetCard();
 
     this._patch("ps-dockwrap", `${this._miniHtml()}<div class="ps-dock">${dock}</div>`);
+
+    this._paintWxFx();
 
     this._bind();
     this._bindScrub();

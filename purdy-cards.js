@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.55.0";
+const PC_VERSION = "1.56.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -5470,6 +5470,10 @@ class PurdyShellCard extends PcBaseCard {
     const push = (x) => { if (x) ids.push(x); };
 
     push(c.dismiss_store);
+    /* weather_fx is a TOP-LEVEL key, not a section — it paints the ground
+       behind every section rather than living in one — so the section walk
+       below will never see it. The same treatment the server: block needed. */
+    push((c.weather_fx || {}).entity);
     (c.attention || []).forEach((r) => push(r.entity));
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
@@ -5672,6 +5676,7 @@ class PurdyShellCard extends PcBaseCard {
     this.shadowRoot.innerHTML = `
       <style>${PurdyShellCard.styles}</style>
       <div class="ps-ground"></div>
+      <div class="ps-wxfx"></div>
       <div class="ps-stat" id="ps-stat"></div>
       <div class="ps-col" id="ps-col"></div>
       <div id="ps-sheetslot"></div>
@@ -5882,6 +5887,8 @@ class PurdyShellCard extends PcBaseCard {
     this._mountSheetCard();
 
     this._patch("ps-dockwrap", `${this._miniHtml()}<div class="ps-dock">${dock}</div>`);
+
+    this._paintWxFx();
 
     this._bind();
     this._bindScrub();
@@ -12030,6 +12037,26 @@ Object.assign(PurdyShellCard.prototype, {
  *    that draws as a stub rather than as a capsule from nowhere.
  * ========================================================================== */
 
+/* HA condition → ground effect. Keyed on HA's CLOSED set of weather states, so
+ * a provider cannot introduce one silently; anything unlisted draws nothing.
+ *
+ * The omissions are the argument. `cloudy` and `partlycloudy` are the commonest
+ * states here by a wide margin, and an effect that is on almost always is one
+ * nobody reads — it becomes the ground rather than a signal. `windy` and
+ * `exceptional` have no honest picture at all: neither says whether anything is
+ * falling. `sunny` and `clear-night` draw nothing on purpose, which is the same
+ * rule as a missing reading never rendering as a zero. */
+const PS_WXFX = {
+  rainy: "rain",
+  hail: "rain",
+  "snowy-rainy": "rain",
+  pouring: "pour",
+  "lightning-rainy": "storm",
+  lightning: "storm",
+  snowy: "snow",
+  fog: "fog",
+};
+
 /* Daily statistics rows → one record per day.
  *
  * `start` comes back as epoch ms from a modern recorder and as an ISO string
@@ -12694,6 +12721,53 @@ Object.assign(PurdyShellCard.prototype, {
     if (/met\.no|norwegian/i.test(t)) return "met.no";
     if (/openweather/i.test(t)) return "OpenWeatherMap";
     return t.length > 24 ? `${t.slice(0, 23)}…` : t;
+  },
+
+  /* ------------------------------------------------------------- motion fx --*/
+
+  /* Drive the ground's precipitation layer.
+   *
+   * This is an ATTRIBUTE WRITE on a node _mount built once and no patch ever
+   * rewrites. It sits in FRONT of the glass column: the column blurs whatever
+   * is behind it by 26px, so a layer on .ps-ground is invisible under it — a
+   * mockup with no frosted glass cannot show you that, and a shot of the real
+   * card can — the same shape as the desk writing grid-template-columns onto
+   * the surviving #pd-stage node, and the reason the animation is not drawn
+   * inside the weather section: a section's innerHTML is replaced whenever its
+   * rendered string changes, which for this section is every sensor tick, and
+   * an animation on a replaced node restarts from zero every time (v1.45.2).
+   *
+   * Cloudy deliberately maps to nothing. It is by far the commonest condition
+   * here, and a haze that is drawn almost always is one nobody reads — the
+   * effect earns its place by marking weather that is an EVENT.
+   */
+  _paintWxFx() {
+    const el = this.shadowRoot && this.shadowRoot.querySelector(".ps-wxfx");
+    if (!el) return;
+    const cfg = this._config.weather_fx;
+
+    /* No config, no entity, an entity that is not reporting, or a condition
+       with no effect all land in the same place: no attribute, so the CSS
+       draws nothing. A missing reading must not render as a clear sky any
+       more than it may render as a zero. */
+    const id = cfg && cfg.entity;
+    const st = id && this._hass && this._hass.states[id];
+    const cond = cfg && (cfg.force || (st && st.state));
+    const kind = (cfg && cond && PS_WXFX[cond]) || "";
+
+    if (kind) {
+      if (el.dataset.wx !== kind) el.dataset.wx = kind;
+    } else if (el.hasAttribute("data-wx")) {
+      el.removeAttribute("data-wx");
+    }
+
+    /* Clamped rather than trusted: a strength of 8 would paint the column out
+       entirely, and there is no way to reach the config from the phone. */
+    const raw = cfg && cfg.strength != null ? Number(cfg.strength) : 1;
+    const str = String(Math.max(0, Math.min(1.5, isNaN(raw) ? 1 : raw)));
+    if (el.style.getPropertyValue("--ps-wxstr") !== str) {
+      el.style.setProperty("--ps-wxstr", str);
+    }
   },
 
   /* --------------------------------------------------------------- section --*/
@@ -13903,7 +13977,192 @@ const PS_STYLES = `
       .ps-db.home { color: var(--ps-text); }
       .ps-db.home ha-icon { background: var(--pc-fill-2); border-radius: var(--pc-r-xs); padding: 3px; }
 
-      @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+      /* ------------------------------------------------------------ weather --
+       * Condition-driven precipitation over the ground. Adapted from the
+       * technique the open HA animated cards use: discrete elongated drops
+       * scattered in a repeating tile, two layers at different speed and alpha
+       * for parallax. NOT a repeating-linear-gradient hatch — that has no gaps,
+       * so there are no individual drops to see, and its Ndeg argument sets the
+       * gradient AXIS, which puts the stripes perpendicular to the angle asked
+       * for (14deg draws near-horizontal bands, i.e. scanlines).
+       *
+       * Three rules are load-bearing:
+       *
+       *   - It rides .ps-ground, which _mount builds once and no patch ever
+       *     rewrites, driven by one data-wx attribute write. An animation
+       *     inside a patched string restarts from zero on every state change —
+       *     that was the v1.45.2 lamp chip, and it is why this is not drawn
+       *     inside the weather section.
+       *
+       *   - Travel is exactly one tile height, so the loop is seamless. A
+       *     SLANTED tile cannot loop on a vertical translate: the skewed
+       *     lattice lands off its own period and the pattern visibly jumps
+       *     every cycle. So the drops fall straight down, which is also how
+       *     rain reads through a window on a still day.
+       *
+       *   - .ps-ground is position:fixed, so both layers stay viewport-sized
+       *     however tall the column grows. An absolute layer on a 3000px
+       *     column would hand the compositor a 3400px texture twice over.
+       */
+      /* In FRONT of the glass column, not behind it. The column carries
+         backdrop-filter: blur(26px), which turns a 1px rain streak into
+         nothing at all — a ground layer is invisible under frosted glass,
+         which a mockup without the blur cannot show you. z-index 6 puts it
+         over the column but under the dock (7), the scrim (8) and the
+         sheets (9), so opening a sheet covers the weather rather than
+         competing with it. */
+      .ps-wxfx {
+        position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden;
+      --ps-wx-rain-near:
+        radial-gradient(ellipse 1.24px 15.5px at 38.2px 182.7px,rgba(200,224,255,0.39) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.02px 9.5px at 136.9px 72.2px,rgba(200,224,255,0.62) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.18px 12.8px at 155.6px 106.3px,rgba(200,224,255,0.53) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.17px 12.3px at 124.4px 156.0px,rgba(200,224,255,0.58) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.04px 14.2px at 58.0px 96.3px,rgba(200,224,255,0.58) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.39px 9.9px at 57.3px 35.8px,rgba(200,224,255,0.49) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.05px 13.4px at 73.0px 21.6px,rgba(200,224,255,0.57) 0%,rgba(200,224,255,0) 100%);
+      --ps-wx-rain-near-size: 160px 200px;
+      --ps-wx-rain-far:
+        radial-gradient(ellipse 0.81px 5.3px at 33.6px 55.3px,rgba(200,224,255,0.26) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.92px 5.4px at 118.5px 17.0px,rgba(200,224,255,0.19) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.81px 6.4px at 110.3px 54.1px,rgba(200,224,255,0.23) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.84px 7.7px at 89.9px 78.5px,rgba(200,224,255,0.22) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.93px 5.1px at 17.8px 146.6px,rgba(200,224,255,0.20) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.72px 6.4px at 17.6px 115.2px,rgba(200,224,255,0.29) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.99px 5.2px at 112.9px 145.7px,rgba(200,224,255,0.21) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.76px 8.4px at 108.6px 6.4px,rgba(200,224,255,0.18) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.93px 8.8px at 39.6px 174.3px,rgba(200,224,255,0.26) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.88px 7.3px at 21.6px 92.4px,rgba(200,224,255,0.22) 0%,rgba(200,224,255,0) 100%);
+      --ps-wx-rain-far-size: 140px 200px;
+      --ps-wx-pour-near:
+        radial-gradient(ellipse 1.41px 21.3px at 35.8px 182.7px,rgba(200,224,255,0.43) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.13px 13.6px at 128.4px 72.2px,rgba(200,224,255,0.68) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.33px 17.9px at 145.9px 106.3px,rgba(200,224,255,0.58) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.31px 17.3px at 116.6px 156.0px,rgba(200,224,255,0.64) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.15px 19.7px at 54.4px 96.3px,rgba(200,224,255,0.64) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.59px 14.1px at 53.7px 35.8px,rgba(200,224,255,0.54) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.16px 18.6px at 68.4px 21.6px,rgba(200,224,255,0.62) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.56px 15.4px at 12.7px 121.1px,rgba(200,224,255,0.57) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.36px 19.4px at 52.9px 62.6px,rgba(200,224,255,0.50) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.41px 16.4px at 23.7px 174.8px,rgba(200,224,255,0.68) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.23px 21.3px at 72.7px 35.6px,rgba(200,224,255,0.57) 0%,rgba(200,224,255,0) 100%);
+      --ps-wx-pour-near-size: 150px 200px;
+      --ps-wx-pour-far:
+        radial-gradient(ellipse 0.91px 7.4px at 31.2px 55.3px,rgba(200,224,255,0.30) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.02px 7.5px at 110.1px 17.0px,rgba(200,224,255,0.23) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.91px 8.8px at 102.4px 54.1px,rgba(200,224,255,0.27) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.94px 10.3px at 83.4px 78.5px,rgba(200,224,255,0.26) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.03px 7.2px at 16.5px 146.6px,rgba(200,224,255,0.24) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.82px 8.8px at 16.3px 115.2px,rgba(200,224,255,0.33) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.09px 7.2px at 104.9px 145.7px,rgba(200,224,255,0.25) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.86px 11.3px at 100.8px 6.4px,rgba(200,224,255,0.22) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.03px 11.7px at 36.8px 174.3px,rgba(200,224,255,0.30) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.98px 9.9px at 20.1px 92.4px,rgba(200,224,255,0.26) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.94px 7.2px at 33.0px 123.5px,rgba(200,224,255,0.31) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 1.01px 9.0px at 17.9px 7.1px,rgba(200,224,255,0.28) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.84px 7.8px at 36.4px 199.0px,rgba(200,224,255,0.21) 0%,rgba(200,224,255,0) 100%),
+        radial-gradient(ellipse 0.90px 10.7px at 67.1px 55.6px,rgba(200,224,255,0.27) 0%,rgba(200,224,255,0) 100%);
+      --ps-wx-pour-far-size: 130px 200px;
+      --ps-wx-snow-near:
+        radial-gradient(ellipse 2.48px 1.7px at 37.8px 199.5px,rgba(255,255,255,0.51) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.72px 1.9px at 41.7px 3.2px,rgba(255,255,255,0.56) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 2.23px 2.5px at 59.9px 163.0px,rgba(255,255,255,0.43) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 2.53px 2.2px at 93.7px 197.4px,rgba(255,255,255,0.34) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 2.47px 1.7px at 128.9px 123.5px,rgba(255,255,255,0.54) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.57px 2.2px at 57.0px 111.2px,rgba(255,255,255,0.45) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 2.45px 1.8px at 65.2px 76.4px,rgba(255,255,255,0.41) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 2.46px 2.4px at 68.7px 145.8px,rgba(255,255,255,0.48) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 2.09px 2.2px at 38.7px 112.0px,rgba(255,255,255,0.54) 0%,rgba(255,255,255,0) 100%);
+      --ps-wx-snow-near-size: 150px 200px;
+      --ps-wx-snow-far:
+        radial-gradient(ellipse 1.00px 1.3px at 33.1px 108.3px,rgba(255,255,255,0.26) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.49px 1.3px at 99.3px 120.5px,rgba(255,255,255,0.20) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.37px 1.4px at 15.8px 184.7px,rgba(255,255,255,0.26) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.02px 1.3px at 54.8px 181.2px,rgba(255,255,255,0.21) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.63px 1.4px at 0.8px 198.9px,rgba(255,255,255,0.23) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.47px 1.4px at 4.0px 30.4px,rgba(255,255,255,0.18) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.45px 1.6px at 124.9px 62.6px,rgba(255,255,255,0.25) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.56px 1.1px at 129.3px 173.7px,rgba(255,255,255,0.22) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.63px 1.7px at 84.9px 179.6px,rgba(255,255,255,0.23) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.21px 1.2px at 15.9px 150.7px,rgba(255,255,255,0.18) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.19px 1.1px at 23.1px 114.2px,rgba(255,255,255,0.20) 0%,rgba(255,255,255,0) 100%),
+        radial-gradient(ellipse 1.01px 1.3px at 122.0px 156.3px,rgba(255,255,255,0.27) 0%,rgba(255,255,255,0) 100%);
+      --ps-wx-snow-far-size: 130px 200px;
+      }
+
+      .ps-wxfx::before, .ps-wxfx::after {
+        content: ""; position: absolute; left: 0; right: 0; top: -200px; bottom: -200px;
+        pointer-events: none; opacity: 0; background-repeat: repeat;
+      }
+      /* No data-wx means no layer at all. Clear weather, and a weather entity
+         that is not reporting, both draw nothing — neither one draws "clear". */
+      .ps-wxfx[data-wx]::before, .ps-wxfx[data-wx]::after { opacity: var(--ps-wxstr, 1); }
+
+      @keyframes ps-wxfall {
+        from { transform: translate3d(0, -200px, 0); }
+        to   { transform: translate3d(0, 0, 0); }
+      }
+      @keyframes ps-wxsway {
+        from { transform: translate3d(-7px, -200px, 0); }
+        50%  { transform: translate3d(7px, -100px, 0); }
+        to   { transform: translate3d(-7px, 0, 0); }
+      }
+      @keyframes ps-wxdrift {
+        from { transform: translate3d(-25%, 0, 0); }
+        to   { transform: translate3d(25%, 0, 0); }
+      }
+      /* Lightning brightens the ground rather than painting a white overlay:
+         both pseudo-elements are already spent on the rain, and a flash that
+         lifts the drops with it is what a real strike does. */
+      @keyframes ps-wxflash {
+        0%, 4%, 100% { background-color: transparent; }
+        4.4%         { background-color: rgba(200, 220, 255, .15); }
+        4.9%         { background-color: transparent; }
+        5.5%         { background-color: rgba(200, 220, 255, .09); }
+        6.1%         { background-color: transparent; }
+      }
+
+      .ps-wxfx[data-wx="rain"]::before {
+        background-image: var(--ps-wx-rain-near); background-size: var(--ps-wx-rain-near-size);
+        animation: ps-wxfall .75s linear infinite;
+      }
+      .ps-wxfx[data-wx="rain"]::after {
+        background-image: var(--ps-wx-rain-far); background-size: var(--ps-wx-rain-far-size);
+        animation: ps-wxfall 1.35s linear infinite;
+      }
+      .ps-wxfx[data-wx="pour"]::before, .ps-wxfx[data-wx="storm"]::before {
+        background-image: var(--ps-wx-pour-near); background-size: var(--ps-wx-pour-near-size);
+        animation: ps-wxfall .5s linear infinite;
+      }
+      .ps-wxfx[data-wx="pour"]::after, .ps-wxfx[data-wx="storm"]::after {
+        background-image: var(--ps-wx-pour-far); background-size: var(--ps-wx-pour-far-size);
+        animation: ps-wxfall .95s linear infinite;
+      }
+      .ps-wxfx[data-wx="storm"] { animation: ps-wxflash 9s linear infinite; }
+      .ps-wxfx[data-wx="snow"]::before {
+        background-image: var(--ps-wx-snow-near); background-size: var(--ps-wx-snow-near-size);
+        animation: ps-wxsway 7s linear infinite;
+      }
+      .ps-wxfx[data-wx="snow"]::after {
+        background-image: var(--ps-wx-snow-far); background-size: var(--ps-wx-snow-far-size);
+        animation: ps-wxsway 11s linear infinite reverse;
+      }
+      .ps-wxfx[data-wx="fog"]::before {
+        top: 0; bottom: 0; background-size: 200% 100%;
+        background-image: linear-gradient(180deg, transparent 20%, rgba(180,195,215,.14) 45%, transparent 70%);
+        animation: ps-wxdrift 18s linear infinite;
+      }
+      .ps-wxfx[data-wx="fog"]::after {
+        top: 0; bottom: 0; background-size: 200% 100%;
+        background-image: linear-gradient(180deg, transparent 45%, rgba(170,185,210,.10) 72%, transparent 95%);
+        animation: ps-wxdrift 30s linear infinite reverse;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * { transition: none !important; }
+        .ps-wxfx, .ps-wxfx::before, .ps-wxfx::after { animation: none !important; }
+      }
     `;
 
 /* ============================================================================

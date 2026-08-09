@@ -46,6 +46,11 @@ const PRESETS = {
   "phone-weather":     [PHONE, SHELL + "&patch=weather&open=wx"],
   "phone-weather-fc":  [PHONE, SHELL + "&patch=weather&open=wx&wxrail=forecast"],
   "phone-weather-cold":[PHONE, SHELL + "&patch=weather"],
+  /* The ground's precipitation layer. force: in the patch previews rain on a
+     cloudy day — the effect is deliberately quiet in the common conditions, so
+     waiting for real weather is not a verification strategy. */
+  "phone-rain":     [PHONE, SHELL + "&patch=weather-fx"],
+  "phone-rain-joel":[PHONE, SHELL + "&patch=weather-fx&open=joel"],
   lights:         [PHONE, SHELL + "&sheet=lights"],
   music:          [PHONE, SHELL + "&sheet=music"],
   alerts:         [PHONE, SHELL + "&sheet=alerts"],
