@@ -410,7 +410,6 @@ class PurdyShellCard extends PcBaseCard {
       <div class="ps-stat" id="ps-stat"></div>
       <div class="ps-col" id="ps-col"></div>
       <div id="ps-sheetslot"></div>
-      <div class="ps-fade"></div>
       <div class="ps-dockwrap" id="ps-dockwrap"></div>`;
     this._mounted = true;
   }

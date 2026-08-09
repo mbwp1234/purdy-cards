@@ -42,7 +42,11 @@ const PS_STYLES = `
            the page then scrolled sideways whenever a drag started on a graph.
            Stay inside the view and clip anything that still reaches past. */
         margin: 0;
-        padding: 6px 6px calc(var(--ps-dockh) + 28px + env(safe-area-inset-bottom, 0px));
+        /* The dock is STICKY and therefore in flow, so it reserves its own room
+           and the padding only has to hold the gap UNDER it at full scroll.
+           --ps-dockh is still measured, because .ps-sheet is fixed and has to
+           clear a dock whose height changes with the now-playing bar. */
+        padding: 6px 6px calc(12px + env(safe-area-inset-bottom, 0px));
         max-width: 100%;
         overflow-x: clip;
         color: var(--ps-text);
@@ -595,13 +599,37 @@ const PS_STYLES = `
       .ps-at { display: block; font-size: var(--pc-fs-md); font-weight: 650; }
       .ps-ad { display: block; font-size: var(--pc-fs-xs); color: var(--ps-muted); }
 
-      /* fade + dock */
-      .ps-fade { position: fixed; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 5;
-                 height: calc(var(--ps-dockh) + 76px);
-                 background: linear-gradient(180deg, transparent, rgba(6,7,14,.72) 46%, rgba(6,7,14,.94)); }
-      .ps-dockwrap { position: fixed; left: 12px; right: 12px; z-index: 7;
+      /* fade + dock
+       *
+       * The dock is STICKY, not fixed, and that is a bug fix rather than a
+       * preference. Reported as the nav bar sitting a third of the way up the
+       * screen with taps falling through to the tiles behind it — and the fade
+       * had moved up with it, which is the tell: one composited layer glitching
+       * moves alone, TWO fixed layers landing at the same wrong offset means
+       * the fixed containing block itself was wrong. Something in HA's own
+       * chrome (this install hides the header, so whatever does that is the
+       * first suspect) establishes a containing block, and position:fixed then
+       * resolves against it instead of against the viewport. Paint follows that
+       * box; hit-testing did not, which is exactly the tap-through.
+       *
+       * Sticky has no containing-block chain to get wrong — it resolves against
+       * the scrollport — so it is immune to the whole class of bug. It also
+       * costs nothing here: :host is min-height 100vh, so the dock can always
+       * travel to the bottom of the viewport, and being in flow means it
+       * reserves its own room instead of :host guessing at it.
+       *
+       * The fade rides along as a pseudo-element for the same reason. Left as
+       * its own fixed layer it would simply desync from the dock again.
+       */
+      .ps-dockwrap { position: sticky; z-index: 7;
                      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+                     margin: 14px 6px 0;
                      display: flex; flex-direction: column; gap: 9px; }
+      .ps-dockwrap::before {
+        content: ""; position: absolute; z-index: -1; pointer-events: none;
+        left: -12px; right: -12px; top: -76px;
+        bottom: calc(-12px - env(safe-area-inset-bottom, 0px));
+        background: linear-gradient(180deg, transparent, rgba(6,7,14,.72) 46%, rgba(6,7,14,.94)); }
       .ps-mini { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--pc-r-xl);
                  background: var(--pc-fill-2); border: 1px solid var(--pc-edge); cursor: pointer;
                  backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
