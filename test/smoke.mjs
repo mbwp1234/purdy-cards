@@ -811,7 +811,14 @@ check('shell aliases ps->pc for cool', shs.includes('--ps-cool: var(--pc-cool)')
 check('shell has the gradient ground', shs.includes('.ps-ground'));
 check('shell column is one glass pane', shs.includes('.ps-col') && shs.includes('backdrop-filter'));
 check('shell sections divided by hairline not gap', shs.includes('.ps-sect + .ps-sect { border-top'));
-check('shell dock is fixed', /\.ps-dockwrap \{[^}]*position: fixed/.test(shs));
+/* Sticky, NOT fixed. Two fixed layers landing at the same wrong offset meant
+   an HA ancestor was capturing the fixed containing block; sticky resolves
+   against the scrollport and cannot be captured. Assert the negative too — a
+   later edit "restoring" position: fixed reintroduces the tap-through. */
+check('shell dock is sticky', /\.ps-dockwrap \{[^}]*position: sticky/.test(shs));
+check('shell dock is never fixed again', !/\.ps-dockwrap \{[^}]*position: fixed/.test(shs));
+check('the fade rides with the dock rather than being its own fixed layer',
+  /\.ps-dockwrap::before/.test(shs) && !/\.ps-fade \{/.test(shs));
 check('shell expand CSS present', shs.includes('.ps-sect.open .ps-xtra'));
 check('shell styles have no unresolved placeholder', !shs.includes('${'));
 
@@ -1567,10 +1574,13 @@ check('small round controls carry a hit expander',
 check('the dock measures itself', /_reserve\(\)/.test(shellSrc) && /offsetHeight/.test(shellSrc));
 check('_render calls _reserve, it is not merely defined',
   /this\._reserve\(\);/.test(shellSrc));
-check('host padding, the fade and the sheet all derive from the measured dock',
-  /padding: 6px 6px calc\(var\(--ps-dockh\)/.test(shs) &&
-  /\.ps-fade \{[^}]*calc\(var\(--ps-dockh\)/.test(shs.replace(/\n/g, ' ')) &&
+/* A sticky dock reserves its own room, so :host no longer pads for it — but
+   .ps-sheet is still fixed and still has to clear a dock that grows by the
+   now-playing bar, so the measurement still has exactly one consumer. */
+check('the sheet still clears the measured dock',
   /bottom: calc\(var\(--ps-dockh\)/.test(shs));
+check('host padding no longer double-reserves the dock height',
+  !/padding: 6px 6px calc\(var\(--ps-dockh\)/.test(shs));
 check('the reserved height survives a DOM with no layout', (() => {
   const s = new SH();
   s.setConfig({ sections: [{ type: 'quick', key: 'q', tiles: [] }] });
