@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.54.0";
+const PC_VERSION = "1.55.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -12266,10 +12266,21 @@ Object.assign(PurdyShellCard.prototype, {
     try {
       const hrs = await ask("hourly");
       this._wxHrs = (hrs || [])
-        .map((e) => ({ ts: Date.parse(e.datetime), t: Number(e.temperature), condition: e.condition }))
+        .map((e) => ({
+          ts: Date.parse(e.datetime),
+          t: Number(e.temperature),
+          condition: e.condition,
+          /* Kept because the strip scrolls now: over a full day "when does the
+             rain start" is a real question, and it is answered by the hour
+             column rather than by the daily probability. */
+          pop: e.precipitation_probability == null || !Number.isFinite(Number(e.precipitation_probability))
+            ? null : Number(e.precipitation_probability),
+        }))
         .filter((x) => Number.isFinite(x.ts) && Number.isFinite(x.t))
         .sort((a, b) => a.ts - b.ts)
-        .slice(0, sec.hourly || 12);
+        /* A day, not half of one. NWS answers with 168 hours, so the only cost
+           of a wider window is the width of a strip that scrolls anyway. */
+        .slice(0, sec.hourly === true ? 24 : (sec.hourly || 24));
     } catch (e) {
       this._wxHrs = null;
     }
@@ -12466,25 +12477,74 @@ Object.assign(PurdyShellCard.prototype, {
     return { lo: lo - (hi - lo) * 0.22, hi };
   },
 
+  _wxClock(ms) {
+    const d = new Date(ms);
+    const h12 = d.getHours() % 12 === 0 ? 12 : d.getHours() % 12;
+    return `${h12}${d.getHours() >= 12 ? "p" : "a"}`;
+  },
+
+  /* The hourly columns, as data. Each carries its own bar height, so the shell
+     and the desk cannot draw the same hour at two different heights. */
+  _wxHourCols(hrs) {
+    const { lo, hi } = this._wxHourDomain(hrs);
+    let prevDay = null;
+    return hrs.map((x, i) => {
+      const day = pcDayKey(x.ts);
+      /* A new local day gets a divider and takes the weekday in place of the
+         hour — "12a" repeated every 24 columns says nothing about which day it
+         is the midnight of, and a scrollable strip is exactly where you lose
+         track. */
+      const newDay = prevDay != null && day !== prevDay;
+      prevDay = day;
+      return {
+        ts: x.ts,
+        t: x.t,
+        pop: x.pop,
+        condition: x.condition,
+        h: Math.max(6, ((x.t - lo) / (hi - lo)) * 100),
+        now: i === 0,
+        newDay,
+        label: i === 0 ? "Now"
+          : newDay ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(x.ts).getDay()]
+            : this._wxClock(x.ts),
+      };
+    });
+  },
+
+  /* Scrollable, because twelve hours is not a day and the provider gives 168.
+   *
+   * `overflow-x: auto` and NOTHING ELSE. `touch-action` must not be set on a
+   * sideways-scrolling strip: `pan-x pan-y` is not equivalent to the default
+   * `auto` — it restricts the element to panning and makes the browser's
+   * per-gesture axis commitment stickier, so a slightly diagonal swipe locks to
+   * vertical and the strip goes dead. purdy-rooms-card's strip has always been
+   * plain flex + overflow-x and has always worked. `overscroll-behavior-x`
+   * keeps a fling at the end of the strip from becoming a page gesture.
+   *
+   * Phone v2 had deliberately gone to zero sideways-scrolling surfaces in
+   * v1.20.0 (the music rooms and schedule tabs wrap; the room strip is a grid).
+   * This is the one place where wrapping would be wrong rather than merely
+   * different: a time axis that wraps to a second line is two axes, and the
+   * eye reads the wrap as a jump back in time. */
   _wxHourly(sec) {
     const hrs = this._wxHrs;
     if (!hrs || hrs.length < 2) return "";
-    const { lo, hi } = this._wxHourDomain(hrs);
-    const bars = hrs.map((x) => {
-      const h = Math.max(6, ((x.t - lo) / (hi - lo)) * 100);
-      return `<i style="height:${h.toFixed(1)}%"></i>`;
-    }).join("");
-    const clock = (ms) => {
-      const d = new Date(ms);
-      const h12 = d.getHours() % 12 === 0 ? 12 : d.getHours() % 12;
-      return `${h12}${d.getHours() >= 12 ? "p" : "a"}`;
-    };
+    const cols = this._wxHourCols(hrs);
+    /* A probability row costs a line of height on every column, so it is drawn
+       only if some hour in the window actually expects rain. */
+    const wet = cols.some((c) => c.pop != null && c.pop >= 20);
+    const body = cols.map((c) => `<div class="ps-wxhr${c.now ? " now" : ""}${c.newDay ? " nd" : ""}">
+        <span class="ps-wxht">${this._wxDeg(c.t)}</span>
+        <div class="ps-wxhbar"><i style="height:${c.h.toFixed(1)}%"></i></div>
+        ${wet ? `<span class="ps-wxhp">${c.pop != null && c.pop >= 20 ? `${Math.round(c.pop)}%` : ""}</span>` : ""}
+        <span class="ps-wxhl">${psEsc(c.label)}</span>
+      </div>`).join("");
+
+    const temps = cols.map((c) => c.t);
     return `<div>
-        <div class="ps-wxrh"><span class="ps-wxlb">Next ${hrs.length} hours</span>
-          <span class="ps-wxrb">${this._wxDeg(hrs[0].t)} → ${this._wxDeg(hrs[hrs.length - 1].t)}</span></div>
-        <div class="ps-wxhrs">${bars}</div>
-        <div class="ps-railticks"><span>${psEsc(clock(hrs[0].ts))}</span
-          ><span>${psEsc(clock(hrs[hrs.length - 1].ts))}</span></div>
+        <div class="ps-wxrh"><span class="ps-wxlb">Next ${cols.length} hours</span>
+          <span class="ps-wxrb">${this._wxDeg(Math.min(...temps))} – ${this._wxDeg(Math.max(...temps))}</span></div>
+        <div class="ps-wxhrs">${body}</div>
       </div>`;
   },
 
@@ -13277,9 +13337,33 @@ const PS_STYLES = `
                    background: #fff; border-radius: var(--pc-r-hair);
                    box-shadow: 0 0 6px rgba(255,255,255,.7); }
 
-      .ps-wxhrs { display: flex; gap: 3px; align-items: flex-end; height: 46px; }
-      .ps-wxhrs i { flex: 1; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
-                    background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      /* The hourly strip SCROLLS sideways — twelve hours is not a day, and the
+         provider publishes 168. Plain overflow-x and nothing else: setting
+         touch-action here (even pan-x pan-y) restricts the element to panning
+         and makes the browser's axis commitment stickier, so a slightly diagonal
+         swipe locks to vertical and the strip goes dead. purdy-rooms-card's
+         strip has always been plain flex + overflow-x and has always worked.
+         overscroll-behavior-x stops a fling at the end becoming a page gesture. */
+      .ps-wxhrs { display: flex; gap: 2px; align-items: flex-end;
+                  overflow-x: auto; overscroll-behavior-x: contain;
+                  scrollbar-width: none; padding-bottom: 2px; }
+      .ps-wxhrs::-webkit-scrollbar { display: none; }
+      .ps-wxhr { flex: 0 0 auto; width: 30px; display: flex; flex-direction: column;
+                 align-items: center; gap: 3px; }
+      /* A midnight column reads as "12a" whichever day it is the midnight of,
+         which is exactly what you lose track of in a strip you have scrolled. */
+      .ps-wxhr.nd { border-left: 1px solid var(--ps-hair); margin-left: 3px; padding-left: 3px; }
+      .ps-wxht { font-size: var(--pc-fs-micro); color: var(--ps-muted); font-weight: 620;
+                 font-variant-numeric: tabular-nums; line-height: 1; }
+      .ps-wxhbar { width: 100%; height: 46px; display: flex; align-items: flex-end; }
+      .ps-wxhbar i { width: 100%; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
+                     background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      .ps-wxhp { font-size: var(--pc-fs-micro); color: var(--ps-cool); font-weight: 600;
+                 font-variant-numeric: tabular-nums; line-height: 1; min-height: 10px; }
+      .ps-wxhl { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-weight: 620;
+                 line-height: 1; white-space: nowrap; }
+      .ps-wxhr.now .ps-wxht { color: var(--ps-heat); }
+      .ps-wxhr.now .ps-wxhl { color: var(--ps-text); }
       .ps-wxrows { display: flex; flex-direction: column; }
       .ps-wxrow { display: flex; align-items: center; gap: 9px; padding: 8px 0;
                   border-top: 1px solid var(--ps-hair-soft); font-size: var(--pc-fs-sm); }
@@ -13911,6 +13995,7 @@ const PD_BORROW = [
   "_weatherSection", "_wxKind", "_startWeather", "_fetchWeather", "_fetchWxStats",
   "_fetchWxFc", "_wxLive", "_wxRail", "_wxDomain", "_wxCapsule", "_wxDow", "_wxDeg",
   "_wxAttrib", "_wxNoteText", "_wxHistRows", "_wxSrcName", "_wxHourDomain",
+  "_wxHourCols", "_wxClock",
   /* faults, dismissals and the notification log */
   "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_serverFaults",
   "_raised", "_faults", "_syncLog",
@@ -15350,17 +15435,26 @@ Object.assign(PurdyDeskCard.prototype, {
       style="--n:${rows.length}">${cells}</div></div>`;
   },
 
+  /* Same columns as the phone, from the borrowed derivation, so the two views
+     cannot draw the same hour at two different heights. It scrolls here too: a
+     stage panel is not wide enough for a day of hours either, and a desk has a
+     trackpad. */
   _deskWxHourly(sec) {
     const hrs = this._wxHrs;
     if (!hrs || hrs.length < 2) return "";
-    /* Borrowed, so the coolest hour is not a hairline here either. */
-    const { lo, hi } = this._wxHourDomain(hrs);
-    const bars = hrs.map((x) =>
-      `<i style="height:${Math.max(6, ((x.t - lo) / (hi - lo)) * 100).toFixed(1)}%"></i>`).join("");
+    const cols = this._wxHourCols(hrs);
+    const wet = cols.some((c) => c.pop != null && c.pop >= 20);
+    const body = cols.map((c) => `<div class="pd-wxhr${c.now ? " now" : ""}${c.newDay ? " nd" : ""}">
+        <span class="pd-wxht">${this._wxDeg(c.t)}</span>
+        <div class="pd-wxhbar"><i style="height:${c.h.toFixed(1)}%"></i></div>
+        ${wet ? `<span class="pd-wxhp">${c.pop != null && c.pop >= 20 ? `${Math.round(c.pop)}%` : ""}</span>` : ""}
+        <span class="pd-wxhl">${psEsc(c.label)}</span>
+      </div>`).join("");
+    const temps = cols.map((c) => c.t);
     return `<div>
-        <div class="pd-wxrh"><span class="pd-wxlb">Next ${hrs.length} hours</span>
-          <span class="pd-wxrb">${this._wxDeg(hrs[0].t)} → ${this._wxDeg(hrs[hrs.length - 1].t)}</span></div>
-        <div class="pd-wxhrs">${bars}</div>
+        <div class="pd-wxrh"><span class="pd-wxlb">Next ${cols.length} hours</span>
+          <span class="pd-wxrb">${this._wxDeg(Math.min(...temps))} – ${this._wxDeg(Math.max(...temps))}</span></div>
+        <div class="pd-wxhrs">${body}</div>
       </div>`;
   },
 
@@ -17131,9 +17225,26 @@ const PD_STYLES = `
       .pd-wxmark { position: absolute; left: -3px; right: -3px; height: 2px; z-index: 2;
                    background: #fff; border-radius: var(--pc-r-hair);
                    box-shadow: 0 0 6px rgba(255,255,255,.7); }
-      .pd-wxhrs { display: flex; gap: 3px; align-items: flex-end; height: 44px; }
-      .pd-wxhrs i { flex: 1; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
-                    background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      /* Scrolls, like the phone's. Plain overflow-x and no touch-action — see
+         the note on .ps-wxhrs; the rule is the same on a trackpad. */
+      .pd-wxhrs { display: flex; gap: 2px; align-items: flex-end;
+                  overflow-x: auto; overscroll-behavior-x: contain;
+                  scrollbar-width: thin; scrollbar-color: var(--pc-fill-3) transparent;
+                  padding-bottom: 3px; }
+      .pd-wxhr { flex: 0 0 auto; width: 30px; display: flex; flex-direction: column;
+                 align-items: center; gap: 3px; }
+      .pd-wxhr.nd { border-left: 1px solid var(--ps-hair); margin-left: 3px; padding-left: 3px; }
+      .pd-wxht { font-size: var(--pc-fs-micro); color: var(--ps-muted); font-weight: 620;
+                 font-variant-numeric: tabular-nums; line-height: 1; }
+      .pd-wxhbar { width: 100%; height: 44px; display: flex; align-items: flex-end; }
+      .pd-wxhbar i { width: 100%; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
+                     background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+      .pd-wxhp { font-size: var(--pc-fs-micro); color: var(--ps-cool); font-weight: 600;
+                 font-variant-numeric: tabular-nums; line-height: 1; min-height: 10px; }
+      .pd-wxhl { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-weight: 620;
+                 line-height: 1; white-space: nowrap; }
+      .pd-wxhr.now .pd-wxht { color: var(--ps-heat); }
+      .pd-wxhr.now .pd-wxhl { color: var(--ps-text); }
       .pd-wxfacts { display: flex; gap: 18px; flex-wrap: wrap; }
       .pd-wxnote { font-size: var(--pc-fs-xs); color: var(--ps-muted); line-height: 1.5; }
 

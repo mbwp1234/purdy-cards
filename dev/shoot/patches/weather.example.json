@@ -1,20 +1,30 @@
 {
   "_note": "Copy to weather.json and fill in your own entity ids, then shoot with `node dev/shoot/shoot.mjs phone-weather`. Real patches are gitignored — they name entities, and this repo is public. A patch is applied in flight on the way into setConfig; Home Assistant is never written to. A missing patch file is logged and the config renders unpatched.",
 
-  "$insertSection": {
-    "index": 2,
-    "section": {
-      "type": "weather",
-      "key": "wx",
-      "title": "Weather",
-      "sensor": "sensor.<your-outdoor-thermometer>",
-      "forecast": "weather.<your-forecast-provider>",
-      "feels_from": "weather.<a-provider-publishing-apparent-temperature>",
-      "gttc_outdoor": "sensor.<gttc-outdoor-temperature>",
-      "sun": "sun.sun",
-      "days": 7,
-      "rail": "history",
-      "hourly": 12
+  "_insert_a_section_that_is_not_deployed_yet": {
+    "$insertSection": {
+      "index": 2,
+      "section": {
+        "type": "weather",
+        "key": "wx",
+        "title": "Weather",
+        "sensor": "sensor.<your-outdoor-thermometer>",
+        "forecast": "weather.<your-forecast-provider>",
+        "feels_from": "weather.<a-provider-publishing-apparent-temperature>",
+        "gttc_outdoor": "sensor.<gttc-outdoor-temperature>",
+        "sun": "sun.sun",
+        "days": 7,
+        "rail": "history",
+        "hourly": 24
+      }
     }
-  }
+  },
+
+  "_or_edit_one_that_already_is": {
+    "$mergeSections": [
+      { "key": "wx", "hourly": 48, "days": 14 }
+    ]
+  },
+
+  "_note_2": "Use ONE of the two shapes above at the top level of the real file — the nesting here is only so both are documented in one example. $appendSections [ ... ] is also available."
 }

@@ -87,6 +87,7 @@ const PD_BORROW = [
   "_weatherSection", "_wxKind", "_startWeather", "_fetchWeather", "_fetchWxStats",
   "_fetchWxFc", "_wxLive", "_wxRail", "_wxDomain", "_wxCapsule", "_wxDow", "_wxDeg",
   "_wxAttrib", "_wxNoteText", "_wxHistRows", "_wxSrcName", "_wxHourDomain",
+  "_wxHourCols", "_wxClock",
   /* faults, dismissals and the notification log */
   "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_serverFaults",
   "_raised", "_faults", "_syncLog",

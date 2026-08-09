@@ -116,6 +116,7 @@ const noteRefusal = (what) => {
  *
  *   $insertSection  { index, section }   put one section at a position
  *   $appendSections [ ... ]              add sections at the end
+ *   $mergeSections  [ { key, ... } ]     edit a section that is already there
  *
  * This changes NOTHING in Home Assistant — it rewrites the config in flight, on
  * its way into setConfig. */
@@ -136,6 +137,15 @@ function patchConfig(cfg, name) {
     sections.splice(index == null ? sections.length : index, 0, section);
   }
   if (Array.isArray(patch.$appendSections)) sections.push(...patch.$appendSections);
+  /* Once a section is deployed, INSERTING it again is two of them. This edits
+     the one that is already there, keyed by its `key`, which is how a config
+     tweak (a wider window, a different provider) gets photographed against the
+     live view without touching Home Assistant. */
+  (patch.$mergeSections || []).forEach((m) => {
+    const i = sections.findIndex((x) => x && x.key === m.key);
+    if (i < 0) { console.log("  no section keyed " + m.key + " to merge into"); return; }
+    sections[i] = { ...sections[i], ...m };
+  });
   out.sections = sections;
   console.log(`  patched config with ${name} (${sections.length} sections)`);
   return out;

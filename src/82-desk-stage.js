@@ -665,17 +665,26 @@ Object.assign(PurdyDeskCard.prototype, {
       style="--n:${rows.length}">${cells}</div></div>`;
   },
 
+  /* Same columns as the phone, from the borrowed derivation, so the two views
+     cannot draw the same hour at two different heights. It scrolls here too: a
+     stage panel is not wide enough for a day of hours either, and a desk has a
+     trackpad. */
   _deskWxHourly(sec) {
     const hrs = this._wxHrs;
     if (!hrs || hrs.length < 2) return "";
-    /* Borrowed, so the coolest hour is not a hairline here either. */
-    const { lo, hi } = this._wxHourDomain(hrs);
-    const bars = hrs.map((x) =>
-      `<i style="height:${Math.max(6, ((x.t - lo) / (hi - lo)) * 100).toFixed(1)}%"></i>`).join("");
+    const cols = this._wxHourCols(hrs);
+    const wet = cols.some((c) => c.pop != null && c.pop >= 20);
+    const body = cols.map((c) => `<div class="pd-wxhr${c.now ? " now" : ""}${c.newDay ? " nd" : ""}">
+        <span class="pd-wxht">${this._wxDeg(c.t)}</span>
+        <div class="pd-wxhbar"><i style="height:${c.h.toFixed(1)}%"></i></div>
+        ${wet ? `<span class="pd-wxhp">${c.pop != null && c.pop >= 20 ? `${Math.round(c.pop)}%` : ""}</span>` : ""}
+        <span class="pd-wxhl">${psEsc(c.label)}</span>
+      </div>`).join("");
+    const temps = cols.map((c) => c.t);
     return `<div>
-        <div class="pd-wxrh"><span class="pd-wxlb">Next ${hrs.length} hours</span>
-          <span class="pd-wxrb">${this._wxDeg(hrs[0].t)} → ${this._wxDeg(hrs[hrs.length - 1].t)}</span></div>
-        <div class="pd-wxhrs">${bars}</div>
+        <div class="pd-wxrh"><span class="pd-wxlb">Next ${cols.length} hours</span>
+          <span class="pd-wxrb">${this._wxDeg(Math.min(...temps))} – ${this._wxDeg(Math.max(...temps))}</span></div>
+        <div class="pd-wxhrs">${body}</div>
       </div>`;
   },
 
