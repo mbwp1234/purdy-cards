@@ -60,6 +60,59 @@ Credentials come from a `.env` found by walking up from the working directory
 - Shots wait for the page's own `READY` title, set once its fetches settle — not
   a guessed delay, which photographs a half-loaded view.
 
+## Token economics — why this is the cheap loop
+
+Measured on this install, not estimated from memory:
+
+| | size | in an agent's context |
+|---|---|---|
+| live states the harness reads **per shot** | 670 KB | **0** — it never passes through the agent |
+| the same dump pulled via `ha_eval_template` | 670 KB | **~168k tokens** |
+| `ha_config_get_dashboard`, one view (`view_path=`) | 20 KB | ~5k tokens |
+| the same call without `view_path` (whole dashboard) | 122 KB | ~30k tokens |
+| `shoot.mjs` pass/fail output, 2 shots | 298 B | **~75 tokens** |
+| one phone screenshot (390×844) | — | ~440 tokens |
+| one desk screenshot (1440×900) | — | ~1.7k tokens |
+
+Three consequences worth internalising:
+
+1. **The verification signal is text, and it is nearly free.** `ok / BAD`, the
+   viewport, the content height and the notes cost ~40 tokens a shot. A render
+   that threw, a fetch that failed, a refused service, a missing icon, a view
+   that grew 400px — all of that arrives in text. **Look at the image only when
+   the question is genuinely visual.** Most iterations don't need to.
+2. **Never route state through the agent.** The harness fetches 670 KB straight
+   from HA into the browser. Dumping the same thing through MCP to build a
+   fixture costs ~168k tokens *and* produces a worse artefact, because a fixture
+   is a guess that goes stale silently.
+3. **Image cost is dimensions, not file size.** The desk PNG is 262 KB on disk
+   and ~1.7k tokens; the phone PNG is 76 KB and ~440. Shoot at `--dpr 1` while
+   iterating — `--dpr 2` is four times the pixels for no extra information about
+   layout. Save retina for something a human will look at closely.
+
+### The cheap loop
+
+```
+1. mockup            settle layout arguments as an artifact — human review is free
+2. build + smoke     local, no HA, no network
+3. shoot             read the TEXT; open an image only for a visual question
+4. deploy ONCE       release → HACS → apply config, at the end, with the nits batched
+```
+
+Rules that keep it cheap:
+
+- **Shoot only what changed** (`shoot.mjs phone-joel`), not all 13.
+- **Always pass `view_path=`** to `ha_config_get_dashboard` — 6× cheaper than the
+  whole dashboard, and the `config_hash` still covers the full config so a
+  `python_transform` still validates.
+- **`ha_eval_template` for a derived answer** ("average of these six sensors")
+  instead of fetching six states and doing the arithmetic in context.
+- **Don't re-read a screenshot to confirm a fix you can reason about.** Re-shoot
+  and read the one-line result.
+- **Don't use HA as the design surface.** Tweaking a padding, releasing,
+  downloading and asking someone to look is the most expensive possible way to
+  answer a question a mockup answers for free.
+
 ## Presets
 
 Phone shots are 390×844, desk is 1440×900. `--dpr 2` for retina (four times the
