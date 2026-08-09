@@ -381,6 +381,13 @@ Object.assign(PurdyShellCard.prototype, {
     const a = st ? st.attributes : {};
     if (a.used_size && a.total_size) return `${a.used_size} of ${a.total_size}`;
     if (a.ram_used && a.ram_total) return `${a.ram_used} of ${a.ram_total}`;
+    /* A pool that publishes a SIZE but no usage is present and not reporting —
+       which is a different fact from an empty one, and the parity block three
+       rows above already draws that distinction. cache2 reads 0.0% with
+       total_size 465.8 GB and used_size null: as an unqualified "0.0%" that is
+       a claim the pool is empty, made from an absence. Zero versus missing,
+       one more time. */
+    if (a.total_size && !a.used_size) return `of ${a.total_size} · no usage reported`;
     return "";
   },
 
@@ -392,10 +399,14 @@ Object.assign(PurdyShellCard.prototype, {
     const cls = v == null ? "" : v >= crit ? "bad" : v >= warn ? "warn" : "good";
     const p = v == null ? 0 : Math.max(0, Math.min(100, v));
     const sub = o.sub || this._sySizes(entity);
+    /* A percentage derived from a usage figure that does not exist is not a
+       measurement. Say so rather than printing a confident 0.0%. */
+    const st = this._hass.states[entity];
+    const noUse = !!(st && st.attributes.total_size && !st.attributes.used_size);
     return `<div class="ps-syb" data-info="${psEsc(entity || "")}">
         <span class="ps-sybk">${psEsc(label)}${sub ? ` <i>${psEsc(sub)}</i>` : ""}</span>
-        <span class="ps-sybv ${cls}">${psPct(v)}</span>
-        <span class="ps-sybar"><i class="${cls}" style="width:${p.toFixed(1)}%"></i></span>
+        <span class="ps-sybv ${noUse ? "" : cls}">${noUse ? "—" : psPct(v)}</span>
+        <span class="ps-sybar"><i class="${cls}" style="width:${noUse ? 0 : p.toFixed(1)}%"></i></span>
       </div>`;
   },
 
@@ -421,13 +432,9 @@ Object.assign(PurdyShellCard.prototype, {
     const reg = pcState(h, s.registration);
     const regBad = reg && ["expired", "invalid", "eguard"].indexOf(String(reg).toLowerCase()) >= 0;
 
-    const faults = (s.faults || []).filter((f) => {
-      const st = pcState(h, f.entity);
-      if (f.state !== undefined) return st === f.state;
-      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable";
-      if (f.above !== undefined) { const v = pcNum(h, f.entity); return v != null && v > f.above; }
-      return false;
-    });
+    /* Shared with the attention chip and the desk — this used to be a third
+       copy of the predicate that knew about `above` and not `below`. */
+    const faults = this._serverFaults();
 
     const idBlock = `<div class="ps-sycard">
         <div class="ps-syid">

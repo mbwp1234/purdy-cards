@@ -4435,6 +4435,32 @@ check('every desk section type has a default zone',
 
 check('the desk borrows from the shell rather than copying it', DK.helpers.borrowed.length > 20);
 check('every borrowed name resolved', DK.helpers.borrowMissing.length === 0);
+
+/* PD_BORROW names METHODS, not their dependencies. Adding _ruleHit under the
+   already-borrowed _raised broke eight desk tests with "this._ruleHit is not a
+   function" — and borrowMissing could not have caught it, because the missing
+   name was never in the list to be checked. Walk each borrowed method's source
+   for `this._x(` and assert every _x the desk will reach is either borrowed too
+   or defined on the desk itself. The failure this replaces is a puzzle; this is
+   a message naming the method and its caller. */
+check('a borrowed method calls nothing the desk cannot reach', (() => {
+  const borrowed = DK.helpers.borrowed || [];
+  const own = new Set(Object.getOwnPropertyNames(DK.prototype));
+  const set = new Set(borrowed);
+  const bad = [];
+  for (const name of borrowed) {
+    const fn = SH.prototype[name];
+    if (typeof fn !== 'function') continue;
+    const src = Function.prototype.toString.call(fn);
+    for (const m of src.matchAll(/this\.(_[A-Za-z0-9_]+)\s*\(/g)) {
+      const dep = m[1];
+      if (set.has(dep) || own.has(dep)) continue;
+      bad.push(`${name} -> ${dep}`);
+    }
+  }
+  if (bad.length) console.log('    unreachable from the desk: ' + bad.join(', '));
+  return bad.length === 0;
+})());
 check('borrowed methods are the SAME function, so a fix lands in both',
   DK.prototype._raised === SH.prototype._raised &&
   DK.prototype._optGoal === SH.prototype._optGoal &&

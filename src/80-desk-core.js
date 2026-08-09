@@ -78,7 +78,16 @@ const PD_BORROW = [
   /* nursery — the derivation, the fetch and the single clock the fixtures pin */
   "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
   /* faults, dismissals and the notification log */
-  "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_raised", "_faults", "_syncLog",
+  "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_serverFaults",
+  "_raised", "_faults", "_syncLog",
+  /* Dependencies of the three above, added when a test started walking what
+     borrowed methods CALL rather than only whether they resolve. All three
+     were reachable and none of them worked: _dismiss threw on any desk
+     dismissal with a log configured, _togglePick threw on picking a music
+     room, and _syncLog's call to _logItems threw inside a try/catch that
+     returns silently — so the desk had never once synced the notification
+     log, and nothing said so. */
+  "_closeLog", "_logItems", "_syncQueue", "_fetchQueue",
   /* music: which room is the target, and how a URI gets played there */
   "_musicSec", "_targets", "_activePlayer", "_isPicked", "_togglePick", "_nowPlaying",
   "_playUri", "_enqueueUri", "_toast", "_queueSearch", "_runSearch", "_paintResults",
@@ -601,6 +610,9 @@ class PurdyDeskCard extends PcBaseCard {
       borrowed: PD_BORROW,
       /* Empty, or the borrow silently lost something. A test asserts it. */
       borrowMissing: PD_BORROW_MISSING,
+      /* Exposed so a test can walk what the borrowed methods actually CALL —
+         the list names methods, not their dependencies. */
+      borrowed: PD_BORROW,
       clock: pdClock,
     };
   }

@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.52.1";
+const PC_VERSION = "1.53.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -217,13 +217,23 @@ function pcDownsample(series, n) {
    idles between 7% and 11% is idle — auto-scaling either one draws a mountain
    range out of nothing. Defaults to 1 (the temperature case it was written
    for) so the existing callers are unchanged. */
-function pcSparkPoly(points, w, h, pad, minSpan) {
+/* `scale` is an optional {lo, hi} imposed from outside. Without it every
+   sparkline auto-scales to its own data, which is right for a lone sparkline
+   and wrong for a COLUMN of them: a bedroom drifting half a degree is drawn
+   with the same amplitude as a room swinging four, so the list invites a
+   comparison it cannot support. The caller that owns the column passes one
+   scale for all of them. */
+function pcSparkPoly(points, w, h, pad, minSpan, scale) {
   if (!points || points.length < 2) return null;
   const p = pad == null ? 4 : pad;
   const floor = minSpan == null ? 1 : minSpan;
   const t0 = points[0].t, t1 = points[points.length - 1].t;
   let vmin = Infinity, vmax = -Infinity;
-  points.forEach((q) => { vmin = Math.min(vmin, q.v); vmax = Math.max(vmax, q.v); });
+  if (scale && Number.isFinite(scale.lo) && Number.isFinite(scale.hi)) {
+    vmin = scale.lo; vmax = scale.hi;
+  } else {
+    points.forEach((q) => { vmin = Math.min(vmin, q.v); vmax = Math.max(vmax, q.v); });
+  }
   if (vmax - vmin < floor) {
     const grow = (floor - (vmax - vmin)) / 2;
     vmax += grow; vmin -= grow;
@@ -231,7 +241,10 @@ function pcSparkPoly(points, w, h, pad, minSpan) {
   const span = t1 - t0 || 1;
   return points.map((q) => {
     const x = ((q.t - t0) / span) * w;
-    const y = p + (1 - (q.v - vmin) / (vmax - vmin)) * (h - p * 2);
+    /* An imposed scale can be narrower than a given room's own range, so the
+       line is clamped into the box rather than drawn outside it. */
+    const f = Math.max(0, Math.min(1, (q.v - vmin) / (vmax - vmin)));
+    const y = p + (1 - f) * (h - p * 2);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
 }
@@ -5755,7 +5768,12 @@ class PurdyShellCard extends PcBaseCard {
 
     this._patch("ps-stat", `
         <div>
-          <h2>${this._greeting()}${who ? `,<br>${psEsc(who)}` : ""}</h2>
+          ${/* One line, not two. The name was on its own row below the
+                greeting at the largest step on the screen — three lines of
+                chrome before a single measurement, on a column where
+                everything under it is one. The greeting changes three times a
+                day and the name never does; neither earns 22px. */""}
+          <h2>${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</h2>
           <div class="ps-d">${now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
             · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${
               c.occupancy ? " · " + psEsc(pcState(this._hass, c.occupancy)) : ""}</div>
@@ -6651,7 +6669,7 @@ Object.assign(PurdyShellCard.prototype, {
    * through the middle is a claim about the room, and "the recorder has
    * nothing" is not that claim. The box keeps its size either way so the
    * column of numbers to its right stays aligned. */
-  _sparkSvg(id) {
+  _sparkSvg(id, scale) {
     const W = 56, H = 18;
     const empty = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"></svg>`;
     const raw = this._history[id];
@@ -6659,7 +6677,7 @@ Object.assign(PurdyShellCard.prototype, {
     const pts = raw
       .map((p) => ({ t: p.t, v: parseFloat(p.s) }))
       .filter((p) => Number.isFinite(p.v));
-    const poly = pcSparkPoly(pcDownsample(pts, 28), W, H, 3);
+    const poly = pcSparkPoly(pcDownsample(pts, 28), W, H, 3, null, scale);
     if (!poly) return empty;
     return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <polyline fill="none" stroke="var(--ps-cool)" stroke-width="1.5" opacity=".75"
@@ -6685,10 +6703,17 @@ Object.assign(PurdyShellCard.prototype, {
     const t0 = t1 - hours * 3600 * 1000;
     const all = inside.concat(outside).filter((p) => p.t >= t0);
     if (all.length < 2) return "";
-    let lo = Math.min.apply(null, all.map((p) => p.v));
-    let hi = Math.max.apply(null, all.map((p) => p.v));
+    const vlo = Math.min.apply(null, all.map((p) => p.v));
+    const vhi = Math.max.apply(null, all.map((p) => p.v));
+    let lo = vlo, hi = vhi;
     const pad = Math.max(1.5, (hi - lo) * 0.18);
     lo -= pad; hi += pad;
+    /* What the plot actually spanned, so a shape can be read as a measurement.
+       The legend carries the two current readings and nothing said what the
+       vertical axis meant — the same line drawn over a two-degree night and a
+       twenty-degree one looks identical. Stashed rather than drawn into the
+       SVG because preserveAspectRatio="none" would stretch any text in it. */
+    this._waveRange = { lo: vlo, hi: vhi };
 
     /* TOP was 24 of 74 — a third of the graph reserved as blank headroom for
        a label that does not live there, showing up as a gap between the
@@ -7007,11 +7032,28 @@ Object.assign(PurdyShellCard.prototype, {
       `<div class="ps-zc" data-info="${psEsc((sec.outside || {}).temp)}">Outside<b>${ot.toFixed(1)}°</b></div>`;
 
     const spark = sec.room_spark !== false;
+    /* ONE scale down the column. Auto-scaling each room to its own data drew a
+       bedroom drifting half a degree with the same amplitude as a room swinging
+       four, so the list looked like five rooms in trouble and invited a
+       comparison none of the pictures could support. A room genuinely steadier
+       than its neighbours now looks it. */
+    const sparkScale = spark ? (() => {
+      let lo = Infinity, hi = -Infinity;
+      (sec.rooms || []).forEach((r) => {
+        (this._history[r.temp] || []).forEach((p) => {
+          const v = parseFloat(p.s);
+          if (!Number.isFinite(v)) return;
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        });
+      });
+      return Number.isFinite(lo) && Number.isFinite(hi) && hi > lo ? { lo, hi } : null;
+    })() : null;
     const rooms = (sec.rooms || []).map((r) => {
       const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
       return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
           <span class="ps-rn ps-trunc">${psEsc(r.name || pcName(h, r.temp))}</span>
-          ${spark ? `<span class="ps-spark">${this._sparkSvg(r.temp)}</span>` : ""}
+          ${spark ? `<span class="ps-spark">${this._sparkSvg(r.temp, sparkScale)}</span>` : ""}
           <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
           <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
         </div>`;
@@ -7053,7 +7095,19 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-chero">
         <div class="ps-ring" style="width:92px;height:92px" data-info="${psEsc(sec.goal || sec.thermostat)}">
           ${this._ringSvg(92, 7.5, [[frac, col]], goalFrac, "var(--ps-text)")}
-          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>now</small></div>
+          ${/* "now" invited the reading that this is the house temperature,
+                and then neither zone chip below it agreed — three numbers on
+                one card with no stated relationship. It is the thermostat's
+                own sensor, in ONE room (the kitchen, here), so naming that
+                room is the entire explanation.
+
+                `hero_label` rather than the word "thermostat": that was tried
+                and it overflowed the ring, clipping to "HERMOSTAT". A ring
+                caption has about seven characters, which a room name fits and
+                a job title does not. Defaults to "now" so an install that
+                does not set it is unchanged. */""}
+          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>${
+            psEsc(sec.hero_label || "now")}</small></div>
         </div>
         <div class="ps-grow">
           <div class="ps-row">
@@ -7083,6 +7137,8 @@ Object.assign(PurdyShellCard.prototype, {
         </div>
         <div class="ps-wave" data-scrub="wave">
         <div class="ps-cross" hidden></div>
+        ${this._waveRange ? `<span class="ps-wax hi">${this._waveRange.hi.toFixed(0)}°</span>
+        <span class="ps-wax lo">${this._waveRange.lo.toFixed(0)}°</span>` : ""}
         ${wave}</div>` : ""}`;
   },
 
@@ -7103,11 +7159,28 @@ Object.assign(PurdyShellCard.prototype, {
     const h = this._hass;
     const rows = [];
 
-    const np = this._nowPlaying();
-    if (np) {
-      const a = np.st.attributes;
+    /* Every room that is playing, not just the first one. _nowPlaying answers
+       with a single player because the dock bar has room for exactly one — but
+       this section is the answer to "what is on right now", and while the
+       foreign-app_id reject was in place multi-room simply never happened, so
+       one row was always enough by accident. Two rooms now routinely play
+       different things. */
+    (this._config.now_playing || {}).players?.forEach((p) => {
+      const st = this._hass.states[p.entity];
+      if (!psLiveMusic(st)) return;
+      const a = st.attributes;
+      const np = { ...p, st, playing: st.state === "playing" };
       const art = a.entity_picture_local;
-      const sub = [a.media_artist, a.media_album_name].filter(Boolean).join(" — ") || np.name;
+      /* The album is dropped when it merely restates the track, which is what
+         a single reports — "Danza Kuduro X Beautiful" printed a line below
+         itself. The room name is the fallback, never a second copy of the
+         title. */
+      const album = a.media_album_name && a.media_album_name !== a.media_title
+        ? a.media_album_name : null;
+      /* The room is always named. With one row it was implied and could be
+         left out; with two it is the only thing telling them apart. */
+      const sub = [[a.media_artist, album].filter(Boolean).join(" — "), np.name]
+        .filter(Boolean).join(" · ");
       rows.push(`<div class="ps-npr" data-sheet="music" role="button" tabindex="0">
           <div class="ps-npart">${art
             ? `<img src="${psEsc(art)}" alt="" />`
@@ -7121,7 +7194,7 @@ Object.assign(PurdyShellCard.prototype, {
             <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
               ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
         </div>`);
-    }
+    });
 
     (sec.tvs || []).forEach((t) => {
       const st = pcState(h, t.media_player);
@@ -8606,19 +8679,58 @@ Object.assign(PurdyShellCard.prototype, {
     return 0;
   },
 
-  /* Everything currently matching, before dismissals are applied. */
+  /* The server's own fault rules, in the same shape as an attention rule —
+     one vocabulary for "what counts as wrong". The desk wrote this first and
+     the shell had a lesser copy inside the systems page that knew about
+     `above` but not `below`; it lives here now and both views share it. */
+  _serverFaults() {
+    const srv = this._config.server;
+    if (!srv || !this._hass) return [];
+    return (srv.faults || []).filter((f) => this._ruleHit(f, this._hass.states[f.entity]));
+  },
+
+  /* Everything currently matching, before dismissals are applied.
+
+     The server's faults are in here too, and that is the point. They used to
+     raise only on the Systems overview, two taps inside a mode — so with disk1
+     at 92.8% the landing page's header chip read "All clear" while the array
+     was nearly full. The chip is the one place a fault is supposed to reach
+     you; a fault it does not know about is a fault you find by going looking,
+     which is the opposite of what it is for. Keys are prefixed `sv:` so they
+     dismiss independently of a house rule that happens to share a name. */
   _raised() {
     const rules = this._config.attention || [];
     const hass = this._hass;
     if (!hass) return [];
     const out = [];
+    this._serverFaults().forEach((f) => {
+      out.push({
+        key: "sv:" + (f.key || String(f.label || f.entity).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8)),
+        severity: f.severity || "warn",
+        title: f.label || pcName(hass, f.entity),
+        detail: f.detail || "",
+        entity: f.entity,
+        firedAt: this._firedAt(f),
+      });
+    });
     rules.forEach((r, i) => {
       const hit = (st) => this._ruleHit(r, st);
       if (r.match) {
         const re = new RegExp(r.match);
         const names = Object.keys(hass.states)
           .filter((id) => re.test(id) && hit(hass.states[id]))
-          .map((id) => (hass.states[id].attributes.friendly_name || id).replace(r.strip || "", "").trim());
+          /* `strip` takes a list as well as a single string. One pattern only
+             ever removed a prefix, so the Jeeves consumables rule came out as
+             "Filter Left · Sensor Dirty Time Left · Wheel Dirty Time Left" —
+             HA's friendly names leaking through the tail. Applied in order,
+             then collapsed, so a rule can take both ends off a name. */
+          .map((id) => {
+            const pats = r.strip == null ? [] : [].concat(r.strip);
+            let n = hass.states[id].attributes.friendly_name || id;
+            pats.forEach((p) => { n = n.split(p).join(" "); });
+            return n.replace(/\s+/g, " ").trim();
+          })
+          .filter(Boolean);
         if (names.length) {
           out.push({
             key: r.key || "r" + i,
@@ -10583,6 +10695,13 @@ Object.assign(PurdyShellCard.prototype, {
     const a = st ? st.attributes : {};
     if (a.used_size && a.total_size) return `${a.used_size} of ${a.total_size}`;
     if (a.ram_used && a.ram_total) return `${a.ram_used} of ${a.ram_total}`;
+    /* A pool that publishes a SIZE but no usage is present and not reporting —
+       which is a different fact from an empty one, and the parity block three
+       rows above already draws that distinction. cache2 reads 0.0% with
+       total_size 465.8 GB and used_size null: as an unqualified "0.0%" that is
+       a claim the pool is empty, made from an absence. Zero versus missing,
+       one more time. */
+    if (a.total_size && !a.used_size) return `of ${a.total_size} · no usage reported`;
     return "";
   },
 
@@ -10594,10 +10713,14 @@ Object.assign(PurdyShellCard.prototype, {
     const cls = v == null ? "" : v >= crit ? "bad" : v >= warn ? "warn" : "good";
     const p = v == null ? 0 : Math.max(0, Math.min(100, v));
     const sub = o.sub || this._sySizes(entity);
+    /* A percentage derived from a usage figure that does not exist is not a
+       measurement. Say so rather than printing a confident 0.0%. */
+    const st = this._hass.states[entity];
+    const noUse = !!(st && st.attributes.total_size && !st.attributes.used_size);
     return `<div class="ps-syb" data-info="${psEsc(entity || "")}">
         <span class="ps-sybk">${psEsc(label)}${sub ? ` <i>${psEsc(sub)}</i>` : ""}</span>
-        <span class="ps-sybv ${cls}">${psPct(v)}</span>
-        <span class="ps-sybar"><i class="${cls}" style="width:${p.toFixed(1)}%"></i></span>
+        <span class="ps-sybv ${noUse ? "" : cls}">${noUse ? "—" : psPct(v)}</span>
+        <span class="ps-sybar"><i class="${cls}" style="width:${noUse ? 0 : p.toFixed(1)}%"></i></span>
       </div>`;
   },
 
@@ -10623,13 +10746,9 @@ Object.assign(PurdyShellCard.prototype, {
     const reg = pcState(h, s.registration);
     const regBad = reg && ["expired", "invalid", "eguard"].indexOf(String(reg).toLowerCase()) >= 0;
 
-    const faults = (s.faults || []).filter((f) => {
-      const st = pcState(h, f.entity);
-      if (f.state !== undefined) return st === f.state;
-      if (f.state_not !== undefined) return st !== f.state_not && st !== "unavailable";
-      if (f.above !== undefined) { const v = pcNum(h, f.entity); return v != null && v > f.above; }
-      return false;
-    });
+    /* Shared with the attention chip and the desk — this used to be a third
+       copy of the predicate that knew about `above` and not `below`. */
+    const faults = this._serverFaults();
 
     const idBlock = `<div class="ps-sycard">
         <div class="ps-syid">
@@ -11845,7 +11964,7 @@ const PS_STYLES = `
 
       /* status strip — no box, floats on the ground */
       .ps-stat { display: flex; align-items: flex-start; gap: 10px; padding: 2px 8px 14px; }
-      .ps-stat h2 { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em; margin: 0; line-height: 1.12; }
+      .ps-stat h2 { font-size: var(--pc-fs-xl); font-weight: 640; letter-spacing: -.028em; margin: 0; line-height: 1.15; }
       .ps-d { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; margin-top: 3px; }
       .ps-rt { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .ps-wx { display: flex; align-items: center; gap: 7px; color: var(--ps-cool); font-size: var(--pc-fs-xl);
@@ -11894,8 +12013,14 @@ const PS_STYLES = `
       .ps-rv { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
                justify-content: center; font-variant-numeric: tabular-nums; }
       .ps-rv b { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em; line-height: 1; }
+      /* A ring caption is centred over a filled arc, so anything wider than the
+         ring's inner box does not merely look tight — it is clipped by the
+         stroke, and a clipped label is a MISSING label ("THERMOSTAT" read
+         "HERMOSTAT"). Capped and centred so a long caption wraps inside the
+         ring instead of running out of it. */
       .ps-rv small { font-size: var(--pc-fs-micro); color: var(--ps-dim); margin-top: 3px; letter-spacing: .09em;
-                     text-transform: uppercase; font-weight: 650; }
+                     text-transform: uppercase; font-weight: 650;
+                     max-width: 78%; text-align: center; line-height: 1.15; }
 
       /* climate */
       .ps-chero { display: flex; align-items: center; gap: 14px; }
@@ -11914,6 +12039,16 @@ const PS_STYLES = `
       .ps-zc.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
       .ps-zc.on b { color: var(--ps-cool); }
       .ps-wave { margin: 4px -15px -15px; position: relative; }
+      /* The plotted range, so the line reads as a measurement rather than a
+         shape. Inside the plot and out of the flow, so it cannot change the
+         height it is describing. */
+      .ps-wax {
+        position: absolute; left: 15px; z-index: 1; pointer-events: none;
+        font-size: var(--pc-fs-micro); color: var(--ps-dim);
+        font-variant-numeric: tabular-nums;
+      }
+      .ps-wax.hi { top: 1px; }
+      .ps-wax.lo { bottom: 16px; }
       .ps-wave-svg { width: 100%; height: 74px; display: block; }
       .ps-wlg { display: flex; gap: 12px; align-items: baseline; margin-top: 11px; min-height: 16px;
                 font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
@@ -12812,7 +12947,16 @@ const PD_BORROW = [
   /* nursery — the derivation, the fetch and the single clock the fixtures pin */
   "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
   /* faults, dismissals and the notification log */
-  "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_raised", "_faults", "_syncLog",
+  "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_serverFaults",
+  "_raised", "_faults", "_syncLog",
+  /* Dependencies of the three above, added when a test started walking what
+     borrowed methods CALL rather than only whether they resolve. All three
+     were reachable and none of them worked: _dismiss threw on any desk
+     dismissal with a log configured, _togglePick threw on picking a music
+     room, and _syncLog's call to _logItems threw inside a try/catch that
+     returns silently — so the desk had never once synced the notification
+     log, and nothing said so. */
+  "_closeLog", "_logItems", "_syncQueue", "_fetchQueue",
   /* music: which room is the target, and how a URI gets played there */
   "_musicSec", "_targets", "_activePlayer", "_isPicked", "_togglePick", "_nowPlaying",
   "_playUri", "_enqueueUri", "_toast", "_queueSearch", "_runSearch", "_paintResults",
@@ -13335,6 +13479,9 @@ class PurdyDeskCard extends PcBaseCard {
       borrowed: PD_BORROW,
       /* Empty, or the borrow silently lost something. A test asserts it. */
       borrowMissing: PD_BORROW_MISSING,
+      /* Exposed so a test can walk what the borrowed methods actually CALL —
+         the list names methods, not their dependencies. */
+      borrowed: PD_BORROW,
       clock: pdClock,
     };
   }
@@ -14968,26 +15115,6 @@ Object.assign(PurdyDeskCard.prototype, {
     if (srv.docker) { push(srv.docker.running); push(srv.docker.conflicts); }
     if (srv.perf) { push(srv.perf.cpu); push(srv.perf.ram); push(srv.perf.gpu_util); }
     return ids;
-  },
-
-  /* Which of the server's fault rules are firing. Same rule shapes as the
-     attention list, deliberately — one vocabulary for "what counts as wrong". */
-  _serverFaults() {
-    const srv = this._config.server;
-    const h = this._hass;
-    if (!srv || !h) return [];
-    return (srv.faults || []).filter((f) => {
-      const st = h.states[f.entity];
-      if (!st) return false;
-      if (f.state !== undefined) return st.state === f.state;
-      if (f.state_not !== undefined) return st.state !== f.state_not
-        && st.state !== "unavailable" && st.state !== "unknown";
-      const n = parseFloat(st.state);
-      if (!Number.isFinite(n)) return false;
-      if (f.above !== undefined) return n > f.above;
-      if (f.below !== undefined) return n < f.below;
-      return false;
-    });
   },
 
   /* A labelled bar. A meter with no reading draws an EMPTY track and says so —

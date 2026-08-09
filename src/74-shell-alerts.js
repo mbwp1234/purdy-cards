@@ -130,19 +130,58 @@ Object.assign(PurdyShellCard.prototype, {
     return 0;
   },
 
-  /* Everything currently matching, before dismissals are applied. */
+  /* The server's own fault rules, in the same shape as an attention rule —
+     one vocabulary for "what counts as wrong". The desk wrote this first and
+     the shell had a lesser copy inside the systems page that knew about
+     `above` but not `below`; it lives here now and both views share it. */
+  _serverFaults() {
+    const srv = this._config.server;
+    if (!srv || !this._hass) return [];
+    return (srv.faults || []).filter((f) => this._ruleHit(f, this._hass.states[f.entity]));
+  },
+
+  /* Everything currently matching, before dismissals are applied.
+
+     The server's faults are in here too, and that is the point. They used to
+     raise only on the Systems overview, two taps inside a mode — so with disk1
+     at 92.8% the landing page's header chip read "All clear" while the array
+     was nearly full. The chip is the one place a fault is supposed to reach
+     you; a fault it does not know about is a fault you find by going looking,
+     which is the opposite of what it is for. Keys are prefixed `sv:` so they
+     dismiss independently of a house rule that happens to share a name. */
   _raised() {
     const rules = this._config.attention || [];
     const hass = this._hass;
     if (!hass) return [];
     const out = [];
+    this._serverFaults().forEach((f) => {
+      out.push({
+        key: "sv:" + (f.key || String(f.label || f.entity).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8)),
+        severity: f.severity || "warn",
+        title: f.label || pcName(hass, f.entity),
+        detail: f.detail || "",
+        entity: f.entity,
+        firedAt: this._firedAt(f),
+      });
+    });
     rules.forEach((r, i) => {
       const hit = (st) => this._ruleHit(r, st);
       if (r.match) {
         const re = new RegExp(r.match);
         const names = Object.keys(hass.states)
           .filter((id) => re.test(id) && hit(hass.states[id]))
-          .map((id) => (hass.states[id].attributes.friendly_name || id).replace(r.strip || "", "").trim());
+          /* `strip` takes a list as well as a single string. One pattern only
+             ever removed a prefix, so the Jeeves consumables rule came out as
+             "Filter Left · Sensor Dirty Time Left · Wheel Dirty Time Left" —
+             HA's friendly names leaking through the tail. Applied in order,
+             then collapsed, so a rule can take both ends off a name. */
+          .map((id) => {
+            const pats = r.strip == null ? [] : [].concat(r.strip);
+            let n = hass.states[id].attributes.friendly_name || id;
+            pats.forEach((p) => { n = n.split(p).join(" "); });
+            return n.replace(/\s+/g, " ").trim();
+          })
+          .filter(Boolean);
         if (names.length) {
           out.push({
             key: r.key || "r" + i,
