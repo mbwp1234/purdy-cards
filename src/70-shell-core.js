@@ -19,7 +19,7 @@
    "Configuration error" — not just the one section. */
 const PS_SECTIONS = [
   "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
-  "nowplaying", "nursery", "lights",
+  "nowplaying", "nursery", "lights", "crew",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
@@ -579,6 +579,7 @@ class PurdyShellCard extends PcBaseCard {
         nowplaying: () => this._secNowplaying(sec),
         nursery: () => this._secNursery(sec),
         lights: () => this._secLights(sec),
+        crew: () => this._secCrew(sec),
       }[sec.type]();
       if (!body) return;   // a self-hiding section takes its divider with it
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
@@ -620,6 +621,7 @@ class PurdyShellCard extends PcBaseCard {
     this._bind();
     this._bindScrub();
     this._bindLights();
+    this._bindCrew();
     this._bindSystems();
     this._reserve();
     /* Only while the music sheet is open, and only when the answer could have
