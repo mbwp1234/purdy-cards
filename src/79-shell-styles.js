@@ -1496,6 +1496,26 @@ const PS_STYLES = `
 
       .ps-htrace { display: block; width: 100%; height: 62px; }
 
+      /* health MODE — the rings.
+         Side by side, not concentric. Apple stacks its three rings inside one
+         another, which makes the outer one read as the biggest and therefore
+         the most important; nobody made that claim about calories over
+         standing. Equal treatment for equal standing, with move larger only
+         because it is the one that moves all day. */
+      .ps-hrings { display: flex; align-items: center; justify-content: center;
+                   gap: 14px; flex-wrap: wrap; padding: 2px 0; }
+      .ps-hrcol { display: flex; flex-direction: column; gap: 10px; }
+      /* A small ring's caption sits UNDER it — inside a 72px ring the word is
+         wider than the chord at that height and lands on the stroke. */
+      .ps-hrsm { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+      .ps-hrsl { font-size: var(--pc-fs-micro); letter-spacing: .09em; text-transform: uppercase;
+                 color: var(--ps-dim); font-weight: 650; white-space: nowrap; }
+      .ps-hring { cursor: default; }
+      .ps-hring[data-info] { cursor: pointer; }
+      .ps-hrcap { text-align: center; font-size: var(--pc-fs-xs); color: var(--ps-muted);
+                  line-height: 1.45; font-variant-numeric: tabular-nums; }
+      .ps-hrcap b { color: var(--ps-text); font-weight: 640; }
+
       .ps-hctr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
       .ps-hct { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
                 border-radius: var(--pc-r-xs); padding: 9px 7px; min-width: 0; text-align: center; }

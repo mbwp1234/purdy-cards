@@ -178,7 +178,19 @@ function buildHass(states) {
       if (m && m.missing && m.missing.length) note(`${m.missing.length} icons unavailable (placeholders)`);
     } catch { note("no icon map — every icon is a placeholder box"); }
 
+    /* Who the page is signed in as, when the patch says. Lifted off and
+       DELETED before setConfig — the card must be handed exactly the config it
+       would get from Lovelace, not one with a harness key in it. */
+    const asUser = cfgRes.__user;
+    delete cfgRes.__user;
+
     const hass = buildHass(statesRes);
+    if (asUser) {
+      hass.user = typeof asUser === "string"
+        ? { ...hass.user, id: asUser }
+        : { ...hass.user, ...asUser };
+      note(`rendering as ${hass.user.name || hass.user.id}`);
+    }
     const tag = TAG.replace(/^custom:/, "");
     await customElements.whenDefined(tag).catch(() => {});
     if (!customElements.get(tag)) throw new Error(`${tag} never registered — bundle failed to load?`);
@@ -196,6 +208,9 @@ function buildHass(states) {
       let touched = false;
       if (P.get("mode")) { el._mode = P.get("mode"); touched = true; }
       if (P.get("page")) { el._page = P.get("page"); touched = true; }
+      /* The health mode keeps its own page field, so it needs its own knob —
+         driving _page would silently photograph the Systems default. */
+      if (P.get("hpage")) { el._hpage = P.get("hpage"); touched = true; }
       if (P.get("open")) { el._open = P.get("open"); touched = true; }
       if (P.get("sheet")) { el._sheet = P.get("sheet"); touched = true; }
       /* Which weather rail is showing. The card's own field, same as the four

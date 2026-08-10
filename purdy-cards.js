@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.59.0";
+const PC_VERSION = "1.60.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -5347,9 +5347,16 @@ class PurdyShellCard extends PcBaseCard {
     this._mediaPick = null;
     /* Systems is a MODE, not a section: the column and the dock both swap.
        null is the house; "systems" is the server, and _page is which of its
-       pages is showing. See 77-shell-systems.js. */
+       pages is showing. See 77-shell-systems.js.
+     *
+     * Health is the second mode, and it keeps its OWN page field. Sharing
+     * _page would mean walking into Body from Systems and landing on a page
+     * key that belongs to the other mode — which resolves to the first page,
+     * so it would look like a working default rather than a bug. Two fields
+     * cost nothing and cannot do that. See 78c-shell-health.js. */
     this._mode = null;
     this._page = "overview";
+    this._hpage = "today";
     this._swOpt = {};         // optimistic container/VM switch states
     this._syq = "";           // container search
     this._syfilter = "all";
@@ -5483,6 +5490,42 @@ class PurdyShellCard extends PcBaseCard {
     this._wxTimer = null;
   }
 
+  /* Is this section or dock entry for the person actually looking at it?
+   *
+   * `visible_to:` takes a list of Home Assistant user ids, or names — the id is
+   * exact and survives a rename, the name is what makes a config readable and
+   * what the shoot harness can supply. Absent means everyone, so every existing
+   * section is unchanged.
+   *
+   * TWO RULES, both load-bearing:
+   *
+   *   1. It DROPS, it does not dim. A hidden section is never rendered and a
+   *      hidden dock entry is never emitted, so the other person sees a column
+   *      with no gap in it rather than a locked door with their name off it.
+   *   2. It is NOT a security control. Everything in `hass.states` is readable
+   *      by anyone who can open the dashboard, and this only decides what gets
+   *      drawn. Lovelace's own view-level `visible:` is the same kind of claim.
+   *      Anything that genuinely must not be seen belongs behind an HA user
+   *      permission, not behind this key.
+   *
+   * `hass.user` can be briefly absent while the connection settles. Absent is
+   * treated as NOT matching, because the alternative — showing a restricted
+   * section for one frame until the user object lands — is the failure that
+   * would actually be noticed. */
+  _visible(o) {
+    const want = o && o.visible_to;
+    if (!want) return true;
+    const list = Array.isArray(want) ? want : [want];
+    const u = this._hass && this._hass.user;
+    if (!u) return false;
+    const id = String(u.id || "");
+    const name = String(u.name || "").toLowerCase();
+    return list.some((w) => {
+      const s = String(w);
+      return s === id || s.toLowerCase() === name;
+    });
+  }
+
   /* Everything the shell reads, so a state change repaints exactly once. */
   _collectWatched() {
     const c = this._config;
@@ -5545,11 +5588,10 @@ class PurdyShellCard extends PcBaseCard {
       if (s.type === "health") {
         [s.sleep_total, s.sleep_deep, s.sleep_core, s.sleep_rem, s.sleep_awake,
          s.hrv, s.resting_hr, s.respiratory, s.walking_hr,
-         s.hearing, s.effort, s.ride, s.hr_series].forEach(push);
-        const L = s.load || {}, F = s.fitness || {}, Wk = s.walking || {};
+         s.effort, s.ride, s.hr_series].forEach(push);
+        const L = s.load || {}, F = s.fitness || {};
         [L.steps, L.exercise, L.active, L.distance, L.flights, L.stand].forEach(push);
         [F.ftp, F.wkg, F.weight, F.vo2].forEach(push);
-        [Wk.speed, Wk.step_len, Wk.support, Wk.asymmetry].forEach(push);
       }
       if (s.type === "lights") {
         (s.lights || []).forEach((x) => {
@@ -5861,6 +5903,7 @@ class PurdyShellCard extends PcBaseCard {
        line still runs: the fault list and the notification log are the house's
        and do not stop mattering because you are looking at the server. */
     if (this._mode === "systems") return this._renderSystems(faults);
+    if (this._mode === "health") return this._renderHealth(faults);
 
     const worst = faults.length
       ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
@@ -5888,6 +5931,9 @@ class PurdyShellCard extends PcBaseCard {
          permanent slot in the column — that is how music keeps its players,
          presets and pins while only appearing behind the dock button. */
       if (sec.sheet_only) return;
+      /* Not for this person — dropped before it renders, so the column closes
+         over the gap rather than showing a hole where their section is not. */
+      if (!this._visible(sec)) return;
       const body = {
         sleep: () => this._secSleep(sec),
         climate: () => this._secClimate(sec),
@@ -5909,12 +5955,19 @@ class PurdyShellCard extends PcBaseCard {
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
     });
 
-    const dock = (c.dock || []).map((d, i) => {
-      const alert = d.alert_when_faults && faults.length;
-      return `<button class="ps-db ${d.active ? "on" : ""} ${alert ? "alert" : ""}" type="button" data-dock="${i}">
-          <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
-        </button>`;
-    }).join("");
+    /* The index is captured BEFORE the filter and carried through it. The
+       handler looks the entry up by `data-dock` in the unfiltered config
+       array, so renumbering the buttons would silently point every slot after
+       a hidden one at its neighbour. */
+    const dock = (c.dock || [])
+      .map((d, i) => ({ d, i }))
+      .filter(({ d }) => this._visible(d))
+      .map(({ d, i }) => {
+        const alert = d.alert_when_faults && faults.length;
+        return `<button class="ps-db ${d.active ? "on" : ""} ${alert ? "alert" : ""}" type="button" data-dock="${i}">
+            <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
+          </button>`;
+      }).join("");
 
     this._patch("ps-stat", `
         <div>
@@ -6589,6 +6642,10 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
+        /* Re-checked at the tap, not only at render. Bindings outlive the
+           markup that carried them, so a button legitimately drawn before the
+           user object settled must not still act once it has. */
+        if (!this._visible(d)) return;
         /* `alert_when_faults` is a BADGE, not a destination. It was hijacking
            the bell: with any fault raised — and the low-battery rule means
            there usually is one — tapping Notifications opened the attention
@@ -7139,11 +7196,22 @@ Object.assign(PurdyShellCard.prototype, {
    * `Healthy` / `N faults` summary, passed it in, and it was never displayed.
    * The chip is the whole reason to leave a section collapsed.
    */
-  _head(sec, chipHtml) {
+  /* `opts.mode` turns the header into a DOOR rather than a toggle: the whole
+     row enters that mode, and it draws no chevron because a chevron promises
+     the thing below it is about to unfold in place. The Systems row on the
+     landing page made the same promise and set the precedent for dropping it;
+     Body is the second. The status chip is still drawn either way — dropping
+     it was the v1.28.0 bug where the Systems summary was computed and never
+     displayed. */
+  _head(sec, chipHtml, opts) {
+    const mode = opts && opts.mode;
     const fixed = sec.expandable === false;
     const inner = `<span class="ps-nm">${psEsc(sec.title || "")}</span>
         ${chipHtml || ""}
-        ${fixed ? "" : this._chev()}`;
+        ${mode ? "" : (fixed ? "" : this._chev())}`;
+    if (mode) {
+      return `<button class="ps-sh" type="button" data-mode="${psEsc(mode)}">${inner}</button>`;
+    }
     if (fixed) return `<div class="ps-sh">${inner}</div>`;
     return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">${inner}</button>`;
   },
@@ -13921,54 +13989,6 @@ Object.assign(PurdyShellCard.prototype, {
       </div>`;
   },
 
-  /* ---------------------------------------------------------------- walking */
-  _hlWalking(sec) {
-    const W = sec.walking || {};
-    const sp = this._hlRead(W.speed), sl = this._hlRead(W.step_len);
-    const su = this._hlRead(W.support), asym = this._hlRead(W.asymmetry);
-    if (sp == null && sl == null && su == null && asym == null) return "";
-    const cells = [
-      this._hlMeter(sec, "speed", { label: "Speed", value: sp, unit: "mph", digits: 1 }),
-      this._hlMeter(sec, "step_len", { label: "Step len", value: sl, unit: "in", digits: 1 }),
-      this._hlMeter(sec, "support", { label: "2-foot", value: su, unit: "%", digits: 1 }),
-      /* A flat zero here landed inside the poisoned backfill hour, and a
-         perfect gait is less likely than a missing one — so it reports as
-         questionable rather than as the best possible reading. */
-      this._hlMeter(sec, "asymmetry", { label: "Asymmetry", value: asym, unit: "%", digits: 0, q: asym === 0 }),
-    ];
-    return `<div class="ps-hblk">
-        <div class="ps-hbh"><span class="ps-hbt">Walking</span><span class="ps-hbw">mechanics</span></div>
-        ${this._hlGrid(cells, 4)}
-        ${asym === 0 ? `<div class="ps-hnote"><b>Asymmetry reads a flat 0%</b> and its dot is grey,
-          not green — a perfect zero out of the backfill hour is more likely absent than true.</div>` : ""}
-      </div>`;
-  },
-
-  /* ---------------------------------------------------------------- hearing */
-  _hlHearing(sec) {
-    const db = this._hlRead(sec.hearing);
-    const eff = this._hlRead(sec.effort);
-    if (db == null && eff == null) return "";
-    /* The only band in this section that is not his own. 80 dB is Apple's
-       published exposure limit, so it is a ceiling rather than a habit — drawn
-       filled from the floor, because "under the limit" and "where you usually
-       are" are different claims and must not look alike. */
-    const cap = sec.hearing_limit || 80;
-    const cells = [
-      psHealthMeter({
-        label: "Sound around him", value: db, unit: "dB", digits: 0,
-        band: { lo: 40, hi: cap, dlo: 40, dhi: cap + 25 }, cap: true,
-      }),
-      this._hlMeter(sec, "effort", { label: "Effort", value: eff, unit: "kcal/hr/kg", digits: 1 }),
-    ];
-    return `<div class="ps-hblk">
-        <div class="ps-hbh"><span class="ps-hbt">Hearing</span><span class="ps-hbw">environment</span></div>
-        ${this._hlGrid(cells, 2)}
-        <div class="ps-hnote">${cap} dB is Apple's published exposure limit — a real threshold,
-          not a personal range, which is why it is drawn as a ceiling.</div>
-      </div>`;
-  },
-
   /* -------------------------------------------------------------- synthesis
      A sentence, never a score. A readiness number is the rings mistake one
      level up: a manufactured figure standing in front of the measurements.
@@ -14036,6 +14056,12 @@ Object.assign(PurdyShellCard.prototype, {
     return "";
   },
 
+  /* The section is a FACE now, not a container. Its whole body is the header,
+     the chip and three meters — everything else moved into the mode, and the
+     header is a door into it rather than a toggle. There is no expanded state
+     at all: `_head` draws no chevron for a mode door, and a stub of the four
+     pages sitting beside the real thing would be two answers to one question,
+     which is the argument that dropped the Systems row's chevron first. */
   _secHealth(sec) {
     if (!this._hass) return "";
     const total = this._hlRead(sec.sleep_total);
@@ -14052,22 +14078,407 @@ Object.assign(PurdyShellCard.prototype, {
       this._hlMeter(sec, "resting_hr", { label: "Resting", value: rhr, unit: "bpm", digits: 0 }),
     ], 3);
 
-    const blocks = [
-      this._hlSleep(sec),
-      this._hlTrace(sec),
-      this._hlRecovery(sec),
-      this._hlLoad(sec),
-      this._hlFitness(sec),
-      this._hlRide(sec),
-      this._hlWalking(sec),
-      this._hlHearing(sec),
-    ].filter(Boolean).join("");
-
     return `
-      ${this._head(sec, this._hlChip(sec))}
+      ${this._head(sec, this._hlChip(sec), { mode: "health" })}
       ${top}
-      ${this._hlSentence(sec)}
-      <div class="ps-xtra">${blocks}</div>`;
+      ${this._hlSentence(sec)}`;
+  },
+
+  /* ==========================================================================
+   * THE MODE
+   *
+   * Four pages behind their own dock, with Home on the far left — the Systems
+   * shape, for the Systems reason: these pages are alternatives to each other
+   * rather than neighbours in a scrolling column, and entering swaps the dock
+   * as well as the column.
+   *
+   * It differs from Systems in ONE structural way, deliberately. Systems reads
+   * a top-level `server:` block; this reads the `health` SECTION's own config,
+   * because there is exactly one of it and it is already on the column. A
+   * second top-level block would mean forty entity ids maintained in two
+   * places, and the drift that produces is already logged in this project
+   * once (the morning recap against psNurserySessions).
+   *
+   * WHERE A RING IS ALLOWED. The section shipped with meters because a ring
+   * shows a fraction of a goal somebody else picked, and that argument still
+   * holds. So the horseshoe comes back only where the goal is HIS: a number in
+   * `goals:` that he set, or his own rolling average. Everything measured
+   * against where it usually sits keeps the band. That is why Today and Sleep
+   * have rings and Heart and Fitness have none — not a layout preference, a
+   * rule about what the picture is claiming.
+   * ======================================================================= */
+
+  /* The section, wherever it sits in the column — including when it is
+     `sheet_only`, so the mode survives the section being taken off the page.
+     Visibility is re-checked here rather than only at the dock, because
+     `data-mode` can also arrive from a stale binding. */
+  _hlCfg() {
+    const s = ((this._config || {}).sections || []).find((x) => x.type === "health");
+    if (!s || !this._visible(s)) return null;
+    return { key: s.key || "health", ...s };
+  },
+
+  /* A page whose data is entirely absent gets no dock slot, exactly as a
+     missing `server:` sub-block does — so an install with no Garmin degrades
+     to three pages rather than to one empty one. */
+  _hlPages() {
+    const sec = this._hlCfg();
+    if (!sec) return [];
+    const out = [];
+    const L = sec.load || {}, F = sec.fitness || {};
+    const has = (...ids) => ids.some((id) => id && this._hlRead(id) != null);
+    if (has(L.steps, L.exercise, L.active, L.distance, L.flights, L.stand, sec.effort)) {
+      out.push({ key: "today", name: "Today", icon: "mdi:progress-clock" });
+    }
+    if (has(sec.sleep_total, sec.sleep_deep, sec.sleep_core, sec.sleep_rem)) {
+      out.push({ key: "sleep", name: "Sleep", icon: "mdi:weather-night" });
+    }
+    if (has(sec.hrv, sec.resting_hr, sec.respiratory, sec.walking_hr)) {
+      out.push({ key: "heart", name: "Heart", icon: "mdi:heart-pulse" });
+    }
+    if (has(F.ftp, F.wkg, F.weight, F.vo2) || (sec.ride && this._hass.states[sec.ride])) {
+      out.push({ key: "fitness", name: "Fitness", icon: "mdi:bike" });
+    }
+    return out;
+  },
+
+  _hlPageNow() {
+    const pages = this._hlPages();
+    if (!pages.length) return null;
+    return pages.find((p) => p.key === this._hpage) || pages[0];
+  },
+
+  /* ------------------------------------------------------------------ rings */
+
+  /* One horseshoe with its reading inside it. `goal` is the number the marker
+     sits at; the ring's scale is whichever of value and goal is larger, so an
+     OVERSHOOT stays visible instead of being clamped away at 100% — exercise
+     is routinely over, and "39 minutes against a 30 minute goal" is the whole
+     message on that ring. */
+  _hlRing(o) {
+    const size = o.size || 112;
+    const stroke = o.stroke || (size >= 100 ? 9 : 6.5);
+    const goal = Number.isFinite(o.goal) && o.goal > 0 ? o.goal : null;
+    const segs = o.segs || (o.value == null ? [] : null);
+    const max = o.max != null ? o.max
+      : Math.max(o.value == null ? 0 : o.value, goal || 0) || 1;
+
+    const arcs = segs || [[o.value / max, o.color || "var(--ps-cool)"]];
+    const goalFrac = goal == null ? null : Math.min(1, goal / max);
+
+    /* A SMALL ring wears its label underneath, not inside.
+       Inside a 72px ring "EXERCISE" is wider than the chord available at the
+       height the caption sits at, so it ran over the stroke on both sides and
+       collided with the arc — which the first live screenshot caught and no
+       assertion could. The big ring keeps its label inside, where it fits. */
+    const small = size < 100;
+    const label = pcEsc(o.label || "");
+    const ring = `<div class="ps-ring ps-hring"${o.info ? ` data-info="${pcEsc(o.info)}"` : ""}
+        style="width:${size}px;height:${size}px">
+        ${this._ringSvg(size, stroke, arcs, goalFrac, o.goalColor || "var(--ps-warn)")}
+        <div class="ps-rv ${small ? "sm" : ""}"><b>${o.text}</b>${
+          small ? "" : `<small>${label}</small>`}</div>
+      </div>`;
+    if (!small) return ring;
+    return `<div class="ps-hrsm">${ring}<span class="ps-hrsl">${label}</span></div>`;
+  },
+
+  /* What a ring's goal is, with the config number as the floor. `goals:` is
+     where he sets them; the defaults are Apple's own so the page is useful
+     before anything is configured. */
+  _hlGoal(sec, key, dflt) {
+    const g = (sec.goals || {})[key];
+    return Number.isFinite(Number(g)) && Number(g) > 0 ? Number(g) : dflt;
+  },
+
+  /* ------------------------------------------------------------ page: today */
+  _hpToday(sec) {
+    const L = sec.load || {};
+    const act = this._hlRead(L.active), ex = this._hlRead(L.exercise);
+    const stand = this._hlRead(L.stand);
+    const steps = this._hlRead(L.steps), dist = this._hlRead(L.distance);
+    const fl = this._hlRead(L.flights), eff = this._hlRead(sec.effort);
+
+    const gMove = this._hlGoal(sec, "move", 500);
+    const gEx = this._hlGoal(sec, "exercise", 30);
+    const gStand = this._hlGoal(sec, "stand", L.stand_goal || 12);
+
+    /* A ring with no reading behind it draws its track and a dash — not a
+       zero-length arc, which is a claim that the day has produced nothing. */
+    const ring = (v, goal, text, label, color, size) => this._hlRing({
+      value: v, goal, text: v == null ? "—" : text, label, color, size,
+    });
+
+    const rings = `<div class="ps-hrings">
+        ${ring(act, gMove, Math.round(act || 0), "kcal move", "var(--ps-heat)", 118)}
+        <div class="ps-hrcol">
+          ${ring(ex, gEx, `${Math.round(ex || 0)}m`, "exercise", "var(--ps-good)", 72)}
+          ${ring(stand, gStand, stand == null ? "—" : stand, "stand", "var(--ps-cool)", 72)}
+        </div>
+      </div>`;
+
+    /* WHAT IS LEFT, not what has been done. The rings already carry the three
+       readings at the largest step on the page, so a caption saying "264 of
+       500 · stood 6 of 12" prints both of those numbers a second time an inch
+       below themselves — the duplication this project has now shipped five
+       times. The remaining figure is the one the rings cannot show and the one
+       you would do the subtraction for. */
+    const bits = [];
+    const left = (v, goal, one, done) => {
+      if (v == null) return;
+      bits.push(v >= goal ? done : `<b>${Math.round(goal - v)}</b> ${one}`);
+    };
+    left(act, gMove, "kcal to go", "move goal met");
+    left(ex, gEx, "minutes to go", "exercise goal met");
+    left(stand, gStand, "hours left to stand", "stood every hour");
+
+    const cells = [
+      this._hlMeter(sec, "steps", {
+        label: "Steps", value: steps,
+        text: steps == null ? "—" : Math.round(steps).toLocaleString(),
+      }),
+      this._hlMeter(sec, "distance", { label: "Walked", value: dist, unit: "mi", digits: 2 }),
+      this._hlMeter(sec, "flights", { label: "Flights", value: fl, digits: 0 }),
+      this._hlMeter(sec, "effort", { label: "Effort", value: eff, unit: "kcal/hr/kg", digits: 1 }),
+    ];
+
+    return `<div class="ps-hblk">
+        ${rings}
+        ${bits.length ? `<div class="ps-hrcap">${bits.join(" · ")}</div>` : ""}
+      </div>
+      <div class="ps-hblk">
+        <div class="ps-hbh"><span class="ps-hbt">Movement</span><span class="ps-hbw">so far today</span></div>
+        ${this._hlGrid(cells, 2)}
+        <div class="ps-hnote"><b>These four carry no bands on purpose.</b> Until the day
+          is over every one of them is low, and a dot near the bottom of a track would
+          read as a deficit rather than as a morning. The rings above are the ones with
+          a goal, and a goal is a thing you are still walking toward.</div>
+      </div>`;
+  },
+
+  /* ------------------------------------------------------------ page: sleep */
+  _hpSleep(sec) {
+    const total = this._hlRead(sec.sleep_total);
+    const deep = this._hlRead(sec.sleep_deep);
+    const core = this._hlRead(sec.sleep_core);
+    const rem = this._hlRead(sec.sleep_rem);
+    const awake = this._hlRead(sec.sleep_awake);
+    const goal = this._hlGoal(sec, "sleep", 7.5);
+
+    /* Three arcs on one ring, summing to the total in the middle — the Joel
+       ring's construction, which already answers "how much, and what was it
+       made of" in a single picture. The arcs are drawn from the STAGES rather
+       than sliced out of the total: they sum to it anyway, and scaling
+       segments to a denominator they did not come from is how a bar drifts. */
+    const sum = [deep, core, rem].reduce((a, v) => a + (v == null ? 0 : v), 0);
+    const max = Math.max(total == null ? sum : total, goal) || 1;
+    const segs = sum > 0
+      ? [[(deep || 0) / max, "var(--ps-deep)"],
+         [(core || 0) / max, "var(--ps-light)"],
+         [(rem || 0) / max, "var(--ps-cool)"]]
+      : (total == null ? [] : [[total / max, "var(--ps-light)"]]);
+
+    const ring = `<div class="ps-hrings">${this._hlRing({
+      segs, goal, max, size: 130, stroke: 10,
+      text: psHmDur(total), label: "asleep", info: sec.sleep_total,
+    })}</div>`;
+
+    /* The marker means two different things depending on whether a band
+       exists, so it says which. Naming it "goal" while it is his own average
+       would be the ring mistake all over again. */
+    const band = this._hlBand(sec, "asleep");
+    const cap = `<div class="ps-hrcap">Marker at <b>${psHmDur(goal)}</b> — ${
+      band ? "the middle of your own range" : "your target, until seven nights of history exist"}</div>`;
+
+    const denom = sum + (awake == null ? 0 : awake);
+    const seg = (v, cls) => (v == null || denom <= 0 ? "" :
+      `<i class="${cls}" style="width:${((v / denom) * 100).toFixed(1)}%"></i>`);
+    const bar = denom > 0 ? `<div class="ps-hstage">${
+        seg(deep, "d")}${seg(core, "c")}${seg(rem, "r")}${seg(awake, "a")}</div>
+      <div class="ps-hslg">
+        <span><i class="d"></i>Deep <b>${psHmDur(deep)}</b></span>
+        <span><i class="c"></i>Core <b>${psHmDur(core)}</b></span>
+        <span><i class="r"></i>REM <b>${psHmDur(rem)}</b></span>
+        <span><i class="a"></i>Awake <b>${psHmDur(awake)}</b></span>
+      </div>
+      <div class="ps-hcap">Stage totals · Apple publishes no sequence</div>` : "";
+
+    const pct = (v) => (v == null || sum <= 0 ? null : (v / sum) * 100);
+    const cells = [
+      this._hlMeter(sec, "deep_pct", { label: "Deep", value: pct(deep), unit: "%", digits: 0 }),
+      this._hlMeter(sec, "rem_pct", { label: "REM", value: pct(rem), unit: "%", digits: 0, hiOk: true }),
+      this._hlMeter(sec, "awake", { label: "Awake", value: awake, text: psHmDur(awake) }),
+    ];
+
+    return `<div class="ps-hblk">${ring}${cap}${bar}${this._hlGrid(cells, 3)}</div>
+      ${this._hlTrace(sec)}
+      <div class="ps-hnote"><b>No bedtime and no wake time anywhere on this page.</b>
+        Apple pushes the night as four totals in one write and publishes neither, so any
+        window here would be invented. Time in bed also equals time asleep exactly, every
+        night, so the ratio between them would be a constant 100% wearing the look of a
+        measurement.</div>`;
+  },
+
+  /* ------------------------------------------------------------ page: heart */
+  _hpHeart(sec) {
+    const latest = this._hlRead(sec.hr_series);
+    return `${this._hlRecovery(sec)}
+      ${this._hlTrace(sec)}
+      ${latest == null ? "" : `<div class="ps-jr"><span class="ps-l">Latest sample</span>
+        <span class="ps-v">${Math.round(latest)} bpm</span></div>`}
+      <div class="ps-hnote"><b>No daily high and low.</b> The min, average and max
+        sensors all report the same number — they track the latest sample rather than a
+        range — so a high/low pair here would be one reading printed twice.</div>`;
+  },
+
+  /* ---------------------------------------------------------- page: fitness */
+  _hpFitness(sec) {
+    return `${this._hlFitness(sec)}${this._hlRide(sec)}`;
+  },
+
+  /* ------------------------------------------------------------------- chip */
+
+  /* A page chip carries a DERIVED STATE, never a measurement the page is
+     already printing at size.
+   *
+     The first live render broke that on three pages out of four — "31 ms HRV"
+     directly above an HRV meter reading 31, "200 W FTP" above an FTP meter
+     reading 200, "4,817 steps" above a Steps meter. It is the same duplication
+     as the weather hero, the desk's "Up 2h 0m", Joel's chip and this section's
+     own first sentence, and it keeps coming back because a number is the
+     easiest thing to reach for when a chip needs filling.
+   *
+     So: a roll-up, a comparison, or an elapsed time — something you would have
+     to do arithmetic to get. And where a page has no such fact, NO CHIP, the
+     way the desk's schedule chip is dropped rather than filled with a
+     placeholder word. */
+  _hlPageChip(sec, page) {
+    const L = sec.load || {};
+
+    /* How many of the three closed — a roll-up of the rings, which each show
+       only their own progress. */
+    if (page.key === "today") {
+      const pairs = [
+        [this._hlRead(L.active), this._hlGoal(sec, "move", 500)],
+        [this._hlRead(L.exercise), this._hlGoal(sec, "exercise", 30)],
+        [this._hlRead(L.stand), this._hlGoal(sec, "stand", L.stand_goal || 12)],
+      ].filter(([v]) => v != null);
+      if (!pairs.length) return "";
+      const met = pairs.filter(([v, g]) => v >= g).length;
+      const all = met === pairs.length;
+      return `<span class="ps-chip ${all ? "good" : ""}"><span class="ps-dot"></span>${
+        all ? "All goals met" : `${met} of ${pairs.length} goals`}</span>`;
+    }
+
+    /* The gap against the target, which is the subtraction the ring's marker
+       shows the position of but never the size of. */
+    if (page.key === "sleep") {
+      const total = this._hlRead(sec.sleep_total);
+      const goal = this._hlGoal(sec, "sleep", 7.5);
+      if (total == null) return "";
+      const d = total - goal;
+      if (Math.abs(d) < 1 / 12) return `<span class="ps-chip good"><span class="ps-dot"></span>On target</span>`;
+      return `<span class="ps-chip ${d < 0 ? "warn" : "cool"}"><span class="ps-dot"></span>${
+        psHmDur(Math.abs(d))} ${d < 0 ? "under" : "over"}</span>`;
+    }
+
+    /* A verdict against his bands — which only exists once there ARE bands.
+       Before the capture layer this page correctly carries no chip at all. */
+    if (page.key === "heart") {
+      const rows = [["hrv", this._hlRead(sec.hrv), true],
+        ["resting_hr", this._hlRead(sec.resting_hr), false],
+        ["respiratory", this._hlRead(sec.respiratory), false]]
+        .map(([k, v, hiOk]) => {
+          const b = this._hlBand(sec, k);
+          if (v == null || !b) return null;
+          if (v < Number(b.lo)) return { k, bad: true };
+          if (v > Number(b.hi)) return { k, bad: !hiOk };
+          return { k, bad: false };
+        }).filter(Boolean);
+      if (!rows.length) return "";
+      const off = rows.filter((r) => r.bad).length;
+      return `<span class="ps-chip ${off ? "warn" : "good"}"><span class="ps-dot"></span>${
+        off ? `${off} outside range` : "All in range"}</span>`;
+    }
+
+    /* How long since he rode — the page prints the DATE, and days-ago is the
+       arithmetic you would otherwise do in your head. */
+    const st = sec.ride && this._hass.states[sec.ride];
+    const raw = st && st.attributes && st.attributes.startTime;
+    const when = raw ? new Date(String(raw).replace(" ", "T")) : null;
+    if (!when || !Number.isFinite(when.getTime())) return "";
+    const days = Math.floor((this._nowMs() - when.getTime()) / 86400000);
+    return `<span class="ps-chip ${days > 14 ? "warn" : ""}"><span class="ps-dot"></span>${
+      days <= 0 ? "Rode today" : `Rode ${days}d ago`}</span>`;
+  },
+
+  /* ----------------------------------------------------------------- render */
+
+  _renderHealth(faults) {
+    const sec = this._hlCfg();
+    const page = this._hlPageNow();
+    /* No config, not this person's card, or nothing published yet — fall back
+       to the house rather than drawing an empty app with a dock that has no
+       way out of it. */
+    if (!sec || !page) { this._mode = null; return this._render(); }
+
+    this._patch("ps-stat", `
+        <div>
+          <div class="ps-lbl">${psEsc(sec.title || "Body")}</div>
+          <h2 class="ps-syh">${psEsc(page.name)}</h2>
+        </div>
+        <div class="ps-rt">${this._hlPageChip(sec, page)}</div>`);
+
+    const html = {
+      today: () => this._hpToday(sec),
+      sleep: () => this._hpSleep(sec),
+      heart: () => this._hpHeart(sec),
+      fitness: () => this._hpFitness(sec),
+    }[page.key]();
+
+    /* One keyed node per page through the column's own reconciler, so
+       switching pages swaps the node rather than rewriting a shared one. */
+    this._patchSections([{ key: "hl-" + page.key, html, open: false, cls: "ps-sypage" }]);
+
+    this._patch("ps-sheetslot", this._sheetHtml(faults));
+    this._mountSheetCard();
+
+    const pages = this._hlPages();
+    const dock = `<button class="ps-db home" type="button" data-hldock="__home">
+        <ha-icon icon="mdi:home-variant"></ha-icon><span>Home</span></button>` +
+      pages.map((p) => `<button class="ps-db ${p.key === page.key ? "on" : ""}"
+          type="button" data-hldock="${psEsc(p.key)}">
+          <ha-icon icon="${psEsc(p.icon)}"></ha-icon><span>${psEsc(p.name)}</span></button>`).join("");
+
+    /* The mini bar is shared by every render path — walking into Body must not
+       take the pause button away. */
+    this._patch("ps-dockwrap", `${this._miniHtml()}<div class="ps-dock">${dock}</div>`);
+
+    this._bind();
+    this._bindScrub();
+    this._bindHealth();
+    this._reserve();
+  },
+
+  _bindHealth() {
+    this._each("[data-hldock]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const k = el.dataset.hldock;
+        psClosePopup();
+        if (k === "__home") {
+          this._mode = null;
+          this._sheet = null;
+        } else {
+          this._hpage = k;
+        }
+        /* The signature is built from the OLD page's markup, so it has to be
+           dropped or the patch decides nothing changed. */
+        this._last = null;
+        this._render();
+        if (this.scrollIntoView) this.scrollIntoView({ block: "start" });
+      });
+    });
   },
 });
 /* ============================================================================
@@ -15567,6 +15978,26 @@ const PS_STYLES = `
       .ps-hslg b { color: var(--ps-text); font-weight: 650; font-variant-numeric: tabular-nums; }
 
       .ps-htrace { display: block; width: 100%; height: 62px; }
+
+      /* health MODE — the rings.
+         Side by side, not concentric. Apple stacks its three rings inside one
+         another, which makes the outer one read as the biggest and therefore
+         the most important; nobody made that claim about calories over
+         standing. Equal treatment for equal standing, with move larger only
+         because it is the one that moves all day. */
+      .ps-hrings { display: flex; align-items: center; justify-content: center;
+                   gap: 14px; flex-wrap: wrap; padding: 2px 0; }
+      .ps-hrcol { display: flex; flex-direction: column; gap: 10px; }
+      /* A small ring's caption sits UNDER it — inside a 72px ring the word is
+         wider than the chord at that height and lands on the stroke. */
+      .ps-hrsm { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+      .ps-hrsl { font-size: var(--pc-fs-micro); letter-spacing: .09em; text-transform: uppercase;
+                 color: var(--ps-dim); font-weight: 650; white-space: nowrap; }
+      .ps-hring { cursor: default; }
+      .ps-hring[data-info] { cursor: pointer; }
+      .ps-hrcap { text-align: center; font-size: var(--pc-fs-xs); color: var(--ps-muted);
+                  line-height: 1.45; font-variant-numeric: tabular-nums; }
+      .ps-hrcap b { color: var(--ps-text); font-weight: 640; }
 
       .ps-hctr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
       .ps-hct { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);

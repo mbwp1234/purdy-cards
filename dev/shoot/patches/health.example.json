@@ -1,0 +1,62 @@
+{
+  "$user": "<ha-user-id>",
+  "$mergeSections": [
+    {
+      "key": "body",
+      "visible_to": [
+        "<ha-user-id>"
+      ],
+      "goals": {
+        "move": 500,
+        "steps": 10000,
+        "exercise": 30,
+        "stand": 12,
+        "sleep": 7.5
+      },
+      "walking": null,
+      "hearing": null
+    }
+  ],
+  "dock": [
+    {
+      "icon": "mdi:home-variant",
+      "name": "Home",
+      "active": true,
+      "link": "/lovelace/<view>"
+    },
+    {
+      "icon": "mdi:lightbulb",
+      "name": "Lights",
+      "sheet": "lights"
+    },
+    {
+      "icon": "mdi:play-box-multiple",
+      "name": "Media",
+      "sheet": "media"
+    },
+    {
+      "icon": "mdi:robot-vacuum",
+      "name": "Crew",
+      "sheet": "crew"
+    },
+    {
+      "icon": "mdi:server",
+      "name": "Systems",
+      "mode": "systems"
+    },
+    {
+      "icon": "mdi:heart-pulse",
+      "name": "Body",
+      "mode": "health",
+      "visible_to": [
+        "<ha-user-id>"
+      ]
+    },
+    {
+      "icon": "mdi:bell-outline",
+      "name": "Alerts",
+      "alert_when_faults": true,
+      "sheet": "notifications"
+    }
+  ]
+}
