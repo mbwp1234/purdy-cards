@@ -40,11 +40,20 @@ const PRESETS = {
   "phone-joel":   [PHONE, SHELL + "&open=joel"],
   "phone-climate":[PHONE, SHELL + "&open=clim"],
   "phone-crew":   [PHONE, SHELL + "&open=crew"],
-  /* The Body section against live Apple Health and Garmin data, before it is
-     deployed. Collapsed is three meters and a sentence; open is the eight
-     blocks behind the expand. */
-  "phone-health":      [PHONE, SHELL + "&patch=health"],
-  "phone-health-open": [PHONE, SHELL + "&patch=health&open=body"],
+  /* The Body section against live Apple Health and Garmin data. Collapsed is
+     three meters and a door; there is no open= face any more, because the
+     expand became a MODE — four pages behind their own dock, each with its own
+     slot below. The patch carries `$user`, without which the section is
+     correctly invisible and every one of these shots is of an empty column. */
+  "phone-health":         [PHONE, SHELL + "&patch=health"],
+  "phone-health-today":   [PHONE, SHELL + "&patch=health&mode=health&hpage=today"],
+  "phone-health-sleep":   [PHONE, SHELL + "&patch=health&mode=health&hpage=sleep"],
+  "phone-health-heart":   [PHONE, SHELL + "&patch=health&mode=health&hpage=heart"],
+  "phone-health-fitness": [PHONE, SHELL + "&patch=health&mode=health&hpage=fitness"],
+  /* The same column with no `$user` — the section and its dock button both
+     gone, which is the thing `visible_to` actually promises and the only way
+     to see that the column closes over the gap rather than leaving one. */
+  "phone-health-hidden":  [PHONE, SHELL + "&patch=health-hidden"],
   /* The weather rail, both faces and both sources. `patch=` previews the
      section against LIVE data before it is deployed — the whole point of
      shooting rather than releasing to find out. */

@@ -170,8 +170,18 @@ function patchConfig(cfg, name) {
     ordered = [...ordered].sort((a, b) => rank(a) - rank(b));
   }
   out.sections = ordered;
+  /* WHO IS LOOKING. `visible_to:` drops a section for anyone else, so a section
+     restricted to one person is unphotographable until the harness can say it
+     is that person — the same problem `media=` and `wxrail=` solve for a face
+     that depends on live state.
+   *
+     It rides the PATCH rather than a preset argument on purpose: a Home
+     Assistant user id is exactly the kind of thing this repo is public about
+     not carrying, and patches/*.json is already gitignored for naming real
+     entities. The harness lifts it off and deletes it before setConfig. */
+  if (patch.$user) out.__user = patch.$user;
   console.log(`  patched config with ${name} (${ordered.length} sections: ${
-    ordered.map((x) => (x && x.key) || "?").join(", ")})`);
+    ordered.map((x) => (x && x.key) || "?").join(", ")}${patch.$user ? "; as a named user" : ""})`);
   return out;
 }
 

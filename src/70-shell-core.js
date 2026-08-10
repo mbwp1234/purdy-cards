@@ -86,9 +86,16 @@ class PurdyShellCard extends PcBaseCard {
     this._mediaPick = null;
     /* Systems is a MODE, not a section: the column and the dock both swap.
        null is the house; "systems" is the server, and _page is which of its
-       pages is showing. See 77-shell-systems.js. */
+       pages is showing. See 77-shell-systems.js.
+     *
+     * Health is the second mode, and it keeps its OWN page field. Sharing
+     * _page would mean walking into Body from Systems and landing on a page
+     * key that belongs to the other mode — which resolves to the first page,
+     * so it would look like a working default rather than a bug. Two fields
+     * cost nothing and cannot do that. See 78c-shell-health.js. */
     this._mode = null;
     this._page = "overview";
+    this._hpage = "today";
     this._swOpt = {};         // optimistic container/VM switch states
     this._syq = "";           // container search
     this._syfilter = "all";
@@ -222,6 +229,42 @@ class PurdyShellCard extends PcBaseCard {
     this._wxTimer = null;
   }
 
+  /* Is this section or dock entry for the person actually looking at it?
+   *
+   * `visible_to:` takes a list of Home Assistant user ids, or names — the id is
+   * exact and survives a rename, the name is what makes a config readable and
+   * what the shoot harness can supply. Absent means everyone, so every existing
+   * section is unchanged.
+   *
+   * TWO RULES, both load-bearing:
+   *
+   *   1. It DROPS, it does not dim. A hidden section is never rendered and a
+   *      hidden dock entry is never emitted, so the other person sees a column
+   *      with no gap in it rather than a locked door with their name off it.
+   *   2. It is NOT a security control. Everything in `hass.states` is readable
+   *      by anyone who can open the dashboard, and this only decides what gets
+   *      drawn. Lovelace's own view-level `visible:` is the same kind of claim.
+   *      Anything that genuinely must not be seen belongs behind an HA user
+   *      permission, not behind this key.
+   *
+   * `hass.user` can be briefly absent while the connection settles. Absent is
+   * treated as NOT matching, because the alternative — showing a restricted
+   * section for one frame until the user object lands — is the failure that
+   * would actually be noticed. */
+  _visible(o) {
+    const want = o && o.visible_to;
+    if (!want) return true;
+    const list = Array.isArray(want) ? want : [want];
+    const u = this._hass && this._hass.user;
+    if (!u) return false;
+    const id = String(u.id || "");
+    const name = String(u.name || "").toLowerCase();
+    return list.some((w) => {
+      const s = String(w);
+      return s === id || s.toLowerCase() === name;
+    });
+  }
+
   /* Everything the shell reads, so a state change repaints exactly once. */
   _collectWatched() {
     const c = this._config;
@@ -284,11 +327,10 @@ class PurdyShellCard extends PcBaseCard {
       if (s.type === "health") {
         [s.sleep_total, s.sleep_deep, s.sleep_core, s.sleep_rem, s.sleep_awake,
          s.hrv, s.resting_hr, s.respiratory, s.walking_hr,
-         s.hearing, s.effort, s.ride, s.hr_series].forEach(push);
-        const L = s.load || {}, F = s.fitness || {}, Wk = s.walking || {};
+         s.effort, s.ride, s.hr_series].forEach(push);
+        const L = s.load || {}, F = s.fitness || {};
         [L.steps, L.exercise, L.active, L.distance, L.flights, L.stand].forEach(push);
         [F.ftp, F.wkg, F.weight, F.vo2].forEach(push);
-        [Wk.speed, Wk.step_len, Wk.support, Wk.asymmetry].forEach(push);
       }
       if (s.type === "lights") {
         (s.lights || []).forEach((x) => {
@@ -600,6 +642,7 @@ class PurdyShellCard extends PcBaseCard {
        line still runs: the fault list and the notification log are the house's
        and do not stop mattering because you are looking at the server. */
     if (this._mode === "systems") return this._renderSystems(faults);
+    if (this._mode === "health") return this._renderHealth(faults);
 
     const worst = faults.length
       ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
@@ -627,6 +670,9 @@ class PurdyShellCard extends PcBaseCard {
          permanent slot in the column — that is how music keeps its players,
          presets and pins while only appearing behind the dock button. */
       if (sec.sheet_only) return;
+      /* Not for this person — dropped before it renders, so the column closes
+         over the gap rather than showing a hole where their section is not. */
+      if (!this._visible(sec)) return;
       const body = {
         sleep: () => this._secSleep(sec),
         climate: () => this._secClimate(sec),
@@ -648,12 +694,19 @@ class PurdyShellCard extends PcBaseCard {
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
     });
 
-    const dock = (c.dock || []).map((d, i) => {
-      const alert = d.alert_when_faults && faults.length;
-      return `<button class="ps-db ${d.active ? "on" : ""} ${alert ? "alert" : ""}" type="button" data-dock="${i}">
-          <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
-        </button>`;
-    }).join("");
+    /* The index is captured BEFORE the filter and carried through it. The
+       handler looks the entry up by `data-dock` in the unfiltered config
+       array, so renumbering the buttons would silently point every slot after
+       a hidden one at its neighbour. */
+    const dock = (c.dock || [])
+      .map((d, i) => ({ d, i }))
+      .filter(({ d }) => this._visible(d))
+      .map(({ d, i }) => {
+        const alert = d.alert_when_faults && faults.length;
+        return `<button class="ps-db ${d.active ? "on" : ""} ${alert ? "alert" : ""}" type="button" data-dock="${i}">
+            <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
+          </button>`;
+      }).join("");
 
     this._patch("ps-stat", `
         <div>
@@ -1328,6 +1381,10 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const d = (this._config.dock || [])[parseInt(el.dataset.dock, 10)];
         if (!d) return;
+        /* Re-checked at the tap, not only at render. Bindings outlive the
+           markup that carried them, so a button legitimately drawn before the
+           user object settled must not still act once it has. */
+        if (!this._visible(d)) return;
         /* `alert_when_faults` is a BADGE, not a destination. It was hijacking
            the bell: with any fault raised — and the low-battery rule means
            there usually is one — tapping Notifications opened the attention

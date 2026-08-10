@@ -6150,11 +6150,10 @@ const hlCfg = {
   sleep_total: 'hae.tot', sleep_deep: 'hae.deep', sleep_core: 'hae.core',
   sleep_rem: 'hae.rem', sleep_awake: 'hae.awake',
   hr_series: 'hae.hr', hrv: 'hae.hrv', resting_hr: 'hae.rhr',
-  respiratory: 'hae.resp', walking_hr: 'hae.whr',
-  load: { steps: 'hae.steps', exercise: 'hae.ex', active: 'hae.act' },
+  respiratory: 'hae.resp', walking_hr: 'hae.whr', effort: 'hae.eff',
+  load: { steps: 'hae.steps', exercise: 'hae.ex', active: 'hae.act',
+          distance: 'hae.dist', flights: 'hae.fl', stand: 'hae.stand' },
   fitness: { ftp: 'sensor.ftp', weight: 'sensor.wt', vo2: 'sensor.vo2' },
-  walking: { asymmetry: 'hae.asym' },
-  hearing: 'hae.db',
 };
 const hlStates = {
   'hae.tot': { state: '5.61', attributes: {} },
@@ -6169,8 +6168,10 @@ const hlStates = {
   'hae.steps': { state: '4817', attributes: {} },
   'hae.ex': { state: '39', attributes: {} },
   'hae.act': { state: '264.41', attributes: {} },
-  'hae.asym': { state: '0', attributes: {} },
-  'hae.db': { state: '76.24', attributes: {} },
+  'hae.dist': { state: '2.33', attributes: {} },
+  'hae.fl': { state: '7', attributes: {} },
+  'hae.stand': { state: '6', attributes: {} },
+  'hae.eff': { state: '5.2', attributes: {} },
   'sensor.ftp': { state: '200', attributes: {} },
   'sensor.wt': { state: '70.31', attributes: {} },
   'sensor.vo2': { state: 'unknown', attributes: {} },
@@ -6178,7 +6179,7 @@ const hlStates = {
 const mkHl = (over, bands) => {
   const s = new SH();
   s.setConfig({ sections: [{ ...hlCfg, bands: bands || {} }] });
-  s._hass = { states: { ...hlStates, ...(over || {}) } };
+  s._hass = { states: { ...hlStates, ...(over || {}) }, user: { id: 'u1', name: 'Brian' } };
   /* All ~235 samples carry one upload timestamp, so the trace is plotted by
      index; the fixture gives them near-identical times on purpose. */
   s._history = { 'hae.hr': [60, 58, 57, 59, 62, 88, 104].map((v, i) => ({ t: 1000 + i, s: String(v) })) };
@@ -6190,47 +6191,156 @@ const hl = mkHl()._secHealth(hlSec);
 check('setConfig accepts a health section', (() => {
   try { new SH().setConfig({ sections: [hlCfg] }); return true; } catch (e) { return false; }
 })());
+
+/* ---- the collapsed face is now a DOOR, and holds nothing else ------------ */
 check('the collapsed face carries exactly three meters',
-  (hl.split('ps-xtra')[0] || '').split('class="ps-hm"').length - 1 === 3);
+  hl.split('class="ps-hm"').length - 1 === 3);
 check('the collapsed chip carries the load, not the verdict', /39m active/.test(hl));
 check('the collapsed chip never claims a roll-up', !/all in band/i.test(hl));
+/* The blocks moved into the mode. A face that still carried them would be a
+   stub of the app sitting beside the app - the argument that dropped the
+   Systems row's chevron, which is why this one has none either. */
+check('the collapsed face has no expanded body at all', !/ps-xtra/.test(hl));
+check('the header is a door into the mode, not a toggle',
+  /data-mode="health"/.test(hl) && !/data-open="body"/.test(hl));
+check('a mode door draws no chevron', !/ps-cv/.test(hl));
 
-/* Apple publishes four totals and no times. Any window on this section would
-   be invented - and the invented one disagreed with its own reading. */
-check('no sleep window is ever printed', !/→/.test(hl));
-check('the trace carries no tick labels', !/ps-axl|11 PM|6:41/.test(hl));
-check('the trace says it is not to scale in time', /not to scale in time/.test(hl));
-check('the trace is drawn from x=0, by index', /points="0\.0,/.test(hl));
-/* Painted before the fill, the gradient covers it and the section ships with
-   an invisible reference - which is what the mockup's first screenshot caught.
-   indexOf('<line') is not enough: it matches <linearGradient, which sits
-   before the polygon and made this assertion pass for the wrong reason. */
-check('the resting line is painted after the fill', (() => {
-  const poly = hl.indexOf('<polygon');
-  const line = hl.indexOf('<line ');
-  return poly > -1 && line > poly;
+/* ---- the pages ----------------------------------------------------------- */
+const hlM = mkHl();
+const pgToday = hlM._hpToday(hlSec);
+const pgSleep = hlM._hpSleep(hlSec);
+const pgHeart = hlM._hpHeart(hlSec);
+const pgFit = hlM._hpFitness(hlSec);
+
+check('every page key has a renderer, and every renderer a page', (() => {
+  const keys = hlM._hlPages().map((p) => p.key).sort().join(',');
+  return keys === 'fitness,heart,sleep,today';
+})());
+/* A page with nothing behind it gets no dock slot, so an install with no
+   Garmin degrades to three pages rather than to one empty one. */
+check('a page with no data gets no slot', (() => {
+  const s = mkHl({ 'sensor.ftp': { state: 'unknown', attributes: {} },
+    'sensor.wt': { state: 'unknown', attributes: {} } });
+  return !s._hlPages().some((p) => p.key === 'fitness');
 })());
 
-check('sleep efficiency is nowhere on the section', !/efficien/i.test(hl));
-check('the stage bar is drawn', /ps-hstage/.test(hl));
-check('with no band, a zero asymmetry still warns in the note',
-  /Asymmetry reads a flat 0%/.test(hl) && !/ps-hmd q/.test(hl));
-check('with a band, a zero asymmetry gets the grey dot, never the green one',
-  /ps-hmd q/.test(mkHl(null, { asymmetry: { lo: 0, hi: 3 } })
-    ._secHealth({ ...hlCfg, bands: { asymmetry: { lo: 0, hi: 3 } } })));
+/* THE RING RULE: a horseshoe only where the goal is his. */
+/* 'ps-hring' is also a prefix of the CONTAINER's 'ps-hrings', so a bare
+   substring count answers 4 for three rings. */
+check('Today draws its three rings', (() => {
+  const n = pgToday.split('class="ps-ring ps-hring"').length - 1;
+  return n === 3 && /kcal move/.test(pgToday) && /exercise/.test(pgToday) && /stand/.test(pgToday);
+})());
+/* Exercise is routinely OVER its goal, and "39 against a 30 minute goal" is the
+   whole message on that ring - a ring clamped at 100% throws it away. The
+   marker has to be read off the EXERCISE ring specifically: the move ring's
+   marker sits at 495 (a goal not yet reached is a full-scale marker) and a
+   loose match finds that one first. */
+check('an overshot goal keeps its marker inside the ring', (() => {
+  const ex = pgToday.split('class="ps-ring ps-hring"').find((c) => /exercise/.test(c));
+  const m = ex && ex.match(/<line[^>]*transform="rotate\(([-\d.]+)/);
+  const arc = ex && ex.match(/stroke-dasharray="([\d.]+) ([\d.]+)"[^>]*\n?[^>]*stroke-dashoffset/);
+  return /exercise goal met/.test(pgToday) && m && parseFloat(m[1]) < 495 && parseFloat(m[1]) > 135;
+})());
+check('a ring with no reading draws a dash, never a zero arc', (() => {
+  const s = mkHl({ 'hae.act': { state: 'unknown', attributes: {} } });
+  const t = s._hpToday(hlSec);
+  return />—<\/b><small>kcal move/.test(t);
+})());
+check('Heart and Fitness draw no rings at all',
+  !/ps-hring/.test(pgHeart) && !/ps-hring/.test(pgFit));
+check('the movement meters say why they carry no bands',
+  /ps-hmg/.test(pgToday) && /carry no bands on purpose/.test(pgToday));
+
+check('the sleep ring is three arcs, not one', (() => {
+  const arcs = (pgSleep.split('stroke-dashoffset').length - 1);
+  return arcs === 3 && /var\(--ps-deep\)/.test(pgSleep) && /var\(--ps-cool\)/.test(pgSleep);
+})());
+/* Naming the marker "goal" while it is his own average would be the ring
+   mistake all over again, so it says which one it is. */
+check('the sleep marker says what it is', /your target, until seven nights/.test(pgSleep));
+check('with a band the sleep marker changes its claim',
+  /middle of your own range/.test(mkHl(null, { asleep: { lo: 6.8, hi: 8.2 } })
+    ._hpSleep({ ...hlCfg, bands: { asleep: { lo: 6.8, hi: 8.2 } } })));
+check('the stage bar is drawn', /ps-hstage/.test(pgSleep));
+
+/* Apple publishes four totals and no times. Any window would be invented -
+   and the invented one disagreed with its own reading, twice. */
+check('no sleep window is ever printed', !/→/.test(pgSleep) && !/→/.test(hl));
+check('sleep efficiency is nowhere in the mode',
+  ![pgToday, pgSleep, pgHeart, pgFit].some((p) => /efficien/i.test(p)));
+check('the trace carries no tick labels', !/ps-axl|11 PM|6:41/.test(pgSleep));
+check('the trace says it is not to scale in time', /not to scale in time/.test(pgSleep));
+check('the trace is drawn from x=0, by index', /points="0\.0,/.test(pgSleep));
+/* Painted before the fill, the gradient covers it and the page ships with an
+   invisible reference - which is what the mockup's first screenshot caught.
+   indexOf('<line') is not enough: it matches <linearGradient. */
+check('the resting line is painted after the fill', (() => {
+  /* Scoped to the TRACE. The sleep ring above it carries a goal marker that is
+     also a <line>, and it sits before the polygon - so an unscoped search
+     answers about the wrong element and fails for the wrong reason. */
+  const tr = pgSleep.slice(pgSleep.indexOf('<svg class="ps-htrace"'));
+  const poly = tr.indexOf('<polygon');
+  const line = tr.indexOf('<line ');
+  return poly > -1 && line > poly;
+})());
+check('the trace is on Heart as well as Sleep', /ps-htrace/.test(pgHeart));
+check('Heart never prints a high/low pair off one sample',
+  /No daily high and low/.test(pgHeart));
+
 check('an unknown VO2 max draws no track and no zero',
   /VO2 max<\/div><div class="ps-hmv none">—<\/div><div class="ps-hmn">No reading/
-    .test(hl.replace(/\n\s*/g, '')));
-check('the section is not papered with band captions', !/No band yet/.test(hl));
-check('a blank VO2 beside a live FTP names the cause', /Garmin offline/.test(hl));
-check('load draws counters and says why it has no bands',
-  /ps-hctr/.test(hl) && /No bands here, deliberately/.test(hl));
+    .test(pgFit.replace(/\n\s*/g, '')));
+check('a blank VO2 beside a live FTP names the cause', /Garmin offline/.test(pgFit));
+check('no page is papered with band captions',
+  ![pgToday, pgSleep, pgHeart, pgFit].some((p) => /No band yet/.test(p)));
 
-// with no bands the sentence has nothing to add, so it is not drawn - it used
-// to restate the three meters sitting directly above it
+/* Gait and hearing were dropped outright, not hidden behind a flag - a
+   renderer nothing calls is the "_bindScrub defined and never invoked" shape. */
+check('gait and hearing are gone from the source',
+  !/_hlWalking|_hlHearing/.test(fs.readFileSync(new URL('../src/78c-shell-health.js', import.meta.url), 'utf8')));
+
+/* ---- the chip per page --------------------------------------------------- */
+check('each page chip carries a derived state, not a reading', (() => {
+  const c = (k) => hlM._hlPageChip(hlSec, { key: k });
+  return /1 of 3 goals/.test(c('today')) && /1h 53m under/.test(c('sleep'));
+})());
+/* THE ONE THAT KEEPS COMING BACK. The first live render put "31 ms HRV" above
+   an HRV meter reading 31, "200 W FTP" above an FTP meter reading 200, and
+   "4,817 steps" above a Steps meter - the same duplication as the weather
+   hero, the desk's "Up 2h 0m" and this section's own first sentence. A chip
+   must not print a number its page is already showing at size. */
+check('no page chip repeats a number its own page prints', (() => {
+  const pages = { today: pgToday, sleep: pgSleep, heart: pgHeart, fitness: pgFit };
+  return Object.entries(pages).every(([k, body]) => {
+    const chip = hlM._hlPageChip(hlSec, { key: k });
+    const nums = (chip.match(/\d[\d,.]*/g) || []).filter((n) => n.replace(/\D/g, '').length > 1);
+    /* Strip the chip's own text out of the body first, then look for the
+       number anywhere else on the page. */
+    return nums.every((n) => !body.replace(chip, '').includes(n));
+  });
+})());
+/* With no bands there is no verdict to give, so Heart carries no chip rather
+   than one filled with a placeholder word. */
+check('a page with no derived fact carries no chip',
+  hlM._hlPageChip(hlSec, { key: 'heart' }) === '');
+check('with bands the heart chip gives a verdict', (() => {
+  const b = { hrv: { lo: 26, hi: 38 }, resting_hr: { lo: 55, hi: 63 } };
+  return /All in range/.test(mkHl(null, b)._hlPageChip({ ...hlCfg, bands: b }, { key: 'heart' }));
+})());
+/* The rings carry what has been done; the caption carries what is left, which
+   is the one figure a ring cannot show. */
+check('the Today caption counts down rather than restating the rings',
+  /236<\/b> kcal to go/.test(pgToday) && /exercise goal met/.test(pgToday)
+    && !/264 of 500/.test(pgToday));
+/* A small ring's label is wider than the chord it would sit on, so it lives
+   under the ring. Inside, it landed on the stroke. */
+check('a small ring wears its label outside',
+  /ps-hrsl">EXERCISE|ps-hrsl">exercise/.test(pgToday)
+    && !/ps-rv sm"><b>39m<\/b><small>/.test(pgToday));
+
+/* ---- the sentence -------------------------------------------------------- */
 check('with no bands there is no sentence', !/ps-hsyn/.test(hl));
-
-// and with bands it reads them aloud
 const hlBands = { asleep: { lo: 6.8, hi: 8.2 }, hrv: { lo: 26, hi: 38 }, resting_hr: { lo: 55, hi: 63 } };
 const hlB = mkHl(null, hlBands)._secHealth({ ...hlCfg, bands: hlBands });
 check('a short night reads as short', /Short night/.test(hlB));
@@ -6248,20 +6358,129 @@ check('a section with nothing to say renders nothing', (() => {
 // the recorder failing and the recorder being empty are different facts
 check('a recorder failure says so rather than showing an empty graph', (() => {
   const s = mkHl(); s._histErr = 'nope'; s._history = {};
-  return /Recorder did not answer/.test(s._secHealth(hlSec));
+  return /Recorder did not answer/.test(s._hpSleep(hlSec));
 })());
 check('no samples yet is its own message', (() => {
   const s = mkHl(); s._history = {};
-  return /No samples yet/.test(s._secHealth(hlSec));
+  return /No samples yet/.test(s._hpSleep(hlSec));
 })());
 
 // every entity the section reads must repaint it
 check('health entities land in the watched set', (() => {
   const s = mkHl();
-  return ['hae.tot', 'hae.hrv', 'hae.steps', 'sensor.ftp', 'hae.asym', 'hae.db']
+  return ['hae.tot', 'hae.hrv', 'hae.steps', 'hae.stand', 'hae.eff', 'sensor.ftp']
     .every((id) => s._watched.includes(id));
 })());
 check('the trace rides the existing history fetch', mkHl()._historyEntities().includes('hae.hr'));
+
+/* ---- the mode renders, and its dock is its own ---------------------------- */
+/* The default document stub has no dataset, so _patchSections cannot key a
+   node against it. Installed here and restored below, the same way the
+   systems-mode block does it. */
+const savedDocHl = globalThis.document;
+globalThis.document = { createElement: () => new MiniNode() };
+const hlSlots = {};
+const mkHlSlot = (id) => (hlSlots[id] = hlSlots[id] || new MiniNode());
+const hlr = new SH();
+hlr.setConfig({
+  dock: [{ icon: 'mdi:home-variant', name: 'Home', link: '/x' },
+         { icon: 'mdi:heart-pulse', name: 'Body', mode: 'health' }],
+  sections: [{ ...hlCfg, bands: {} }],
+});
+hlr._hass = { states: hlStates, user: { id: 'u1', name: 'Brian' } };
+hlr._history = { 'hae.hr': [60, 58, 62].map((v, i) => ({ t: 1000 + i, s: String(v) })) };
+hlr.shadowRoot = {
+  getElementById: (id) => (["ps-stat", "ps-col", "ps-sheetslot", "ps-dockwrap"].includes(id) ? mkHlSlot(id) : null),
+  querySelector: () => null,
+  querySelectorAll: () => [],
+};
+hlr._mounted = true;
+hlr._mode = 'health';
+hlr._render();
+check('health mode replaces the greeting with the page name',
+  /Body/.test(hlSlots['ps-stat']._html) && /Today/.test(hlSlots['ps-stat']._html));
+check('health mode swaps the dock', /data-hldock="sleep"/.test(hlSlots['ps-dockwrap']._html));
+check('the health dock leads with Home', /data-hldock="__home"/.test(hlSlots['ps-dockwrap']._html));
+check('the health dock is not the systems dock', !/data-sysdock/.test(hlSlots['ps-dockwrap']._html));
+check('the page mounts as one keyed node', (() => {
+  const kids = mkHlSlot('ps-col').kids;
+  return kids.length === 1 && kids[0].dataset.sect === 'hl-today' && kids[0].className === 'ps-sypage';
+})());
+/* Sharing _page with Systems would land Body on a key belonging to the other
+   mode - which resolves to the first page, so it would look like a working
+   default rather than a bug. */
+check('the two modes keep separate page fields', (() => {
+  hlr._page = 'docker';
+  hlr._hpage = 'heart';
+  hlr._last = null;
+  hlr._render();
+  return /hl-heart/.test(String(mkHlSlot('ps-col').kids[0].dataset.sect));
+})());
+check('an empty health config falls back to the house rather than a dead dock', (() => {
+  const s = new SH();
+  s.setConfig({ dock: [], sections: [{ ...hlCfg, bands: {} }] });
+  s._hass = { states: {}, user: { id: 'u1', name: 'Brian' } };
+  s._mounted = true;
+  s.shadowRoot = { getElementById: () => new MiniNode(), querySelector: () => null, querySelectorAll: () => [] };
+  s._mode = 'health';
+  s._render();
+  return s._mode === null;
+})());
+
+/* ---- visible_to ----------------------------------------------------------- */
+const mkVis = (user) => { const s = new SH(); s.setConfig({ sections: [] }); s._hass = { states: {}, user }; return s; };
+check('no visible_to means everyone', mkVis({ id: 'x', name: 'Tayler' })._visible({}) === true);
+check('a user id matches', mkVis({ id: 'abc', name: 'Brian' })._visible({ visible_to: ['abc'] }) === true);
+check('a name matches, case-insensitively',
+  mkVis({ id: 'abc', name: 'Brian' })._visible({ visible_to: ['brian'] }) === true);
+check('a bare string is accepted as a one-item list',
+  mkVis({ id: 'abc', name: 'Brian' })._visible({ visible_to: 'abc' }) === true);
+check('the other person does not match',
+  mkVis({ id: 'zzz', name: 'Tayler' })._visible({ visible_to: ['abc', 'Brian'] }) === false);
+/* Absent hass.user hides rather than shows. Showing a restricted section for
+   one frame until the user object lands is the failure that gets noticed. */
+check('an absent user hides, it does not show',
+  mkVis(undefined)._visible({ visible_to: ['abc'] }) === false);
+
+const visSlots = {};
+const mkVisSlot = (id) => (visSlots[id] = visSlots[id] || new MiniNode());
+const mkVisShell = (user) => {
+  const s = new SH();
+  s.setConfig({
+    dock: [{ icon: 'mdi:home-variant', name: 'Home', link: '/x' },
+           { icon: 'mdi:heart-pulse', name: 'Body', mode: 'health', visible_to: ['abc'] },
+           { icon: 'mdi:bell-outline', name: 'Alerts', sheet: 'notifications' }],
+    sections: [{ type: 'quick', key: 'q', tiles: [] }, { ...hlCfg, bands: {}, visible_to: ['abc'] }],
+  });
+  s._hass = { states: hlStates, user };
+  s._mounted = true;
+  s.shadowRoot = {
+    getElementById: (id) => (["ps-stat", "ps-col", "ps-sheetslot", "ps-dockwrap"].includes(id) ? mkVisSlot(id) : null),
+    querySelector: () => null, querySelectorAll: () => [],
+  };
+  return s;
+};
+const visMine = mkVisShell({ id: 'abc', name: 'Brian' });
+visMine._render();
+const dockMine = visSlots['ps-dockwrap']._html;
+check('his own dock carries the Body button', /name="Body"|>Body</.test(dockMine));
+check('his own column carries the section',
+  mkVisSlot('ps-col').kids.some((k) => k.dataset.sect === 'body'));
+
+const visHers = mkVisShell({ id: 'zzz', name: 'Tayler' });
+visHers._last = null;
+visHers._render();
+check('her dock does not carry the Body button', !/>Body</.test(visSlots['ps-dockwrap']._html));
+check('her column has no gap where the section was',
+  !mkVisSlot('ps-col').kids.some((k) => k.dataset.sect === 'body'));
+/* The handler looks an entry up by index in the UNFILTERED config array, so
+   renumbering the buttons would point every slot after a hidden one at its
+   neighbour - Alerts would open Body's mode. */
+check('hiding a dock entry does not renumber the ones after it',
+  /data-dock="2"/.test(visSlots['ps-dockwrap']._html)
+    && !/data-dock="1"/.test(visSlots['ps-dockwrap']._html));
+
+globalThis.document = savedDocHl;
 
 // the shape that hides a missing reading, banned at the source
 const hlSrc = fs.readFileSync(new URL('../src/78c-shell-health.js', import.meta.url), 'utf8');

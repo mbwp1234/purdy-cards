@@ -296,11 +296,22 @@ Object.assign(PurdyShellCard.prototype, {
    * `Healthy` / `N faults` summary, passed it in, and it was never displayed.
    * The chip is the whole reason to leave a section collapsed.
    */
-  _head(sec, chipHtml) {
+  /* `opts.mode` turns the header into a DOOR rather than a toggle: the whole
+     row enters that mode, and it draws no chevron because a chevron promises
+     the thing below it is about to unfold in place. The Systems row on the
+     landing page made the same promise and set the precedent for dropping it;
+     Body is the second. The status chip is still drawn either way — dropping
+     it was the v1.28.0 bug where the Systems summary was computed and never
+     displayed. */
+  _head(sec, chipHtml, opts) {
+    const mode = opts && opts.mode;
     const fixed = sec.expandable === false;
     const inner = `<span class="ps-nm">${psEsc(sec.title || "")}</span>
         ${chipHtml || ""}
-        ${fixed ? "" : this._chev()}`;
+        ${mode ? "" : (fixed ? "" : this._chev())}`;
+    if (mode) {
+      return `<button class="ps-sh" type="button" data-mode="${psEsc(mode)}">${inner}</button>`;
+    }
     if (fixed) return `<div class="ps-sh">${inner}</div>`;
     return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">${inner}</button>`;
   },
