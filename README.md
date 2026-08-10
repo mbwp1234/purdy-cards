@@ -467,6 +467,107 @@ that width is what a stage panel buys — a screenshot at 1440 killed it: a stag
 column among five panels is ~290px, so the rails stacked and the forecast's day
 labels clipped off the bottom. Width is what *expanding* buys.
 
+## `health` — a meter, not a ring
+
+A body section built from one repeated unit: a micro label, the number, and a
+track carrying **your own normal band** with a dot on today. It answers *is this
+where it usually is*, which a ring cannot — a ring shows a fraction of a goal
+somebody else picked.
+
+Four states, and the fourth is the one that matters:
+
+| State | Dot | When |
+|---|---|---|
+| In band | green | inside your usual range |
+| Out of band | amber | outside, in the direction that costs something |
+| High and good | cyan | above the band where above is not a fault — HRV, REM |
+| No reading | **no track at all** | the sensor is not reporting |
+
+**A missing reading draws no rail, no band and no dot.** An empty track is a
+claim that the number is low, and absence is not zero. A band that does not
+exist yet is treated the same way, minus the caption — which is what lets the
+section ship *before* the capture layer that will produce the bands, and still
+look deliberate rather than broken.
+
+```yaml
+- type: health
+  key: body
+  title: Body
+  sleep_total: <sleep-total-sensor>       # hours
+  sleep_deep: <deep-sensor>
+  sleep_core: <core-sensor>
+  sleep_rem: <rem-sensor>
+  sleep_awake: <awake-sensor>
+  hr_series: <overnight-hr-sensor>        # the raw sample series
+  hrv: <hrv-sensor>
+  resting_hr: <resting-hr-sensor>
+  respiratory: <respiratory-sensor>
+  walking_hr: <walking-hr-sensor>
+  load:                                   # counters, never bands — see below
+    steps: <steps-sensor>
+    exercise: <exercise-minutes-sensor>
+    active: <active-energy-sensor>
+    distance: <distance-sensor>
+    flights: <flights-sensor>
+    stand: <stand-hours-sensor>
+    stand_goal: 12
+  fitness:
+    ftp: <ftp-sensor>
+    wkg: <power-to-weight-sensor>
+    weight: <weight-sensor>               # kg in, lb out
+    vo2: <vo2-max-sensor>
+  ride: <last-activity-sensor>            # summary lives in its ATTRIBUTES
+  walking:
+    speed: <walking-speed-sensor>
+    step_len: <step-length-sensor>
+    support: <double-support-sensor>
+    asymmetry: <asymmetry-sensor>
+  hearing: <audio-exposure-sensor>
+  effort: <physical-effort-sensor>
+  hearing_limit: 80                       # dB, the published exposure ceiling
+  bands:                                  # {} until you have your own history
+    asleep:     { lo: 6.8, hi: 8.2 }
+    hrv:        { lo: 26,  hi: 38 }
+    resting_hr: { lo: 55,  hi: 63 }
+```
+
+Collapsed the section is three meters — slept, HRV, resting — plus one sentence.
+**The chip carries today's load**, because the chip's job is the half of the
+loop the body is not showing; it must never carry the sentence's conclusion, and
+it must never claim a roll-up like *all in band*, because sleep is routinely out
+while the others are in and the chip would then contradict a dot directly below
+it. Expanded gives the night, the overnight shape, recovery, load, fitness, the
+last ride, walking mechanics and hearing.
+
+A band with no explicit domain gets one — the band widened by its own width on
+each side, so it sits in the middle third of the rail. Pass `dlo` / `dhi` to
+override.
+
+### What the data will not support
+
+Written against Apple Health via Health Auto Export, and worth knowing before
+pointing this at anything:
+
+- **There may be no bedtime and no wake time.** Sleep arrives as totals in a
+  single write carrying no times, so the section never prints a sleep window.
+  An invented one disagreed with its own reading by two hours.
+- **The overnight trace may have no time axis.** If the watch uploads the night
+  in one burst at breakfast, every sample carries the same timestamp — order
+  survives, spacing does not. The trace is therefore plotted against sample
+  **index**, captioned as not being to scale in time, and drawn with no tick
+  labels rather than fabricated ones.
+- **There is no sleep efficiency.** Where *in bed* equals *total sleep* exactly,
+  efficiency is a constant fake 100%.
+- **A ride is a summary, not a series** — distance, duration, elevation and
+  training effect, with no per-second stream. So the ride gets counters, and
+  never a trace drawn between four numbers.
+
+### Today's load gets counters, not meters
+
+Until the day is over every load figure is low, and a dot near the bottom of a
+track reads as a deficit rather than as a morning. The load block states its
+numbers and claims nothing.
+
 ## `purdy-shell-card` — weather motion
 
 Condition-driven precipitation across the whole view. `weather_fx` is a **top-level** key, not a section: it paints over every section rather than living in one.

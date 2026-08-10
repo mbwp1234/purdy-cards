@@ -40,6 +40,11 @@ const PRESETS = {
   "phone-joel":   [PHONE, SHELL + "&open=joel"],
   "phone-climate":[PHONE, SHELL + "&open=clim"],
   "phone-crew":   [PHONE, SHELL + "&open=crew"],
+  /* The Body section against live Apple Health and Garmin data, before it is
+     deployed. Collapsed is three meters and a sentence; open is the eight
+     blocks behind the expand. */
+  "phone-health":      [PHONE, SHELL + "&patch=health"],
+  "phone-health-open": [PHONE, SHELL + "&patch=health&open=body"],
   /* The weather rail, both faces and both sources. `patch=` previews the
      section against LIVE data before it is deployed — the whole point of
      shooting rather than releasing to find out. */
