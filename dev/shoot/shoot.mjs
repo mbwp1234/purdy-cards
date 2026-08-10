@@ -53,6 +53,12 @@ const PRESETS = {
   "phone-rain-joel":[PHONE, SHELL + "&patch=weather-fx&open=joel"],
   lights:         [PHONE, SHELL + "&sheet=lights"],
   music:          [PHONE, SHELL + "&sheet=music"],
+  /* The two faces of the media sheet. Both are worth a slot because they are
+     the TALLEST things the card puts on screen, and the sheet's height is the
+     one measurement that has now been got wrong twice. media= forces the face:
+     Watch is unphotographable whenever the televisions are off. */
+  "media-listen": [PHONE, SHELL + "&sheet=media&media=listen"],
+  "media-watch":  [PHONE, SHELL + "&sheet=media&media=watch"],
   alerts:         [PHONE, SHELL + "&sheet=alerts"],
   "sys-overview": [PHONE, SHELL + "&mode=systems&page=overview"],
   "sys-docker":   [PHONE, SHELL + "&mode=systems&page=docker"],
@@ -124,10 +130,29 @@ async function main() {
   await cdp("Runtime.enable", {}, sessionId);
 
   const results = [];
+  let warnedInsets = false;
   for (const [name, [w, h], query] of shots) {
     await cdp("Emulation.setDeviceMetricsOverride", {
       width: w, height: h, deviceScaleFactor: DPR, mobile: w < 700,
     }, sessionId);
+    /* The phone's safe-area insets, or the harness photographs a screen that
+     * does not exist. Every fixed layer on this card positions itself against
+     * env(safe-area-inset-*), and with those all zero the arithmetic comes out
+     * ~93px kinder than the real thing: the media sheet measured a 22px gap
+     * above its header here while sitting 12px OFF THE TOP of a real iPhone,
+     * with the status bar over what was left. A bug the harness is blind to is
+     * worse than one it merely renders badly, so the insets are emulated on
+     * every phone-sized shot. 59/34 is the notched iPhone; a desk shot gets
+     * none, which is also what a desktop reports.
+     * Chrome added this command relatively recently — an older build simply
+     * shoots without insets rather than failing the whole run. */
+    await cdp("Emulation.setSafeAreaInsetsOverride", {
+      insets: w < 700 ? { top: 59, left: 0, bottom: 34, right: 0 }
+                      : { top: 0, left: 0, bottom: 0, right: 0 },
+    }, sessionId).catch((e) => {
+      if (!warnedInsets) console.log("  (no safe-area emulation in this Chrome: " + e.message + ")");
+      warnedInsets = true;
+    });
     const url = `${BASE}/?${query}`;
     await cdp("Page.navigate", { url }, sessionId);
 

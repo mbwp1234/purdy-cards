@@ -1589,7 +1589,20 @@ check('_render calls _reserve, it is not merely defined',
    .ps-sheet is still fixed and still has to clear a dock that grows by the
    now-playing bar, so the measurement still has exactly one consumer. */
 check('the sheet still clears the measured dock',
-  /bottom: calc\(var\(--ps-dockh\)/.test(shs));
+  /--ps-sheetbot: calc\(var\(--ps-dockh\)/.test(shs) && /bottom: var\(--ps-sheetbot\)/.test(shs));
+/* A vh cap measures the whole viewport and knows nothing about the offset the
+   sheet is sitting on, so 80vh over a 181px bottom hung the header 12px above
+   the top of the screen. Every sheet cap must also be bounded by the room that
+   is actually left, and no cap may be a bare vh. */
+check('every sheet cap is bounded by the room left above the dock',
+  [...shs.matchAll(/\.ps-sheet[^{]*\{[^}]*?max-height: ([^;]+);/g)]
+    .every((m) => /min\(\s*\d+vh\s*,\s*calc\(var\(--ps-sheettop\)/.test(m[1])));
+check('the room left above the dock discounts the status bar',
+  /--ps-sheettop: calc\(100dvh - var\(--ps-sheetbot\) - env\(safe-area-inset-top/.test(shs));
+/* vh is the LARGE viewport, so on a phone it is taller than the scrollport and
+   the surplus is dead height you can scroll into past the end of the column. */
+check('the host reserves the DYNAMIC viewport, not the large one',
+  /min-height: 100dvh;/.test(shs) && !/min-height: 100vh;/.test(shs));
 check('host padding no longer double-reserves the dock height',
   !/padding: 6px 6px calc\(var\(--ps-dockh\)/.test(shs));
 check('the reserved height survives a DOM with no layout', (() => {

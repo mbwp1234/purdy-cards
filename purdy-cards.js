@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.57.1";
+const PC_VERSION = "1.57.2";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -13452,7 +13452,14 @@ const PS_STYLES = `
         color: var(--ps-text);
         font-family: var(--paper-font-body1_-_font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
         -webkit-font-smoothing: antialiased;
-        min-height: 100vh;
+        /* dvh, not vh. vh is the LARGE viewport — the height the window would
+           have with every piece of browser chrome retracted — so on a phone it
+           is reliably TALLER than the scrollport the card is actually sitting
+           in. That surplus is pure dead height at the end of the page: the
+           column stops, the dock rests, and you can still scroll. dvh is the
+           viewport as it currently is, which is the one question being asked
+           here (can the sticky dock reach the bottom of the screen). */
+        min-height: 100dvh;
       }
       * { box-sizing: border-box; }
       button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; text-align: inherit; }
@@ -14217,11 +14224,21 @@ const PS_STYLES = `
         position: fixed; left: 12px; right: 12px; z-index: 9;
         /* Clears the dock AND the now-playing bar. A fixed 96px put the bottom
            of every sheet behind the mini bar whenever music was playing. */
-        bottom: calc(var(--ps-dockh) + 22px + env(safe-area-inset-bottom, 0px));
+        --ps-sheetbot: calc(var(--ps-dockh) + 22px + env(safe-area-inset-bottom, 0px));
+        bottom: var(--ps-sheetbot);
+        /* The room actually left above the sheet: the viewport, less what the
+           dock takes off the bottom, less the status bar, less the gap that
+           keeps the greeting visible behind it. A vh cap alone measures the
+           WHOLE viewport and knows nothing about the offset it is sitting on,
+           so 80vh + a 181px bottom on an 844pt phone put the sheet's header
+           12px ABOVE the top of the screen and the status bar ate the rest.
+           Whichever of the two is smaller wins. */
+        --ps-sheettop: calc(100dvh - var(--ps-sheetbot) - env(safe-area-inset-top, 0px));
         background: rgba(20,23,32,.96); border: 1px solid var(--pc-edge); border-radius: var(--pc-r-xl);
         padding: 13px 15px; box-shadow: 0 24px 60px rgba(0,0,0,.6);
         backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-        max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
+        max-height: min(60vh, calc(var(--ps-sheettop) - 72px));
+        overflow-y: auto; overscroll-behavior: contain;
       }
       /* 74vh left the Watch face's transport row hanging 33px past the bottom
          edge — the play button, which is the thing you open the remote for.
@@ -14229,8 +14246,9 @@ const PS_STYLES = `
          sheet slides OVER the column and there was ~120px of unused ground
          above it, so this costs nothing that was being looked at. It stays
          short of full-screen on purpose; seeing the greeting and the time
-         behind it is what makes a sheet read as a sheet. */
-      .ps-sheet.tall { max-height: 80vh; }
+         behind it is what makes a sheet read as a sheet — which is what the
+         24px is buying, and it is measured from below the status bar. */
+      .ps-sheet.tall { max-height: min(80vh, calc(var(--ps-sheettop) - 24px)); }
       .ps-sheeth { display: flex; align-items: center; margin-bottom: 6px; }
       .ps-sheeth .ps-lbl { flex: 1; }
       .ps-x { width: 28px; height: 28px; border-radius: 50%; background: var(--pc-fill-2);
