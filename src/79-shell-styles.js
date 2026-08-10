@@ -823,7 +823,14 @@ const PS_STYLES = `
         backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
         max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
       }
-      .ps-sheet.tall { max-height: 74vh; }
+      /* 74vh left the Watch face's transport row hanging 33px past the bottom
+         edge — the play button, which is the thing you open the remote for.
+         The height was the right lever rather than shaving the controls: a
+         sheet slides OVER the column and there was ~120px of unused ground
+         above it, so this costs nothing that was being looked at. It stays
+         short of full-screen on purpose; seeing the greeting and the time
+         behind it is what makes a sheet read as a sheet. */
+      .ps-sheet.tall { max-height: 80vh; }
       .ps-sheeth { display: flex; align-items: center; margin-bottom: 6px; }
       .ps-sheeth .ps-lbl { flex: 1; }
       .ps-x { width: 28px; height: 28px; border-radius: 50%; background: var(--pc-fill-2);
