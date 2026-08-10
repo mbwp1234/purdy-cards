@@ -63,6 +63,73 @@ function psCrewMiles(areaValue, unit, widthM) {
   return (m2 / widthM) / 1609.344;
 }
 
+/* THE WATER IS THE JOB, and it comes off the vacuum's own ATTRIBUTES.
+ *
+ * Dreame publishes the water picture twice: as a spray of enum sensors
+ * (sensor.jeeves_low_water_warning = "no_warning") and as plain booleans on the
+ * vacuum entity itself (low_water: false). The attributes win. They are one
+ * read instead of six, they cannot drift out of sync with each other, and they
+ * are already typed — parsing "no_warning" back into a boolean is inventing a
+ * vocabulary the integration did not promise to keep. Entity overrides stay
+ * available for anything an install names differently.
+ *
+ * WHAT IT DOES NOT PUBLISH IS THE ONE YOU WANT. There is no clean-water LEVEL
+ * and no dirty-water LEVEL anywhere in the 233 entities — both tanks report
+ * present/absent only, and `low_water` is a single boolean that flips near
+ * empty. So the dirty tank is a PROXY: every self-wash cycle is counted and
+ * divided by a hand-set capacity. That is an estimate, it is drawn with a "≈"
+ * and the count it is built from is shown beside it, on the same argument as
+ * the derived mileage above — a figure with no sensor behind it must never
+ * pass for a measurement. Clean water is a STATE, not a bar, because a boolean
+ * rendered as a meter is a precision claim nothing supports. */
+function psCrewWater(hass, v) {
+  const st = (hass && hass.states[v.entity]) || null;
+  const a = (st && st.attributes) || {};
+  /* An attribute that is simply absent is not `false`. A missing mop pad and a
+     mop pad the firmware declines to report are different facts. */
+  const flag = (key) => (key in a ? !!a[key] : null);
+  const words = (key) => (a[key] == null ? null : psCrewWords(String(a[key])));
+
+  const washes = psCrewNum(hass, v.wash_counter);
+  const cap = psCrewNum(hass, v.wash_capacity);
+
+  return {
+    dirty: psCrewNum(hass, v.dirty_water),
+    washes,
+    cap,
+    emptiedAt: v.emptied_button ? pcState(hass, v.emptied_button) : null,
+    /* The override is an entity whose "on" means low, matching the boolean. */
+    low: v.clean_water_low ? pcState(hass, v.clean_water_low) === "on" : flag("low_water"),
+    cleanTank: words("clean_water_tank_status"),
+    dirtyTank: words("dirty_water_tank_status"),
+    mopPad: flag("mop_pad"),
+    washing: flag("washing"),
+    drying: flag("drying"),
+    dryPct: typeof a.drying_progress === "number" ? a.drying_progress : null,
+    base: v.base_status ? psCrewWords(pcState(hass, v.base_status)) : null,
+  };
+}
+
+/* One sentence for the whole mop/base situation, in the order you would ask:
+   is it doing something, is the pad even on, otherwise it is ready. */
+function psCrewMopText(w) {
+  if (w.washing) return "Washing";
+  if (w.drying) return w.dryPct ? `Drying ${Math.round(w.dryPct)}%` : "Drying";
+  if (w.mopPad === false) return "Removed";
+  if (w.base && w.base !== "Idle") return w.base;
+  if (w.mopPad === true) return "Ready";
+  return "—";
+}
+
+/* Clean water is three states, not two. "Tank out" is not "low" — one is a
+   thing you fix by filling, the other by putting the tank back. */
+function psCrewCleanText(w) {
+  if (w.cleanTank && /remov|absent|not/i.test(w.cleanTank)) return { text: "Tank out", sev: "warn" };
+  if (w.low === true) return { text: "Low", sev: "warn" };
+  if (w.low === false) return { text: "OK", sev: "" };
+  return { text: "—", sev: "" };
+}
+
 Object.assign(PurdyShellCard.prototype, {
 
   /* Two CONCENTRIC horseshoes, not two segments of one.
@@ -115,33 +182,44 @@ Object.assign(PurdyShellCard.prototype, {
     const st = pcState(h, v.entity);
     const running = st === "cleaning" || st === "returning";
     const batt = psCrewNum(h, v.battery);
-    const water = psCrewNum(h, v.dirty_water);
     const filter = psCrewNum(h, v.filter);
+    const w = psCrewWater(h, v);
 
-    /* While he is running the charge is not the interesting number — progress
-       is. The ring keeps its shape and changes what it means, and the caption
-       changes with it so the two can never disagree. */
+    /* THE DIRTY TANK IS THE HERO, not the charge. The charge is the one number
+       on this card that never needs a human: he docks himself and he is at 100%
+       whenever you look. The tank is the opposite — it is the reason you walk
+       to the machine, and it was drawn as a thin unlabelled inner arc while the
+       battery took the numeral. Swapped.
+
+       The inner arc keeps the two-ring shape and carries whatever the charge is
+       doing, unlabelled: the job while he is running, the battery while he is
+       not. Demoted to a picture, which is all it was ever worth here. */
     const prog = running ? psCrewNum(h, v.progress) : null;
-    const outerVal = prog != null ? prog : batt;
-    const outerLbl = prog != null ? "job" : "battery";
+    const inner = prog != null ? prog : batt;
+    const dirtyAt = v.water_above == null ? 80 : v.water_above;
+    const dirtyCol = w.dirty == null ? "var(--ps-warn)"
+      : w.dirty >= dirtyAt ? "var(--ps-bad)"
+        : w.dirty >= dirtyAt * 0.6 ? "var(--ps-warn)" : "var(--ps-cool)";
 
-    const m = v.mileage || {};
-    const areaSt = m.area && h.states[m.area];
-    const miles = psCrewMiles(psCrewNum(h, m.area),
-      areaSt && areaSt.attributes.unit_of_measurement, m.path_width_m || 0.3);
-    const runs = psCrewNum(h, m.runs);
+    const clean = psCrewCleanText(w);
+    /* The "≈" belongs on the READING, not in a second row restating it. It is
+       earned only when the level is the counted proxy: an install whose vacuum
+       genuinely publishes a tank level would be told a measurement is a guess,
+       which is the same lie as the reverse. wash_counter is what says so. */
+    const prox = v.wash_counter ? "≈" : "";
 
     return `<div class="ps-cwcard ${open ? "open" : ""}">
         <button class="ps-cwface" type="button" data-crewzone="vac">
           ${this._crewCardHead(v.name || "Jeeves", open, running)}
           <div class="ps-cwring">
             ${this._crewRing(92,
-              { frac: outerVal == null ? null : outerVal / 100, col: "var(--ps-cool)" },
-              { frac: water == null ? null : water / 100, col: "var(--ps-warn)" })}
-            <div class="ps-cwrv"><b>${psCrewPct(outerVal)}</b><span>${outerLbl}</span></div>
+              { frac: w.dirty == null ? null : w.dirty / 100, col: dirtyCol },
+              { frac: inner == null ? null : inner / 100, col: "var(--ps-cool)" })}
+            <div class="ps-cwrv"><b>${w.dirty == null ? "—" : `${prox}${Math.round(w.dirty)}%`}</b><span>dirty tank</span></div>
           </div>
-          ${this._crewLine("Distance", `<b>${miles == null ? "—" : `≈${miles.toFixed(1)} mi`}</b>`)}
-          ${this._crewLine("Runs", `<b>${runs == null ? "—" : Math.round(runs).toLocaleString()}</b>`)}
+          ${this._crewLine("Clean water",
+            `<b class="${clean.sev}">${psEsc(clean.text)}</b>`)}
+          ${this._crewLine("Mop pad", `<b>${psEsc(psCrewMopText(w))}</b>`)}
           ${this._crewLine("Filter", `<b class="${filter != null && filter <= 20 ? "warn" : ""}">${psCrewPct(filter)}</b>`)}
         </button>
       </div>`;
@@ -286,8 +364,47 @@ Object.assign(PurdyShellCard.prototype, {
               `data-crewact="input_button.press" data-target="${psEsc(v.emptied_button)}"`)
             : ""}
         </div>
+        ${this._crewWaterBlock(v)}
         ${wear.length ? `<div class="ps-cwnote">${psEsc(wear.join(" · "))}</div>` : ""}
       </div>`;
+  },
+
+  /* The WORKING behind the estimate, and the lifetime figures. Not the water
+     situation over again: the face directly above this already carries the
+     level, the clean-water state and the pad, and a panel that repeats them is
+     the same duplication as a chip restating the line beside it — caught here
+     by a screenshot showing "Clean water OK" twice, four centimetres apart.
+     What the face cannot show is how the estimate was arrived at, and that is
+     the only water row left. Lifetime rides along because it is looked up
+     rather than monitored, which is what the expand is for. */
+  _crewWaterBlock(v) {
+    const h = this._hass;
+    const w = psCrewWater(h, v);
+
+    const m = v.mileage || {};
+    const areaSt = m.area && h.states[m.area];
+    const miles = psCrewMiles(psCrewNum(h, m.area),
+      areaSt && areaSt.attributes.unit_of_measurement, m.path_width_m || 0.3);
+    const runs = psCrewNum(h, m.runs);
+
+    /* "6 of 20 washes since 6 Aug" is the working the estimate is built from,
+       which is what makes the ≈ honest rather than decorative — and it is also
+       the number to correct the capacity against once a tank has been filled
+       and emptied for real. */
+    const since = [
+      w.washes == null ? null
+        : w.cap == null ? `${Math.round(w.washes)} washes`
+          : `${Math.round(w.washes)} of ${Math.round(w.cap)} washes`,
+      psCrewWhen(w.emptiedAt) ? `since ${psCrewWhen(w.emptiedAt)}` : null,
+    ].filter(Boolean).join(" · ");
+
+    return `${since ? `<div class="ps-cwsub">Water</div>
+      ${this._crewLine("Since emptied", `<b>${psEsc(since)}</b>`)}
+      <div class="ps-cwfine">Both tanks report present or absent with no level,
+        so the dirty tank is counted from self-wash cycles, not measured.</div>` : ""}
+      <div class="ps-cwsub">Lifetime</div>
+      ${this._crewLine("Distance", `<b>${miles == null ? "—" : `≈${miles.toFixed(1)} mi`}</b>`)}
+      ${this._crewLine("Runs", `<b>${runs == null ? "—" : Math.round(runs).toLocaleString()}</b>`)}`;
   },
 
   /* ---- litter panel: trends ---- */
@@ -481,6 +598,26 @@ Object.assign(PurdyShellCard.prototype, {
     if (pcState(h, l.entity) === "error") {
       out.push({ icon: "mdi:alert-circle-outline", sev: "bad",
         text: `${l.name || "Litter box"} needs a reset`, sub: "Stopped with an error" });
+    }
+
+    /* THE WATER EARNS A ROW, on the rule the disk1 fault failed: an alert a
+       human action clears is worth raising, one no action clears is noise. Both
+       of these are cleared by walking to the machine — fill one tank, empty the
+       other — and both are invisible until then, because the crew section only
+       renders what needs doing. The dirty tank is an estimate, so it says so
+       rather than quoting a percentage as if it were measured. */
+    const water = psCrewWater(h, v);
+    const wAbove = v.water_above == null ? 80 : v.water_above;
+    if (water.dirty != null && water.dirty >= wAbove) {
+      out.push({ icon: "mdi:cup-water", sev: water.dirty >= 100 ? "bad" : "warn",
+        text: `Empty ${v.name || "the vacuum"}'s dirty water`,
+        sub: `≈${Math.round(water.dirty)}% full${
+          water.washes == null ? "" : ` — ${Math.round(water.washes)} washes`}` });
+    }
+    if (water.low === true) {
+      out.push({ icon: "mdi:water-alert-outline", sev: "warn",
+        text: `${v.name || "The vacuum"} is low on clean water`,
+        sub: "Refill the clean tank" });
     }
 
     const drawer = pcNum(h, l.waste_drawer);

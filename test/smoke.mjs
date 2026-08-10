@@ -2949,6 +2949,8 @@ const crewCfg = {
     current_room: 'sensor.room', cleaning_mode: 'select.mode', suction: 'select.suck',
     room_select: 'input_select.room', room_script: 'script.clean_room',
     emptied_button: 'input_button.emptied', map_sheet: 'vacuum',
+    wash_counter: 'counter.washes', wash_capacity: 'input_number.cap',
+    base_status: 'sensor.base', water_above: 80,
     wear: [{ label: 'Filter', entity: 'sensor.filt' }, { label: 'Main brush', entity: 'sensor.brush' }],
     mileage: { area: 'sensor.area', runs: 'sensor.runs', path_width_m: 0.3 } },
   litter: { entity: 'vacuum.l', name: 'Litter box', litter_level: 'sensor.lit',
@@ -2958,9 +2960,19 @@ const crewCfg = {
   washer: { entity: 'input_select.washer', name: 'Washer', start_time: 'input_datetime.ws' },
 };
 const crewStates = {
-  'vacuum.j': { state: 'docked', attributes: {} },
+  /* The water facts ride the vacuum's own attributes, as Dreame publishes them
+     — booleans and Title Case strings, not the enum sensors' slugs. */
+  'vacuum.j': { state: 'docked', attributes: {
+    low_water: false, clean_water_tank_status: 'Installed',
+    dirty_water_tank_status: 'Installed', mop_pad: true,
+    washing: false, drying: false, drying_progress: 0 } },
+  'counter.washes': { state: '6', attributes: {} },
+  'input_number.cap': { state: '20', attributes: {} },
+  'sensor.base': { state: 'idle', attributes: {} },
+  'input_button.emptied': { state: '2026-08-06T19:22:31.926292+00:00', attributes: {} },
   'sensor.batt': { state: '100', attributes: { unit_of_measurement: '%' } },
-  'sensor.dirty': { state: '10', attributes: { unit_of_measurement: '%' } },
+  /* 6 wash cycles against a 20-cycle capacity: the proxy and its working agree. */
+  'sensor.dirty': { state: '30', attributes: { unit_of_measurement: '%' } },
   'sensor.filt': { state: '14', attributes: { unit_of_measurement: '%' } },
   'sensor.brush': { state: '57', attributes: { unit_of_measurement: '%' } },
   'sensor.prog': { state: 'unavailable', attributes: {} },
@@ -3083,6 +3095,45 @@ check('a full waste drawer raises a row and a very full one is critical', (() =>
   return /ps-cwneed warn/.test(at88) && /88%/.test(at88) && /ps-cwneed bad/.test(at97);
 })());
 
+/* THE WATER EARNS A ROW, on the rule the disk1 fault failed: an alert a human
+   action clears is worth raising; one no action clears is noise. Both of these
+   are cleared by walking to the machine. */
+check('a full dirty tank raises a row, and says it is an estimate', (() => {
+  const h = mkCrew({ 'sensor.dirty': { state: '85', attributes: {} } })._secCrew(crewAlertCfg);
+  return /ps-cwneed warn/.test(h) && /Empty Jeeves/.test(h) && /dirty water/.test(h)
+    && /≈85% full/.test(h) && /6 washes/.test(h);
+})());
+check('an overflowing dirty tank is critical', (() =>
+  /ps-cwneed bad/.test(mkCrew({ 'sensor.dirty': { state: '100', attributes: {} } })
+    ._secCrew(crewAlertCfg))));
+check('low clean water raises its own row — refilling is not emptying', (() => {
+  const h = mkCrew({ 'vacuum.j': { state: 'docked', attributes: {
+    ...crewStates['vacuum.j'].attributes, low_water: true } } })._secCrew(crewAlertCfg);
+  return /ps-cwneed warn/.test(h) && /low on clean water/.test(h) && /Refill/.test(h);
+})());
+
+/* ZERO IS NOT MISSING, and neither is FALSE. A firmware that declines to report
+   the pad is not a pad that has been taken off, and a vacuum with no water
+   attributes at all must not read "OK" — that is the confident-zero bug wearing
+   a boolean. */
+check('absent water attributes read as em dashes, never as OK', (() => {
+  const h = mkCrew({ 'vacuum.j': { state: 'docked', attributes: {} } })._secCrew(crewCfg);
+  return /Clean water<\/em><b class="">—/.test(h) && /Mop pad<\/em><b>—/.test(h);
+})());
+check('a removed clean tank is not the same fault as a low one', (() => {
+  const h = mkCrew({ 'vacuum.j': { state: 'docked', attributes: {
+    ...crewStates['vacuum.j'].attributes, clean_water_tank_status: 'Removed' } } })
+    ._secCrew(crewCfg);
+  return /Tank out/.test(h) && !/>Low</.test(h);
+})());
+check('a mop pad being washed or dried says which', (() => {
+  const wash = mkCrew({ 'vacuum.j': { state: 'docked', attributes: {
+    ...crewStates['vacuum.j'].attributes, washing: true } } })._secCrew(crewCfg);
+  const dry = mkCrew({ 'vacuum.j': { state: 'docked', attributes: {
+    ...crewStates['vacuum.j'].attributes, drying: true, drying_progress: 40 } } })._secCrew(crewCfg);
+  return /Washing/.test(wash) && /Drying 40%/.test(dry);
+})());
+
 check('an errored robot raises a row', (() => {
   const h = mkCrew({ 'vacuum.j': { state: 'error', attributes: {} } })._secCrew(crewAlertCfg);
   return /ps-cwneed bad/.test(h) && /Jeeves needs help/.test(h);
@@ -3124,7 +3175,8 @@ check('setConfig accepts a crew section', (() => {
 check('crew draws a card for each robot',
   /Jeeves/.test(crewHtml) && /Litter box/.test(crewHtml));
 check('crew names every number it prints — no bare percentage',
-  /Distance/.test(crewHtml) && /Filter/.test(crewHtml) && /Scoops/.test(crewHtml));
+  /Clean water/.test(crewHtml) && /Filter/.test(crewHtml) && /Scoops/.test(crewHtml)
+  && /dirty tank/.test(crewHtml));
 
 /* Scoped to the RING, not the first svg in the section — that one is the
    header chevron, and reading it made this pass for the wrong reason. */
@@ -3138,14 +3190,49 @@ check('crew rings are CONCENTRIC, not two segments of one track', (() => {
 /* The vacuum's gauge is battery + water; the collapsed rows are distance,
    runs and filter. Distance is DERIVED from area — Dreame publishes no
    distance sensor at all — so it must be marked approximate. */
-check('the vacuum gauge reads battery when docked', /battery/.test(crewHtml));
-check('distance is shown in miles', /mi</.test(crewHtml));
-check('a derived distance is marked approximate', /≈/.test(crewHtml));
+/* THE TANK IS THE HERO, NOT THE CHARGE. The charge never needs a human — he
+   docks himself and reads 100% whenever you look — while the tank is the reason
+   you walk to the machine. It had the numeral and the tank had a thin unlabelled
+   arc; they are swapped, and the words "battery" and "job" leave the face with
+   it, because the inner arc is now a picture rather than a labelled reading. */
+check('the vacuum gauge leads with the dirty tank, not the charge',
+  /dirty tank/.test(crewHtml) && !/>battery</.test(crewHtml) && !/>job</.test(crewHtml));
+check('the collapsed face answers do-I-need-to-go-to-the-machine',
+  /Clean water/.test(crewHtml) && /Mop pad/.test(crewHtml) && /Filter/.test(crewHtml));
+/* The estimate is marked on the READING, and only when the level IS the counted
+   proxy — an install whose vacuum publishes a real level must not be told its
+   measurement is a guess. */
+check('the ring numeral carries the approximation, not a second row',
+  /<b>≈30%<\/b>/.test(crewHtml));
+check('a vacuum that publishes a real level gets no tilde', (() => {
+  const cfg = { ...crewCfg, vacuum: { ...crewCfg.vacuum, wash_counter: undefined } };
+  const s = new SH(); s.setConfig({ sections: [cfg] }); s._hass = mkCrew()._hass;
+  return /<b>30%<\/b>/.test(s._secCrew(cfg));
+})());
+/* The panel must not restate the face four centimetres below it. */
+check('the panel carries the working, not the water situation over again', (() => {
+  const panel = crewVac.slice(crewVac.indexOf('ps-cwpanel'));
+  return /6 of 20 washes/.test(panel) && !/Clean water/.test(panel)
+    && !/Wash base/.test(panel);
+})());
+
+/* The lifetime figures moved behind the expand — they are looked up, not
+   monitored — but they are not gone, and distance is still marked derived. */
+check('distance is shown in miles', /mi</.test(crewVac));
+check('a derived distance is marked approximate', /≈/.test(crewVac));
 check('distance converts ft² through the path width', (() => {
-  const m = /≈([\d.]+) mi/.exec(crewHtml);
+  const m = /≈([\d.]+) mi/.exec(crewVac);
   return m && Math.abs(parseFloat(m[1]) - 11.5) < 0.6;   // 59,869 ft² / 0.3 m
 })());
-check('runs are still shown', /Runs/.test(crewHtml) && /219/.test(crewHtml));
+check('runs are still shown', /Runs/.test(crewVac) && /219/.test(crewVac));
+
+/* The dirty level has no sensor behind it — Dreame reports both tanks as
+   present/absent only — so the panel shows the working and says so. A figure
+   with no measurement behind it must never pass for one. */
+check('the dirty tank is marked as an estimate and shows its working',
+  /≈30%/.test(crewVac) && /6 of 20 washes/.test(crewVac) && /Aug/.test(crewVac));
+check('the panel says why the tank level is counted rather than measured',
+  /ps-cwfine/.test(crewVac) && /self-wash cycles, not measured/.test(crewVac));
 
 /* The litter card carries scoops, visits and weight — and scoops is the
    integration's own total_cycles, not a counter we maintain. */
@@ -3165,7 +3252,8 @@ check('a missing reading draws the track with no fill arc', (() => {
   return !/var\(--ps-cool\)/.test(svg) && !/var\(--ps-warn\)/.test(svg) && radii.length === 2;
 })());
 check('a missing area gives no distance rather than zero miles',
-  /—/.test(mkCrew({ 'sensor.area': undefined })._secCrew(crewCfg)));
+  /Distance<\/em><b>—/.test(
+    mkCrew({ 'sensor.area': undefined }, { vac: true })._secCrew(crewCfg)));
 
 /* TWO ZONES: each card toggles only itself, and neither panel is drawn until
    its own card is open. */
@@ -3225,13 +3313,26 @@ check('deep clean is gone entirely',
 /* While running the ring means progress, and the caption changes with it. */
 const crewBusy = mkCrew({ 'vacuum.j': { state: 'cleaning', attributes: {} },
   'sensor.prog': { state: '42', attributes: {} } }, { vac: true })._secCrew(crewCfg);
-check('a running vacuum shows job progress rather than battery',
-  /42%/.test(crewBusy) && />job</.test(crewBusy) && !/>battery</.test(crewBusy));
+/* The charge lost the numeral but not its arc: the inner ring still carries
+   the job while he is running and the battery while he is not. Read off the
+   arc itself, because there is no longer a word on the face to check — and an
+   arc that stopped tracking progress would otherwise fail silently. */
+const crewInnerArc = (html) => {
+  const svg = crewRingSvg(html);
+  /* Two circles per ring, track then fill; the inner ring is the smaller r. */
+  const circles = [...svg.matchAll(/ r="([\d.]+)"[\s\S]*?stroke-dasharray="([\d.]+) /g)]
+    .map((m) => ({ r: parseFloat(m[1]), len: parseFloat(m[2]) }));
+  const rMin = Math.min(...circles.map((c) => c.r));
+  const inner = circles.filter((c) => c.r === rMin);
+  return inner.length > 1 ? inner[1].len / inner[0].len : 0;   // fill / track
+};
+check('a running vacuum puts the job on the inner arc, not the battery',
+  Math.abs(crewInnerArc(crewBusy) - 0.42) < 0.02);
 check('the hero button pauses a running robot', /Pause/.test(crewBusy));
 check('a slug cleaning mode is rendered as words',
   /Mopping/.test(crewBusy) && !/>mopping</.test(crewBusy));
 check('an unavailable progress sensor falls back to battery, not to zero',
-  /100%/.test(crewHtml) && /battery/.test(crewHtml));
+  Math.abs(crewInnerArc(crewHtml) - 1) < 0.02);
 
 /* The litter panel is trends. A chart with no history is an empty box, never
    a flat line — the same rule the room sparklines follow. */
