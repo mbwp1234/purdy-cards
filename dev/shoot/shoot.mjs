@@ -38,6 +38,13 @@ const PRESETS = {
    * section, so it is reached with mode= rather than open=. */
   phone:          [PHONE, SHELL],
   "phone-joel":   [PHONE, SHELL + "&open=joel"],
+  /* Correcting a session. The list with its long-press targets, then the sheet
+     itself — which is opened by a press-and-hold, the one entry point a URL
+     cannot express, so `napedit=` picks a session out of the card's own
+     derived list. */
+  "phone-napedit":      [PHONE, SHELL + "&patch=napedit&open=joel"],
+  "phone-napedit-sheet":[PHONE, SHELL + "&patch=napedit&open=joel&napedit=last"],
+  "phone-napedit-night":[PHONE, SHELL + "&patch=napedit&open=joel&napedit=night"],
   "phone-climate":[PHONE, SHELL + "&open=clim"],
   "phone-crew":   [PHONE, SHELL + "&open=crew"],
   /* The Body section against live Apple Health and Garmin data. Collapsed is

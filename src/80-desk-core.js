@@ -77,6 +77,11 @@ const PD_BORROW = [
   "_collectWatched", "_historyEntities", "_startHistory", "_fetchHistory", "_fetchEvents",
   /* nursery — the derivation, the fetch and the single clock the fixtures pin */
   "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
+  /* The corrections store. `_nurserySessions` applies it, so leaving these
+     behind would have thrown out of the borrowed method the moment a nursery
+     panel rendered — and more quietly, the desk would have gone on showing the
+     derived figure while the phone showed the corrected one. */
+  "_napEditStore", "_napEdits",
   /* weather — the statistics fetch, the provider-shape detection and the rail's
      scale. `_wxCapsule` is here too, taking a class prefix: the three states it
      draws (a stub for a half-published day, a hatch for an absent one, a

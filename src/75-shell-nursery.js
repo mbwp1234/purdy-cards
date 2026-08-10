@@ -297,6 +297,13 @@ function psNurserySessions(hatch, door, opts) {
       day: psDayKey(anchor),
       interventions: events.length,
       events,
+      /* Every door open inside the session that survived the chatter filter,
+         put-down trips included. `events` is the card's answer to "how many
+         times did someone have to go in"; this is the raw evidence behind it,
+         and the correction sheet draws it — which of these trips was the last
+         of the put-down is exactly the judgement a person is being asked to
+         make, so it must not be filtered by the guess being corrected. */
+      doorAt: inside.map((op) => op.from),
       /* Three different quantities, kept apart because they answer different
          questions and only one of them is "how long did he sleep":
            minutes       the whole Hatch span — time in the sleep environment
@@ -308,6 +315,11 @@ function psNurserySessions(hatch, door, opts) {
          shows the lower bound and names the settling beside it rather than
          quietly folding an ambiguous quarter of an hour into "slept". */
       settledAt,
+      /* When he woke. Derived, this is always the end of the Hatch span — the
+         sound machine stopping IS the wake. It is a named field rather than an
+         implicit `to` because a human correction can move it in without also
+         claiming the Hatch stopped earlier than it did. */
+      wokeAt: s.to,
       settleMinutes: Math.max(0, Math.round((settledAt - s.from) / 60000)),
       asleepMinutes: Math.max(0, Math.round((s.to - settledAt) / 60000)),
       hadExit,
@@ -325,6 +337,109 @@ function psNurserySessions(hatch, door, opts) {
       })(),
     };
   });
+}
+
+/* ---------------------------------------------------------------------------
+ * Human corrections.
+ *
+ * The derivation is good and it is not always right. On 2026-08-10 the 8:52
+ * nap reported 31 minutes asleep; he slept eleven. The Hatch ran 08:52–09:53
+ * and the room was visited four times, the last at 09:42 — but the nap's
+ * `settle_max_min` is 30 minutes, so the chain stopped at the third trip and
+ * the fourth was filed as an intervention DURING sleep rather than as the end
+ * of the put-down. Raising the cap would have fixed that morning and swallowed
+ * the first fifty minutes of a genuinely long nap on another one, which this
+ * file already records as the worse error. Some put-downs simply are not
+ * decidable from two contact sensors, and the person who was in the room knows.
+ *
+ * So: an override, not a threshold change. It records the sleep WINDOW — when
+ * he actually fell asleep and when he woke — rather than a corrected number of
+ * minutes, because a typed duration would leave the nap's start time, its block
+ * on the rail and its own length disagreeing with each other.
+ *
+ * Stored as `start~from~to` per entry, `start~d` for a session that never
+ * happened: `start` is epoch MINUTES (eight digits, not thirteen) and the two
+ * others are offsets in minutes from it, because the store is an input_text and
+ * that helper truncates at 255 characters. The oldest entries fall off rather
+ * than the write failing, exactly as the saved-playlist store does, and entries
+ * older than the fetch window are dropped on write — an override for a session
+ * the recorder no longer holds can never match anything again.
+ *
+ * Matched on start time within a tolerance, because the derivation's own merge
+ * step can shift a session's start by a minute or two when a Hatch dropout
+ * lands differently on the next fetch. An exact key would orphan the edit and
+ * silently restore the wrong number. */
+function psParseNapEdits(raw) {
+  if (!raw || raw === "unknown" || raw === "unavailable") return [];
+  return String(raw).split("|").map((chunk) => {
+    const p = chunk.split("~");
+    const start = parseInt(p[0], 10);
+    if (!Number.isFinite(start) || start <= 0) return null;
+    if (p[1] === "d") return { start: start * 60000, del: true };
+    const from = parseInt(p[1], 10);
+    const to = parseInt(p[2], 10);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    return { start: start * 60000, from, to };
+  }).filter(Boolean);
+}
+
+function psWriteNapEdits(list) {
+  let parts = (list || []).slice()
+    .sort((a, b) => a.start - b.start)
+    .map((e) => (e.del
+      ? `${Math.round(e.start / 60000)}~d`
+      : `${Math.round(e.start / 60000)}~${Math.round(e.from)}~${Math.round(e.to)}`));
+  while (parts.length && parts.join("|").length > 255) parts.shift();
+  return parts.join("|");
+}
+
+/* Apply the overrides on top of the derivation.
+ *
+ * An edited session keeps its Hatch span — that is measured and is not in
+ * dispute — and gets a corrected `settledAt` / `wokeAt` pair. Everything
+ * downstream of those is recomputed rather than patched: settling, asleep
+ * minutes, the longest undisturbed stretch, and the intervention list, which
+ * drops the trips that now fall outside the sleep window. That last one is the
+ * point of the 2026-08-10 case: the 09:42 visit was the end of the put-down,
+ * so once the window says so it stops being a wake-up too.
+ *
+ * `edited` rides along on the session because a corrected number and a measured
+ * one must not render identically — the same rule as a zero and a missing
+ * reading. Every surface that shows an edited session marks it. */
+function psApplyNapEdits(sessions, edits, tolMin) {
+  const list = edits || [];
+  if (!list.length) return sessions || [];
+  const tol = (tolMin == null ? 3 : tolMin) * 60000;
+  const out = [];
+  (sessions || []).forEach((s) => {
+    let best = null;
+    list.forEach((e) => {
+      const d = Math.abs(e.start - s.from);
+      if (d <= tol && (!best || d < Math.abs(best.start - s.from))) best = e;
+    });
+    if (!best) { out.push(s); return; }
+    if (best.del) return;
+
+    const settledAt = Math.max(s.from, Math.min(s.to, s.from + best.from * 60000));
+    const wokeAt = Math.max(settledAt, Math.min(s.to, s.from + best.to * 60000));
+    const events = (s.events || []).filter((t) => t > settledAt && t < wokeAt);
+    const marks = [settledAt, ...events, wokeAt];
+    let best2 = 0;
+    for (let k = 1; k < marks.length; k += 1) best2 = Math.max(best2, marks[k] - marks[k - 1]);
+
+    out.push(Object.assign({}, s, {
+      settledAt,
+      wokeAt,
+      hadExit: true,
+      edited: true,
+      settleMinutes: Math.max(0, Math.round((settledAt - s.from) / 60000)),
+      asleepMinutes: Math.max(0, Math.round((wokeAt - settledAt) / 60000)),
+      interventions: events.length,
+      events,
+      longestStretch: Math.max(0, Math.round(best2 / 60000)),
+    }));
+  });
+  return out;
 }
 
 /* Cross-session numbers: the ones worth having whether or not this card is
@@ -445,8 +560,264 @@ Object.assign(PurdyShellCard.prototype, {
 
   _nurserySessions(sec) {
     const h = this._nursery || {};
-    return psNurserySessions(h[sec.hatch], h[sec.door],
+    const derived = psNurserySessions(h[sec.hatch], h[sec.door],
       Object.assign({}, sec, { now: this._nowMs() }));
+    return psApplyNapEdits(derived, this._napEdits(sec), (sec.edits || {}).match_tolerance_min);
+  },
+
+  /* --- corrections --------------------------------------------------------
+     Read straight out of hass rather than fetched: the store is an ordinary
+     entity, it is in the watched set, and a write repaints the section on the
+     state change it causes. There is nothing to keep in sync. */
+  _napEditStore(sec) {
+    const s = sec || this._nurserySection();
+    return s && s.edits && s.edits.store;
+  },
+
+  _napEdits(sec) {
+    const store = this._napEditStore(sec);
+    if (!store || !this._hass) return [];
+    return psParseNapEdits(pcState(this._hass, store));
+  },
+
+  _openNapEdit(start) {
+    const sec = this._nurserySection();
+    if (!sec || !this._napEditStore(sec)) return;
+    const s = this._nurserySessions(sec).find((x) => x.from === start);
+    if (!s) return;
+    /* The editor holds offsets in minutes from the session start, which is what
+       the store holds too — so Save is a write and not a second derivation. */
+    const d = this._napEditDefaults(s);
+    this._napEdit = { start: s.from, from: d.from, to: d.to };
+    this._sheet = "napedit";
+    this._armed = null;
+    this._render();
+  },
+
+  /* Where the editor opens, and the figure it is compared against — ONE
+     derivation, read by the opener, the stepper's clamp and the renderer alike.
+     Deriving them separately is how the sheet came up reading "34m asleep ·
+     derived 33m" before anything had been touched: two roundings of the same
+     pair of timestamps, disagreeing by a minute, presented as a correction the
+     card had made by itself.
+
+     The span is FLOORED because the clock labels drop seconds. Rounding a
+     42m30s session up to 43 offers a wake time one minute AFTER the rail's own
+     right-hand label — the card contradicting itself, on one screen, about when
+     the sound machine stopped. */
+  _napEditDefaults(s) {
+    const span = Math.max(1, Math.floor((s.to - s.from) / 60000));
+    const clamp = (t) => Math.max(0, Math.min(span, Math.round((t - s.from) / 60000)));
+    return { span, from: clamp(s.settledAt), to: clamp(s.wokeAt == null ? s.to : s.wokeAt) };
+  },
+
+  _napEditSpan() {
+    const sec = this._nurserySection();
+    const e = this._napEdit;
+    if (!sec || !e) return null;
+    const s = this._nurserySessions(sec).find((x) => Math.abs(x.from - e.start) < 60000);
+    return s || null;
+  },
+
+  /* One step is five minutes. A finer step would be false precision — the
+     inputs are a door magnet and a speaker, and nobody remembers the minute. */
+  _napEditStep(field, delta) {
+    const e = this._napEdit;
+    const s = this._napEditSpan();
+    if (!e || !s) return;
+    const span = this._napEditDefaults(s).span;
+    const next = Object.assign({}, e);
+    next[field] = Math.max(0, Math.min(span, e[field] + delta));
+    /* Woke can never precede fell-asleep. Pushing one past the other carries
+       the other with it rather than refusing the tap, so the control keeps
+       answering the thumb. */
+    if (field === "from" && next.from > next.to) next.to = next.from;
+    if (field === "to" && next.to < next.from) next.from = next.to;
+    this._napEdit = next;
+    this._last = null;
+    this._render();
+  },
+
+  _napEditWrite(entry) {
+    const sec = this._nurserySection();
+    const store = this._napEditStore(sec);
+    if (!store || !this._hass) return;
+    /* Prune anything older than the window the recorder is asked for: an
+       override for a session that can no longer be derived will never match
+       again, and it is only taking room in a 255-character store. */
+    const floor = this._nowMs() - ((sec.days || 7) + 1) * 86400000;
+    const keep = this._napEdits(sec)
+      .filter((x) => x.start >= floor && Math.abs(x.start - entry.start) > 60000);
+    const list = entry.drop ? keep : keep.concat([entry]);
+    this._hass.callService("input_text", "set_value",
+      { entity_id: store, value: psWriteNapEdits(list) });
+    this._sheet = null;
+    this._napEdit = null;
+    this._armed = null;
+    this._last = null;
+    this._render();
+  },
+
+  _napEditSave() {
+    const e = this._napEdit;
+    if (!e) return;
+    this._napEditWrite({ start: e.start, from: e.from, to: e.to });
+  },
+
+  /* Back to what the derivation says. Not the same as deleting the session —
+     this drops the correction, that records one. */
+  _napEditReset() {
+    const e = this._napEdit;
+    if (!e) return;
+    this._napEditWrite({ start: e.start, drop: true });
+  },
+
+  _napEditDelete() {
+    const e = this._napEdit;
+    if (!e) return;
+    this._napEditWrite({ start: e.start, del: true });
+  },
+
+  /* The correction sheet.
+   *
+   * A sheet rather than an in-place expansion for the reason the schedule
+   * editor is one: it slides over the column instead of pushing the list you
+   * were reading down the screen. It draws the session it is editing at the
+   * top — the Hatch span, the door trips, and the window being set over them —
+   * because the trips are the evidence you are correcting against, and reading
+   * them off a rail is the whole reason you know the 9:42 one was a re-settle.
+   */
+  _napEditHtml() {
+    const sec = this._nurserySection();
+    const e = this._napEdit;
+    const s = this._napEditSpan();
+    if (!sec || !e || !s) return "";
+
+    const d = this._napEditDefaults(s);
+    const span = d.span;
+    const at = (m) => psClock(s.from + m * 60000);
+    const derived = Math.max(0, d.to - d.from);
+    const now = Math.max(0, e.to - e.from);
+
+    const PAD = 3;
+    const x = (m) => PAD + (Math.max(0, Math.min(span, m)) / span) * (100 - PAD * 2);
+    const fx = x(e.from);
+    const tx = x(e.to);
+    const ticks = (s.doorAt || s.events || []).map((t) => {
+      const gx = x(Math.round((t - s.from) / 60000));
+      return `<rect x="${(gx - 0.32).toFixed(2)}" y="4" width="0.64" height="26" rx="0.3"
+        fill="var(--ps-warn)"/>`;
+    }).join("");
+
+    return `<div class="ps-neb">
+        <div class="ps-railbox">
+          ${/* Sized inline, like the day rail. An SVG with no width/height
+                falls back to 300x150 and lands on top of the row below it —
+                the section's own rails are sized by a `.ps-hyp svg` rule this
+                sheet is not inside. */""}
+          <svg viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true"
+            style="width:100%;height:34px;display:block">
+            <rect x="${PAD}" y="11" width="${(100 - PAD * 2).toFixed(2)}" height="12" rx="2"
+              fill="rgba(255,255,255,.06)"/>
+            <rect x="${fx.toFixed(2)}" y="9" width="${Math.max(0.5, tx - fx).toFixed(2)}"
+              height="16" rx="2" fill="var(--ps-deep)" opacity="0.9"/>
+            ${ticks}
+          </svg>
+          <div class="ps-railticks"><span>${psEsc(psClock(s.from))}</span>
+            <span>${psEsc(psClock(s.to))}</span></div>
+        </div>
+      </div>
+
+      ${["from", "to"].map((f) => `<div class="ps-ner">
+        <span class="ps-l">${f === "from" ? "Fell asleep" : "Woke"}</span>
+        <button class="ps-step" type="button" data-napstep="${f}:-5"
+          aria-label="${f === "from" ? "Fell asleep" : "Woke"} five minutes earlier">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
+        <b>${psEsc(at(e[f]))}</b>
+        <button class="ps-step" type="button" data-napstep="${f}:5"
+          aria-label="${f === "from" ? "Fell asleep" : "Woke"} five minutes later">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>`).join("")}
+
+      ${/* The derived figure is named beside the corrected one, and only while
+            they differ. A card that quietly replaced a measurement with a
+            correction would be a card you could not check. */""}
+      ${/* Named for what it actually is. On an unedited session the comparison
+            figure is the derivation; on one already corrected, `s` carries the
+            correction, so calling that "derived" would be a plain lie about
+            where the number came from. */""}
+      <div class="ps-nesum"><b>${psEsc(psHM(now))}</b> asleep${
+        now === derived ? "" : ` <span class="ps-flat">· ${
+          s.edited ? "saved" : "derived"} ${psEsc(psHM(derived))}</span>`}</div>
+
+      <div class="ps-btns">
+        <button class="ps-btn primary" type="button" id="ps-nesave">Save</button>
+        <button class="ps-btn" type="button" id="ps-nenone">Didn't sleep</button>
+        ${s.edited ? `<button class="ps-btn" type="button" id="ps-nereset">Undo edit</button>` : ""}
+        <button class="ps-btn danger ${this._armed === "napdel" ? "armed" : ""}" type="button"
+          ${/* "Not a nap" reads wrong on a night, and "Didn't happen" is a
+                hair from "Didn't sleep" beside it. Remove says what it does for
+                both kinds. */""}
+          data-arm="napdel">${this._armed === "napdel" ? "Tap again" : "Remove"}</button>
+      </div>
+      ${/* The note only says what is true of the buttons actually on screen —
+            offering to undo an edit that does not exist is the same shape of
+            noise as a caption under every meter that has no band. */""}
+      <div class="ps-note">${s.edited
+        ? "Corrected by hand. Undo puts the derived times back."
+        : "Correcting this changes what the card reports, not what the recorder holds."}</div>`;
+  },
+
+  /* Long press, not tap. The rows are a list you read far more often than you
+     correct, and a tap target on every one of them would make scrolling past a
+     mistake the likeliest interaction. 380ms matches the graph scrub and the
+     light row, so there is exactly one press-and-hold on the card.
+     Eight pixels of movement cancels it — a hold that starts a scroll is a
+     scroll. */
+  _bindNapEdit() {
+    this._each("[data-napedit]", (el) => {
+      let hold = null, x0 = 0, y0 = 0;
+      const cancel = () => { if (hold) { clearTimeout(hold); hold = null; } };
+      el.addEventListener("pointerdown", (ev) => {
+        x0 = ev.clientX; y0 = ev.clientY;
+        cancel();
+        hold = setTimeout(() => {
+          hold = null;
+          this._openNapEdit(+el.dataset.napedit);
+        }, 380);
+      });
+      el.addEventListener("pointermove", (ev) => {
+        if (hold && (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8)) cancel();
+      });
+      el.addEventListener("pointerup", cancel);
+      el.addEventListener("pointercancel", cancel);
+      el.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    });
+
+    this._each("[data-napstep]", (el) => {
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const p = String(el.dataset.napstep).split(":");
+        this._napEditStep(p[0], parseInt(p[1], 10));
+      });
+    });
+
+    this._one("ps-nesave", (el) =>
+      el.addEventListener("click", (ev) => { ev.stopPropagation(); this._napEditSave(); }));
+    this._one("ps-nereset", (el) =>
+      el.addEventListener("click", (ev) => { ev.stopPropagation(); this._napEditReset(); }));
+    /* Set, not sent: the values land in the editor and Save commits them, so
+       the one destructive-looking button on the sheet is still reversible with
+       a glance at the rail before you commit. */
+    this._one("ps-nenone", (el) => el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const s = this._napEditSpan();
+      if (!s || !this._napEdit) return;
+      const span = Math.round((s.to - s.from) / 60000);
+      this._napEdit = { start: this._napEdit.start, from: span, to: span };
+      this._last = null;
+      this._render();
+    }));
   },
 
   /* The night, scrubbable.
@@ -485,9 +856,14 @@ Object.assign(PurdyShellCard.prototype, {
     this._nightData = { from, to, settledAt: night.settledAt, events: night.events };
 
     const sx = x(night.settledAt);
+    /* The asleep bar ends where he WOKE, which is the end of the Hatch span
+       unless a correction moved it in. Time in the room after that is left as
+       bare track rather than coloured asleep — drawing it as sleep is the same
+       lie as reporting the minutes. */
+    const wx = x(night.wokeAt == null ? night.to : night.wokeAt);
     let bars = `<rect x="${PAD}" y="14" width="${Math.max(0.4, sx - PAD).toFixed(2)}"
         height="18" rx="2" fill="var(--ps-light)" opacity="0.5"/>
-      <rect x="${sx.toFixed(2)}" y="10" width="${Math.max(0.4, (100 - PAD) - sx).toFixed(2)}"
+      <rect x="${sx.toFixed(2)}" y="10" width="${Math.max(0.4, wx - sx).toFixed(2)}"
         height="26" rx="2" fill="var(--ps-deep)" opacity="${night.active ? 0.95 : 0.8}"/>`;
 
     let ticks = "";
@@ -603,6 +979,12 @@ Object.assign(PurdyShellCard.prototype, {
     const catnapUnder = sec.catnap_under_min == null ? 30 : sec.catnap_under_min;
     const napTarget = (sec.nap_target_min == null ? 60 : sec.nap_target_min) * 1;
 
+    /* A corrected figure must never look like a measured one — the same rule
+       that keeps a zero apart from a missing reading, one level up. Every
+       surface that can show an edited session carries the mark. */
+    const editable = !!this._napEditStore(sec);
+    const edd = (s) => (s && s.edited ? `<span class="ps-edd" title="Corrected"></span>` : "");
+
     const wifiOk = !sec.hatch_wifi || pcState(h, sec.hatch_wifi) === "on";
     const clock = (m) => (m == null ? "—"
       : `${((Math.floor(m / 60) % 12) || 12)}:${String(m % 60).padStart(2, "0")} ${m < 720 ? "AM" : "PM"}`);
@@ -675,6 +1057,7 @@ Object.assign(PurdyShellCard.prototype, {
           <div class="ps-ring" style="width:${ringPx}px;height:${ringPx}px" data-info="${psEsc(sec.hatch)}">
             ${this._ringSvg(ringPx, stroke, [[s.asleepMinutes / napTarget, col]], null)}
             <div class="ps-rv sm${fit}"><b>${psEsc(val)}</b></div>
+            ${s.edited ? `<span class="ps-edd ring" title="Corrected"></span>` : ""}
           </div>
           <span style="color:${subCol}">${psEsc(sub)}</span>
         </div>`;
@@ -732,8 +1115,8 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-xtra">
         ${this._nurseryRail(nightSession, loaded, err)}
         ${nightSession ? `
-        <div class="ps-jrs">
-          <div class="ps-jr"><span class="ps-l">Asleep</span>
+        <div class="ps-jrs"${editable ? ` data-napedit="${nightSession.from}"` : ""}>
+          <div class="ps-jr"><span class="ps-l">${edd(nightSession)}Asleep</span>
             <span class="ps-v">${psHM(nightSession.asleepMinutes)}</span>
             <span class="${avg == null ? "ps-flat" : nightSession.asleepMinutes >= avg ? "ps-good" : "ps-warnc"}">${
               avg == null ? "" : psHM(avg) + " avg"}</span></div>
@@ -754,7 +1137,8 @@ Object.assign(PurdyShellCard.prototype, {
         ${this._nurseryDayRail(sessions, todayKey, stats.bedMean)}
         <div class="ps-jrs">
           ${todayNaps.length ? todayNaps.map((s) => `
-            <div class="ps-jr"><span class="ps-l">${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
+            <div class="ps-jr"${editable ? ` data-napedit="${s.from}"` : ""}>
+              <span class="ps-l">${edd(s)}${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
               <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " so far" : ""}</span>
               <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
                 !s.active && s.asleepMinutes < catnapUnder ? "short" : s.interventions ? s.interventions + " in" : ""}</span></div>`).join("")
@@ -763,6 +1147,12 @@ Object.assign(PurdyShellCard.prototype, {
             <span class="ps-v">${psHM(stats.wakeWindowMin)}</span>
             <span class="ps-flat">since ${psClock(stats.wakeSince)}</span></div>`}
         </div>
+        ${/* A long press has no affordance of its own, so the list says it
+              once. Only where there is somewhere to write the correction —
+              without the store the gesture does nothing, and inviting it would
+              be worse than not offering it. */""}
+        ${editable && (todayNaps.length || nightSession)
+          ? `<div class="ps-note">Press and hold a session to correct when he actually slept.</div>` : ""}
       </div>`;
   },
 });

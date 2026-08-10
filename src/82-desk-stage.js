@@ -381,6 +381,7 @@ Object.assign(PurdyDeskCard.prototype, {
           <div class="pd-ring sm" style="width:54px;height:54px">
             ${this._ringSvg(54, 5, [[f, short ? "var(--ps-warn)" : "var(--ps-light)"]], null)}
             <div class="pd-rv sm"><b>${psEsc(psHM(n.asleepMinutes))}</b></div>
+            ${n.edited ? `<span class="ps-edd ring" title="Corrected"></span>` : ""}
           </div>
           <span class="pd-napt">${psEsc(pdClock(n.from))}</span>
         </div>`;
@@ -501,17 +502,23 @@ Object.assign(PurdyDeskCard.prototype, {
   },
 
   _nurseryRows(sec, night, stats, naps) {
-    const row = (l, v, c) => `<div class="pd-jr"><span class="pd-l">${psEsc(l)}</span>
+    /* `ed` marks a session a person corrected. The desk reads the same store
+       the phone writes, so without this it would print a corrected figure as
+       though the sensors had produced it — the phone marks it, and one surface
+       marking it is worse than neither. */
+    const row = (l, v, c, ed) => `<div class="pd-jr"><span class="pd-l">${
+        ed ? `<span class="ps-edd" title="Corrected"></span>` : ""}${psEsc(l)}</span>
         <span class="pd-v">${psEsc(v)}</span><span class="pd-c">${psEsc(c || "")}</span></div>`;
     const napRows = naps.map((n) => row(
       pdClock(n.from) + " – " + pdClock(n.to),
       psHM(n.asleepMinutes),
-      n.interventions ? `${n.interventions} in` : ""
+      n.interventions ? `${n.interventions} in` : "",
+      n.edited
     )).join("");
 
     const nightRows = night ? [
       row("Asleep", psDur(night.asleepMinutes),
-        stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet"),
+        stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", night.edited),
       row("Down / up", `${pdClock(night.from)} – ${pdClock(night.to)}`, ""),
       row("Settled", pdClock(night.settledAt), `+${psHM(night.settleMinutes)} settling`),
       row("Interventions", String(night.interventions),
