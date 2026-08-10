@@ -153,28 +153,37 @@ class PurdyRemoteCard extends PcBaseCard {
         .pwr ha-icon { color: var(--pc-bad); }
         .pwr.off ha-icon { color: var(--pc-good); }
 
+        /* A 26px logo and a 9px label do not need an 80px square around them.
+           aspect-ratio:1 made every cell as tall as the column was wide, so
+           eight apps took 167px to draw about 70px of content — and the remote
+           came to 716px inside a sheet with roughly 600 to give it, which is
+           why the transport keys fell off the bottom. A fixed row height keeps
+           the same four columns, the same eight apps and the same touch target
+           while giving 39px back. */
         .apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; }
         .app {
-          aspect-ratio: 1; border: 0; cursor: pointer; font-family: inherit;
+          height: 58px; border: 0; cursor: pointer; font-family: inherit;
           border-radius: 16px; background: var(--pc-panel-2);
           display: flex; flex-direction: column; align-items: center;
-          justify-content: center; gap: 5px; padding: 0;
+          justify-content: center; gap: 4px; padding: 0;
           font-size: 9px; letter-spacing: 0.04em; color: var(--pc-muted);
         }
-        .app svg { width: 26px; height: 26px; }
+        .app svg { width: 24px; height: 24px; }
 
-        .dpad { position: relative; width: 214px; height: 214px; margin: 10px auto 0; }
+        /* 214px with 54px keys and an 84px centre is larger than any physical
+           remote. 46 / 70 is still comfortably past the 44px touch floor. */
+        .dpad { position: relative; width: 176px; height: 176px; margin: 10px auto 0; }
         .dpad .ring { position: absolute; inset: 0; border-radius: 50%; background: var(--pc-panel-2); }
         .dpad button { position: absolute; border: 0; background: none; cursor: pointer; padding: 0;
           display: flex; align-items: center; justify-content: center; color: var(--pc-text); }
-        .dpad .k { width: 54px; height: 54px; border-radius: 50%; }
+        .dpad .k { width: 46px; height: 46px; border-radius: 50%; }
         .dpad .k:active { background: var(--pc-chip); }
-        .dpad .up { top: 8px; left: 80px; }
-        .dpad .dn { bottom: 8px; left: 80px; }
-        .dpad .lf { left: 8px; top: 80px; }
-        .dpad .rt { right: 8px; top: 80px; }
+        .dpad .up { top: 6px; left: 65px; }
+        .dpad .dn { bottom: 6px; left: 65px; }
+        .dpad .lf { left: 6px; top: 65px; }
+        .dpad .rt { right: 6px; top: 65px; }
         .dpad .ok {
-          width: 84px; height: 84px; border-radius: 50%; top: 65px; left: 65px;
+          width: 70px; height: 70px; border-radius: 50%; top: 53px; left: 53px;
           background: var(--pc-chip); font-size: 13.5px; font-weight: 650;
         }
         .dpad ha-icon { --mdc-icon-size: 26px; }
@@ -201,13 +210,19 @@ class PurdyRemoteCard extends PcBaseCard {
       </style>
 
       <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
-        <div class="hd">
+        ${/* Hosted in a sheet, the shell blanks the title because its own chrome
+              already names the card — which left this row as nothing but an
+              "N on" chip, floating alone above a selector whose live dots say
+              the same thing. So the header row goes with the title rather than
+              becoming a 31px restatement. Standalone, with a title, it renders
+              exactly as before. */""}
+        ${!this._config.title ? "" : `<div class="hd">
           <b>${this._config.title}</b>
           <span class="spacer"></span>
           <span class="chip ${onCount ? "good" : ""}">
             ${onCount ? '<span class="cdot"></span>' : ""}${onCount} on
           </span>
-        </div>
+        </div>`}
 
         ${tvs.length > 1 ? `
           <div class="seg">
@@ -260,12 +275,14 @@ class PurdyRemoteCard extends PcBaseCard {
             <button class="ok" type="button" data-cmd="DPAD_CENTER">OK</button>
           </div>
 
+          ${/* Two rows of three became one row of six. Navigation and transport
+                are both "what I press while something is on", and at 56px wide
+                each they are still wider than they are tall. This is the 57px
+                that puts the play button back on screen. */""}
           <div class="row">
             ${key("mdi:arrow-u-left-top", "BACK")}
             ${key("mdi:home", "HOME")}
             ${key("mdi:menu", "MENU")}
-          </div>
-          <div class="row">
             ${key("mdi:rewind", "MEDIA_REWIND")}
             ${key("mdi:play-pause", "MEDIA_PLAY_PAUSE")}
             ${key("mdi:fast-forward", "MEDIA_FAST_FORWARD")}

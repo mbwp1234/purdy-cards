@@ -2978,6 +2978,133 @@ const crewHtml = mkCrew()._secCrew(crewCfg);
 const crewVac = mkCrew(null, { vac: true })._secCrew(crewCfg);
 const crewLit = mkCrew(null, { litter: true })._secCrew(crewCfg);
 
+/* --- Media: one sheet, two verbs ------------------------------------------ */
+
+/* Television and music are the same question — what is on — and they were two
+   dock buttons answering it. What opens is what is actually on, never a
+   remembered preference: you open this sheet BECAUSE something is playing. */
+const mediaCfg = (states, pick) => {
+  const s = new SH();
+  s.setConfig({
+    sections: [{ type: 'music', key: 'music', sheet_only: true,
+      players: [{ entity: 'media_player.kit', name: 'Kitchen' }],
+      default_player: 'media_player.kit' }],
+    sheets: { media: { title: 'Media', card: { type: 'custom:purdy-remote-card',
+      tvs: [{ name: 'Living Room', remote: 'remote.lr', media_player: 'media_player.tv' }] } } },
+  });
+  s._hass = { states, callService: () => {}, callWS: () => {} };
+  s._sheet = 'media';
+  if (pick) s._mediaPick = pick;
+  return s;
+};
+const TV_ON = { 'media_player.tv': { state: 'playing', attributes: {} },
+  'media_player.kit': { state: 'idle', attributes: {} } };
+const TV_OFF = { 'media_player.tv': { state: 'off', attributes: {} },
+  'media_player.kit': { state: 'idle', attributes: {} } };
+const MUSIC_ON = { 'media_player.tv': { state: 'off', attributes: {} },
+  'media_player.kit': { state: 'playing',
+    attributes: { app_id: 'music_assistant', media_content_type: 'music', media_title: 'A song' } } };
+
+check('a television on and nothing playing opens Watch', () =>
+  mediaCfg(TV_ON)._mediaFace() === 'watch');
+check('music playing and the televisions off opens Listen', () =>
+  mediaCfg(MUSIC_ON)._mediaFace() === 'listen');
+check('nothing on opens Listen, the commoner cold start', () =>
+  mediaCfg(TV_OFF)._mediaFace() === 'listen');
+check('both on is ambiguous, so the tap wins', () =>
+  mediaCfg({ ...TV_ON, ...MUSIC_ON }, 'watch')._mediaFace() === 'watch');
+
+check('the Watch face leaves a mount point and the Listen face does not', (() => {
+  const w = mediaCfg(TV_ON)._sheetHtml([]);
+  const l = mediaCfg(MUSIC_ON)._sheetHtml([]);
+  return /id="ps-host"/.test(w) && !/id="ps-host"/.test(l);
+})());
+
+/* The whole point of the merge is that Listen is the SAME music sheet, not a
+   reduced copy of it — the presets, the search box and the rooms all come
+   across, which is the mistake v1.25.1 had to fix when music went sheet_only. */
+check('the Listen face is the whole music sheet, not a cut-down one', (() => {
+  const h = mediaCfg(MUSIC_ON)._sheetHtml([]);
+  return /id="ps-q"/.test(h) && /id="ps-res"/.test(h) && /data-pick="media_player\.kit"/.test(h);
+})());
+
+/* Merging two dock buttons into one orphans every row that pointed at either —
+   the third time this trap has come up on this card, after the music presets
+   (v1.25.1) and the vacuum map (v1.50.0). So the rows route themselves. */
+check('a now-playing row opens Media on the face matching what was tapped', (() => {
+  const s = mediaCfg(MUSIC_ON);
+  return /data-sheet="media" data-face="listen"/.test(s._playTarget('listen'))
+    && /data-sheet="media" data-face="watch"/.test(s._playTarget('watch'));
+})());
+check('without a media sheet the old routing is untouched', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'quick', tiles: [] }] });
+  return s._playTarget('listen') === 'data-sheet="music"';
+})());
+
+check('both faces carry the tabs, so neither is a dead end', (() => {
+  const w = mediaCfg(TV_ON)._sheetHtml([]);
+  const l = mediaCfg(MUSIC_ON)._sheetHtml([]);
+  return /data-media="listen"/.test(w) && /data-media="watch"/.test(w)
+    && /data-media="listen"/.test(l) && /data-media="watch"/.test(l);
+})());
+
+/* --- the crew moved behind the dock --------------------------------------- */
+
+/* The section measured 329px and spent nearly all of it reporting an absence:
+   everything docked, nothing running, washer off. The landing page keeps only
+   the moments that need a human; the rest lives in the dock app. */
+const crewAlertCfg = { ...crewCfg, alerts_only: true, sheet: 'crew' };
+check('a quiet crew renders nothing at all on the landing page', () =>
+  mkCrew()._secCrew(crewAlertCfg) === '');
+
+check('a finished washer raises a row', (() => {
+  const h = mkCrew({ 'input_select.washer': { state: 'Finished', attributes: {} } })
+    ._secCrew(crewAlertCfg);
+  return /ps-cwneed warn/.test(h) && /has finished/.test(h) && /data-sheet="crew"/.test(h);
+})());
+
+check('a full waste drawer raises a row and a very full one is critical', (() => {
+  const at88 = mkCrew({ 'sensor.drawer': { state: '88', attributes: {} } })._secCrew(crewAlertCfg);
+  const at97 = mkCrew({ 'sensor.drawer': { state: '97', attributes: {} } })._secCrew(crewAlertCfg);
+  return /ps-cwneed warn/.test(at88) && /88%/.test(at88) && /ps-cwneed bad/.test(at97);
+})());
+
+check('an errored robot raises a row', (() => {
+  const h = mkCrew({ 'vacuum.j': { state: 'error', attributes: {} } })._secCrew(crewAlertCfg);
+  return /ps-cwneed bad/.test(h) && /Jeeves needs help/.test(h);
+})());
+
+check('low consumables collapse into ONE row, not five', (() => {
+  /* The same fold the attention card does with eleven battery sensors. The
+     fixture has the filter at 14% and the brush at 57%. */
+  const h = mkCrew()._secCrew({ ...crewAlertCfg, wear_below: 60 });
+  return (h.match(/ps-cwneed/g) || []).length === 1
+    && /2 Jeeves parts to replace/.test(h)
+    && /Filter 14% · Main brush 57%/.test(h);
+})());
+
+/* Going behind the dock strands whatever was only reachable through the
+   section — the music presets in v1.25.1 and the vacuum map itself in v1.50.0
+   both went exactly this way. The map's door is inside the crew body, so the
+   sheet has to carry the body. */
+check('the crew sheet still reaches the vacuum map and the litter box', (() => {
+  const s = mkCrew();
+  s.setConfig({ sections: [{ ...crewCfg, sheet_only: true }] });
+  s._hass = mkCrew()._hass;
+  s._sheet = 'crew';
+  const h = s._sheetHtml([]);
+  return /ps-sheet/.test(h) && /data-crewzone="vac"/.test(h)
+    && /data-crewzone="litter"/.test(h) && /data-sheet="vacuum"/.test(h);
+})());
+
+check('the crew sheet names itself once, not twice', (() => {
+  const s = mkCrew();
+  s._sheet = 'crew';
+  const h = s._sheetHtml([]);
+  return (h.match(/Crew/g) || []).length === 1;
+})());
+
 check('setConfig accepts a crew section', (() => {
   try { new SH().setConfig({ sections: [crewCfg] }); return true; } catch (e) { return false; }
 })());
@@ -3831,6 +3958,33 @@ check('the warmth knob and the renderer read the same geometry', (() => {
 check('the shell stylesheet contains no stray backtick', (() => {
   const f = fs.readFileSync(new URL('../src/79-shell-styles.js', import.meta.url), 'utf8');
   return (f.match(/`/g) || []).length === 2;
+})());
+
+/* The two dedicated stylesheet files were guarded by name; the trap is not
+   confined to them. It bit again in the remote card, whose stylesheet is an
+   inline style block inside its render template — raw template text, so a
+   backtick in a CSS comment there ends the string and the bundle fails to parse
+   hundreds of lines away.
+   The distinction that matters, and which cost a wrong diagnosis on the way
+   here: a comment in EXPRESSION position is safe. Comments in the
+   comment-hole idiom sit inside ${ }, which is code, so backticks in them are
+   inside a comment and harmless — 71-shell-sections has had one for months.
+   Only comments in raw template text are dangerous, and every stylesheet this
+   bundle writes inline is raw template text. */
+check('no CSS comment in an inline stylesheet quotes code in backticks', (() => {
+  const dir = new URL('../src/', import.meta.url);
+  const bad = [];
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.js'))) {
+    const text = fs.readFileSync(new URL(name, dir), 'utf8');
+    for (const block of text.matchAll(/<style>[\s\S]*?<\/style>/g)) {
+      for (const m of block[0].matchAll(/\/\*[\s\S]*?\*\//g)) {
+        if (!m[0].includes('`')) continue;
+        bad.push(`${name}:${text.slice(0, block.index + m.index).split('\n').length}`);
+      }
+    }
+  }
+  if (bad.length) console.log('    backtick in an inline CSS comment: ' + bad.join(', '));
+  return bad.length === 0;
 })());
 
 /* The v1.31.1 lesson: a new section type must be in BOTH places or setConfig
@@ -4705,13 +4859,67 @@ check('a detail row with no value is dropped, not dashed', (() => {
   return !/UV index/.test(html) && !/Dew point/.test(html);
 })());
 
-check('feels-like is the chip and is never repeated as a row', (() => {
-  /* The chip is on screen whether the list is expanded or not, three
-     centimetres above it. The desk shipped this exact duplication once as
-     "Up 2h 0m" beside "Awake 2h 0m". */
+check('feels-like is stated once, and never beside the reading it restates', (() => {
+  /* The rule is unchanged; what carries the number moved. The chip used to hold
+     the reading and its feels-like, so the detail rows had to stay clear of it.
+     Now that collapsed is a TODAY face, the reading is the hero and the chip
+     carries what is coming instead — so feels-like belongs in the today facts,
+     and must still not appear a second time in the expanded rows. */
   const s = mkW(WSTATES, { feels_from: 'weather.owm' });
   const sec = s._config.sections[0];
-  return /feels 98°/.test(s._secWeather(sec)) && !/Feels like/.test(s._wxRows(sec));
+  const html = s._secWeather(sec);
+  return /Feels/.test(html)
+    && (html.match(/Feels/g) || []).length === 1
+    && !/Feels like/.test(s._wxRows(sec));
+})());
+
+check('the chip does not repeat the hero reading', (() => {
+  /* The reading is the first thing in the body. A chip carrying it too is the
+     duplication that has already been removed twice on this card. */
+  const s = mkW(WSTATES, { feels_from: 'weather.owm' });
+  const html = s._secWeather(s._config.sections[0]);
+  const chip = (html.match(/<span class="ps-chip[^"]*">[\s\S]*?<\/span>\s*<\/span>/) || [''])[0];
+  return !/\d+\s*°/.test(chip.replace(/<[^>]*>/g, ''));
+})());
+
+check('a dry day says nothing about rain rather than "0%"', (() => {
+  /* Zero-versus-missing, at the one place a probability is legitimately zero:
+     "Rain 0%" reads as a measurement of nothing and spends a tile saying it. */
+  const s = mkW(WSTATES);
+  return !/Rain/.test(s._wxTodayFacts(s._config.sections[0], { pop: 0 }))
+    && /Rain/.test(s._wxTodayFacts(s._config.sections[0], { pop: 60 }));
+})());
+
+check('today draws a stub when only one end of the day is published', (() => {
+  /* Late in the day NWS drops the daytime period, so today arrives as a low
+     with no high. That is a hole in the data, not a bar to the edge. */
+  const s = mkW(WSTATES);
+  return /ps-wxtbfill part/.test(s._wxTodayBar({ lo: 72, hi: null }, 75))
+    && !/part/.test(s._wxTodayBar({ lo: 72, hi: 95 }, 75))
+    && s._wxTodayBar({ lo: null, hi: null }, 75) === '';
+})());
+
+check('the today bar widens for a live reading outside the recorded range', (() => {
+  /* The same contradiction the week rail had to be fixed for: statistics lag
+     the sensor, so the tick would sit past the end of its own bar. */
+  const s = mkW(WSTATES);
+  const html = s._wxTodayBar({ lo: 72, hi: 90 }, 96);
+  const now = Number((html.match(/ps-wxtbnow" style="left:([0-9.]+)%/) || [])[1]);
+  return now > 0 && now < 100;
+})());
+
+check('the week, the hourly strip and the detail rows are all behind the expand', (() => {
+  /* The section was 464px collapsed, the largest thing on the phone, and the
+     rail it exists for fell below the fold. Nothing was deleted — it moved. */
+  const s = mkW(WSTATES, { feels_from: 'weather.owm' });
+  s._wxStats = wDays([DAY(8, 71.4, 82, 93.4)], WNOW);
+  const html = s._secWeather(s._config.sections[0]);
+  const xtra = html.slice(html.indexOf('ps-xtra'));
+  const head = html.slice(0, html.indexOf('ps-xtra'));
+  return /ps-wxrail|ps-railbox/.test(xtra) && !/ps-wxrail|ps-railbox/.test(head)
+    && /ps-wxtabs/.test(xtra) && !/ps-wxtabs/.test(head)
+    && /ps-wxtile/.test(xtra) && !/ps-wxtile/.test(head)
+    && /ps-wxtb/.test(head);
 })());
 
 check('the live reading widens today\'s capsule instead of floating above it', (() => {

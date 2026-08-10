@@ -106,7 +106,12 @@ const PD_BORROW = [
      stepper would have grown the identical bug without it */
   "_optGoal",
   /* render plumbing */
-  "_patch", "_each", "_one", "_claim", "_mountSheetCard",
+  /* _mediaFace rides along with _mountSheetCard, which now asks it which face
+     of the Media sheet is showing before deciding what to mount. The desk has
+     no Media button today, so the call never fires — but the borrow is about
+     what the method CAN reach, not what it happens to reach, and a desk dock
+     entry pointing at a media sheet should work the day it is added. */
+  "_patch", "_each", "_one", "_claim", "_mountSheetCard", "_mediaFace",
   /* greeting + name, and the state-string prettifier */
   "_greeting", "_who", "_humanize",
   /* geometry that is genuinely one picture at two sizes */

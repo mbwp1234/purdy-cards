@@ -393,6 +393,124 @@ Object.assign(PurdyShellCard.prototype, {
     return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(ts).getDay()];
   },
 
+  /* ------------------------------------------------------------- today ----*/
+
+  /* Today's range, from both halves of what is known.
+   *
+   * The measured statistics say what the day HAS done; the forecast says what
+   * it still will. Neither alone is today: before noon the measured max is a
+   * morning reading, and late in the day NWS has already dropped the daytime
+   * period so the forecast high is gone. Taking the outer envelope of the two
+   * is true whichever half exists, and when only one does the capsule draws as
+   * a stub rather than inventing the other end — the same rule the week rail
+   * follows. */
+  _wxTodayRange() {
+    const st = (this._wxStats || []).find((d) => d.partial);
+    const fc = (this._wxFc || []).find((d) => d.today);
+    const los = [st && st.min, fc && fc.lo].filter((v) => v != null);
+    const his = [st && st.max, fc && fc.hi].filter((v) => v != null);
+    return {
+      lo: los.length ? Math.min(...los) : null,
+      hi: his.length ? Math.max(...his) : null,
+      pop: fc ? fc.pop : null,
+      condition: fc ? fc.condition : null,
+    };
+  },
+
+  /* The horizontal cousin of `_wxCapsule`, and deliberately its own function.
+   *
+   * The week's capsules are seven columns on a shared vertical axis, which is
+   * what makes the SHAPE of the week readable at a glance. Today is one span
+   * with a live position on it, so the axis runs the other way and the thing
+   * being encoded is different: not "how does this day compare to its
+   * neighbours" but "where in today's range are we right now". Rotating the
+   * vertical one would have meant one function with an orientation flag and two
+   * sets of geometry inside it — the hypnogram argument again. */
+  _wxTodayBar(r, live) {
+    if (r.lo == null && r.hi == null) return "";
+    const lo = r.lo == null ? r.hi : r.lo;
+    const hi = r.hi == null ? r.lo : r.hi;
+    /* The live reading can sit outside a range the statistics have not caught
+       up with, so the domain takes it in — a tick floating past the end of its
+       own bar is the contradiction this already had to be fixed for once. */
+    const vals = [lo, hi];
+    if (live != null) vals.push(live);
+    const pad = 2;
+    const dLo = Math.min(...vals) - pad;
+    const dHi = Math.max(...vals) + pad;
+    const span = Math.max(1, dHi - dLo);
+    const pct = (v) => (((v - dLo) / span) * 100);
+    const l = pct(lo);
+    const w = Math.max(4, pct(hi) - l);
+    const partial = r.lo == null || r.hi == null;
+    return `<div class="ps-wxtb">
+        <span class="ps-wxtbend lo">${this._wxDeg(r.lo)}</span>
+        <div class="ps-wxtbtrack">
+          <i class="ps-wxtbfill${partial ? " part" : ""}" style="left:${l.toFixed(1)}%;width:${w.toFixed(1)}%"></i>
+          ${live == null ? "" : `<i class="ps-wxtbnow" style="left:${pct(live).toFixed(1)}%"></i>`}
+        </div>
+        <span class="ps-wxtbend hi">${this._wxDeg(r.hi)}</span>
+      </div>`;
+  },
+
+  /* Three facts, chosen by what the providers here actually publish.
+   *
+   * A fixed list would be half dashes: NWS has no apparent temperature and no
+   * UV index at all, OpenWeatherMap's sensor platform reports `unknown` for dew
+   * point, and met.no carries UV only on its daily forecast. So this is a
+   * priority order that stops at three, and a day with nothing to say about
+   * rain simply shows the next thing down. */
+  _wxTodayFacts(sec, r) {
+    const h = this._hass;
+    const fc = sec.forecast && h.states[sec.forecast];
+    const feels = sec.feels_from && h.states[sec.feels_from];
+    const pick = (k) => {
+      const v = feels ? pcNumOf(feels, k) : null;
+      return v == null ? (fc ? pcNumOf(fc, k) : null) : v;
+    };
+
+    const out = [];
+    const add = (label, v, cls) => {
+      if (v == null || v === "" || out.length >= 3) return;
+      out.push(`<div class="ps-wxf"><span>${psEsc(label)}</span><b class="${cls || ""}">${v}</b></div>`);
+    };
+
+    /* Rain first when there is any: it is the one fact that changes what you
+       do today rather than how it feels. A dry day says nothing at all here
+       instead of "0%", which reads as a measurement of nothing. */
+    if (r.pop != null && r.pop >= 5) add("Rain", `${Math.round(r.pop)}%`, r.pop >= 50 ? "wet" : "");
+
+    const app = pick("apparent_temperature");
+    /* Only when it disagrees with the reading — "feels 76°" beside 75.9° is a
+       tile spent saying nothing. */
+    const live = this._wxLive(sec);
+    if (app != null && (live == null || Math.abs(app - live) >= 2)) {
+      add("Feels", this._wxDeg(app), live != null && app > live ? "wet" : "");
+    }
+
+    const sun = sec.sun && h.states[sec.sun];
+    if (sun) {
+      const up = sun.state === "above_horizon";
+      const when = up ? sun.attributes.next_setting : sun.attributes.next_rising;
+      const d = when ? new Date(when) : null;
+      if (d && !isNaN(d.getTime())) {
+        add(up ? "Sunset" : "Sunrise", psMinsToClock(d.getHours() * 60 + d.getMinutes()));
+      }
+    }
+
+    const hum = pick("humidity");
+    if (hum != null) add("Humidity", `${Math.round(hum)}%`);
+    const ws = pick("wind_speed");
+    /* A bare "2" is not a wind speed. The unit comes off whichever provider
+       answered, because the two here do not agree on it. */
+    if (ws != null) {
+      const unit = (((feels || fc || {}).attributes) || {}).wind_speed_unit || "";
+      add("Wind", `${Math.round(ws)}${unit ? ` ${psEsc(unit)}` : ""}`);
+    }
+
+    return out.length ? `<div class="ps-wxfacts">${out.join("")}</div>` : "";
+  },
+
   _wxDeg(v, digits) {
     return v == null ? "—" : `${v.toFixed(digits == null ? 0 : digits)}°`;
   },
@@ -785,16 +903,23 @@ Object.assign(PurdyShellCard.prototype, {
     const rail = this._wxRail(sec);
     const fcSt = sec.forecast && h.states[sec.forecast];
 
-    /* The chip carries the reading and, when they differ, how it feels — the
-       pair worth having on a collapsed header in August. When they agree there
-       is nothing to add, so the condition takes the second slot instead. */
-    const app = sec.feels_from ? pcNumOf(h.states[sec.feels_from], "apparent_temperature") : null;
-    const hot = live != null && app != null && Math.abs(app - live) >= 2;
-    const chipBits = [live == null ? null : this._wxDeg(live)];
-    if (hot) chipBits.push(`feels ${this._wxDeg(app)}`);
-    else if (fcSt) chipBits.push(pcWxText(fcSt.state));
-    const chip = `<span class="ps-chip ${hot && app > live ? "warn" : "cool"}"><span class="ps-dot"></span>${
-      psEsc(chipBits.filter(Boolean).join(" · ")) || "—"}</span>`;
+    /* The chip no longer carries the reading.
+     *
+     * It used to, because the collapsed face was a week rail and the number was
+     * nowhere else on the section. The reading is now the first thing in the
+     * body, three centimetres below — which is exactly the duplication this
+     * card has had to remove twice already ("Up 2h 0m" beside "Awake 2h 0m",
+     * "Feels like 100°" above its own chip). So the chip carries what the body
+     * does not: what is coming. The first wet day if there is one, the
+     * condition otherwise. */
+    const wet = (this._wxFc || []).find((d) => !d.today &&
+      (/rain|pour|lightning|snow|hail|sleet/.test(String(d.condition || "")) ||
+        (d.pop != null && d.pop >= 50)));
+    const chipTxt = wet
+      ? `${pcWxText(wet.condition) || "Rain"} ${this._wxDow(wet.ts, false)}`
+      : (fcSt ? pcWxText(fcSt.state) : "");
+    const chip = `<span class="ps-chip ${wet ? "warn" : "cool"}"><span class="ps-dot"></span>${
+      psEsc(chipTxt) || "—"}</span>`;
 
     /* Today's low is the honest anchor for the delta. "Since this morning" is
        what the reference card said, but it is only true if nothing colder
@@ -835,6 +960,20 @@ Object.assign(PurdyShellCard.prototype, {
       : `<span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
         psEsc(nHist > st.days ? "min–max, plus today so far" : "min–max range")}</span>`;
 
+    /* Collapsed is TODAY; expanded is the week.
+     *
+     * The section was 464px — the largest thing on the phone — and it spent
+     * that height in the wrong order. Measured: the rail is 217px of it and the
+     * furniture around it the rest, and on a 390x844 phone the first screen
+     * ended part-way down, so the seven-day rail the section exists for was
+     * always below the fold while the part you DID see was a reading.
+     *
+     * Splitting by tense fixes both halves at once. Today is what you glance
+     * at; the week is what you go looking for, and going looking is what the
+     * chevron is for. Nothing is deleted — the tabs, both rails, the hourly
+     * strip, the min/avg/max tiles and the detail rows are all one tap away. */
+    const todayR = this._wxTodayRange();
+
     return `${this._head(sec, chip)}
       <div class="ps-wxhero">
         <div class="ps-wxheronum">
@@ -842,17 +981,33 @@ Object.assign(PurdyShellCard.prototype, {
           ${delta}
           <div class="ps-wxsrc">${psEsc(srcName)}</div>
         </div>
-        <div class="ps-wxtiles">
+        ${/* No caption over an empty box. Before the first statistics answer
+              lands, and on a provider that has published neither half of today,
+              there is no range to draw — and a labelled box with nothing in it
+              claims the section is broken rather than that today is not known
+              yet. The reading and the facts still stand on their own. */""}
+        ${todayR.lo == null && todayR.hi == null ? "" : `<div class="ps-wxtodaybox">
+          <div class="ps-wxrh"><span class="ps-wxlb">Today</span><span class="ps-wxrb">${
+            psEsc(todayR.condition ? pcWxText(todayR.condition) : "range")}</span></div>
+          ${this._wxTodayBar(todayR, live)}
+        </div>`}
+      </div>
+      ${this._wxTodayFacts(sec, todayR)}
+      ${this._wxNote(sec)}
+      <div class="ps-xtra">
+        ${/* The window is named ONCE, here, rather than three times as "MIN 7D
+              / AVG 7D / MAX 7D" — which is what it was, and each of the three
+              wrapped to two lines. */""}
+        <div class="ps-wxrh"><span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
+          psEsc(`last ${st.days || sec.days || 7} days`)}</span></div>
+        <div class="ps-wxtiles wide">
           ${this._wxTile("Min", st.min, "lo")}
           ${this._wxTile("Avg", st.mean, "")}
           ${this._wxTile("Max", st.max, "hi")}
         </div>
-      </div>
-      ${tabs}
-      <div class="ps-wxrh">${railLabel}</div>
-      ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
-      ${this._wxNote(sec)}
-      <div class="ps-xtra">
+        ${tabs}
+        <div class="ps-wxrh">${railLabel}</div>
+        ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
         ${this._wxHourly(sec)}
         ${this._wxRows(sec)}
       </div>`;

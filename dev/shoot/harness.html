@@ -201,6 +201,11 @@ function buildHass(states) {
       /* Which weather rail is showing. The card's own field, same as the four
          above — a preset drives the card rather than faking a tap on its tab. */
       if (P.get("wxrail")) { el._wxPick = P.get("wxrail"); touched = true; }
+      /* Which face of the Media sheet. Same idea as wxrail: the card's own
+         field, so a preset drives it rather than faking a tap — and the Watch
+         face is otherwise unphotographable whenever the televisions are off,
+         which is most of the day. */
+      if (P.get("media")) { el._mediaPick = P.get("media"); touched = true; }
       if (touched) { if (el._expandWatched) el._expandWatched(); el._render(); }
     };
 

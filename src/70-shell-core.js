@@ -81,6 +81,9 @@ class PurdyShellCard extends PcBaseCard {
     this._open = null;        // key of the expanded section, or null
     this._openGroups = {};    // "sectionKey|groupName" -> true for open groups
     this._sheet = null;       // "alerts" when the alert sheet is showing
+    /* Which face the Media sheet is showing. null means "let the live state
+       decide" — a tap overrides it only while the sheet stays open. */
+    this._mediaPick = null;
     /* Systems is a MODE, not a section: the column and the dock both swap.
        null is the house; "systems" is the server, and _page is which of its
        pages is showing. See 77-shell-systems.js. */
@@ -230,6 +233,11 @@ class PurdyShellCard extends PcBaseCard {
        behind every section rather than living in one — so the section walk
        below will never see it. The same treatment the server: block needed. */
     push((c.weather_fx || {}).entity);
+    /* Both TOP-LEVEL keys, same reasoning as weather_fx above: the section walk
+       will never reach them, so a person coming home or the thermometer moving
+       would not repaint until the 30s clock came round. */
+    push(c.weather_temp);
+    (c.people || []).forEach((p) => { push(p.entity); push(p.battery); });
     (c.attention || []).forEach((r) => push(r.entity));
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
@@ -495,14 +503,23 @@ class PurdyShellCard extends PcBaseCard {
    * position from resetting under the thumb every time a state changes.
    */
   _mountSheetCard() {
-    const spec = (this._config.sheets || {})[this._sheet];
+    /* The Media sheet hosts a card on one face and our own markup on the
+       other, so the mount is keyed on sheet AND face — a key of just the sheet
+       name would let the remote survive a switch to Listen and back with a
+       stale hass, or worse, mount into a slot that is not there. */
+    const sheets = this._config.sheets || {};
+    const face = this._sheet === "media" ? this._mediaFace() : null;
+    const spec = this._sheet === "media"
+      ? (face === "watch" ? ((sheets.media && sheets.media.card) ? sheets.media : sheets.tv) : null)
+      : sheets[this._sheet];
+    const key = face ? `${this._sheet}:${face}` : this._sheet;
     const host = this.shadowRoot.getElementById("ps-host");
     if (!spec || !spec.card || !host) {
       this._hosted = null;
       this._hostedKey = null;
       return;
     }
-    if (this._hosted && this._hostedKey === this._sheet && host.firstChild) {
+    if (this._hosted && this._hostedKey === key && host.firstChild) {
       this._hosted.hass = this._hass;
       return;
     }
@@ -511,7 +528,7 @@ class PurdyShellCard extends PcBaseCard {
     if (!tag || !customElements.get(tag)) {
       host.innerHTML = `<div class="ps-nohist">${psEsc(tag || "card")} is not registered</div>`;
       this._hosted = null;
-      this._hostedKey = this._sheet;
+      this._hostedKey = key;
       return;
     }
 
@@ -542,7 +559,7 @@ class PurdyShellCard extends PcBaseCard {
            throwing out of the render and taking the whole shell down. */
         host.innerHTML = `<div class="ps-nohist">${psEsc(tag)}: ${psEsc((err2 && err2.message) || "bad config")}</div>`;
         this._hosted = null;
-        this._hostedKey = this._sheet;
+        this._hostedKey = key;
         return;
       }
     }
@@ -550,7 +567,7 @@ class PurdyShellCard extends PcBaseCard {
     host.innerHTML = "";
     host.appendChild(el);
     this._hosted = el;
-    this._hostedKey = this._sheet;
+    this._hostedKey = key;
   }
 
   _render() {
@@ -575,8 +592,19 @@ class PurdyShellCard extends PcBaseCard {
       ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
       : "good";
 
-    const wTemp = c.weather && this._hass.states[c.weather]
-      ? this._hass.states[c.weather].attributes.temperature : null;
+    /* The header's reading and the weather section's hero must come from ONE
+       sensor. They did not: the header took `temperature` off the forecast
+       provider (NWS, 73°) while the hero read the yard thermometer (75.9°), and
+       both were on screen at once — a fourteen-degree disagreement in the worst
+       case, three centimetres apart. The card's own rule is that a provider is
+       authoritative about the FUTURE and merely opinionated about the present,
+       so `weather_temp:` names the measured sensor and the provider entity is
+       left to do what it is good at. Falls back to the old behaviour when no
+       sensor is configured, so an install without one is unchanged. */
+    const wTemp = c.weather_temp && pcNum(this._hass, c.weather_temp) != null
+      ? pcNum(this._hass, c.weather_temp)
+      : (c.weather && this._hass.states[c.weather]
+        ? this._hass.states[c.weather].attributes.temperature : null);
     const wState = pcState(this._hass, c.weather);
 
     const sections = [];
@@ -621,9 +649,17 @@ class PurdyShellCard extends PcBaseCard {
                 everything under it is one. The greeting changes three times a
                 day and the name never does; neither earns 22px. */""}
           <h2>${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</h2>
-          <div class="ps-d">${now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
+          ${/* Presence used to be a section: two rows reading "Home · 80% ·
+                3,805", 105px, with nothing to tap and nothing to decide. It is
+                ambient, so it belongs in the chrome. The avatars also supersede
+                the occupancy WORD — house_occupancy is Home / Away / Brian Only
+                / Tayler Only, which is per-person presence spelled out, and two
+                rings say which without being read. Occupancy still prints when
+                no people: is configured. */""}
+          <div class="ps-d"><span>${now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
             · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${
-              c.occupancy ? " · " + psEsc(pcState(this._hass, c.occupancy)) : ""}</div>
+              c.people && c.people.length ? ""
+                : (c.occupancy ? " · " + psEsc(pcState(this._hass, c.occupancy)) : "")}</span>${this._hdrPeople()}</div>
         </div>
         <div class="ps-rt">
           ${wTemp == null ? "" : `<div class="ps-wx" data-info="${psEsc(c.weather)}">
@@ -665,7 +701,7 @@ class PurdyShellCard extends PcBaseCard {
     const np = this._nowPlaying();
     if (!np) return "";
     const art = np.st.attributes.entity_picture_local;
-    return `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
+    return `<div class="ps-mini" id="ps-mini" ${this._playTarget("listen")} role="button" tabindex="0">
         <div class="ps-mart">${art
           ? `<img src="${psEsc(art)}" alt="" />`
           : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
@@ -770,6 +806,27 @@ class PurdyShellCard extends PcBaseCard {
 
     /* Two-tap confirm for anything destructive: the first tap arms, the
        second runs. A modal would be heavier than the action deserves. */
+    /* Starting the Hatch needs no guard: the worst case is white noise in an
+       empty room, which you can hear. Stopping it does — see the arm below.
+
+       The scene is preferred over a bare turn_on when one is configured,
+       because the put-down is a whole setup: Brown Noise at 0.48 with the night
+       light dim red, not merely "the speaker is on". */
+    this._each("[data-hatch]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (el.dataset.hatch !== "start") return;
+        const sec = this._config.sections.find((x) => x.type === "nursery");
+        if (!sec || !sec.hatch) return;
+        if (sec.start_scene) {
+          this._hass.callService("scene", "turn_on", { entity_id: sec.start_scene });
+        } else {
+          this._hass.callService("media_player", "media_play", { entity_id: sec.hatch });
+        }
+        this._render();
+      });
+    });
+
     this._each("[data-arm]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -793,6 +850,15 @@ class PurdyShellCard extends PcBaseCard {
           this._render();
         } else if (k === "sdel") {
           this._schedDelete();
+        } else if (k === "hatch") {
+          /* Stopping the sound machine ends the sleep session — in the room and
+             in the record every nursery number is derived from — so it takes
+             the arm rather than firing on one tap. */
+          const sec = this._config.sections.find((x) => x.type === "nursery");
+          if (sec && sec.hatch) {
+            this._hass.callService("media_player", "media_stop", { entity_id: sec.hatch });
+          }
+          this._render();
         } else if (k.indexOf("sy:") === 0) {
           /* Reboot, shut down, stop the array. The entity is in the key so
              this stays generic — the arm is the only thing core owns. */
@@ -1011,6 +1077,22 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const k = el.dataset.sheet;
         this._sheet = this._sheet === k ? null : k;
+        /* A row can ask for a face as well as a sheet, so tapping the TV row in
+           Now playing lands on Watch and a music row lands on Listen. Without
+           this the sheet would open on whatever the live state happened to
+           favour, which is the wrong answer when the user has just pointed at
+           the thing they mean. */
+        if (this._sheet && el.dataset.face) this._mediaPick = el.dataset.face;
+        this._render();
+      });
+    });
+
+    /* The Media sheet's Watch / Listen tabs. The pick lasts as long as the
+       sheet is open — see _mediaFace. */
+    this._each("[data-media]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._mediaPick = el.dataset.media;
         this._render();
       });
     });
@@ -1021,7 +1103,7 @@ class PurdyShellCard extends PcBaseCard {
     }));
     ["ps-close", "ps-scrim"].forEach((id) => {
       this._one(id, (el) =>
-        el.addEventListener("click", () => { this._sheet = null; this._render(); }));
+        el.addEventListener("click", () => { this._sheet = null; this._mediaPick = null; this._render(); }));
     });
 
     this._each("[data-step]", (el) => {

@@ -25,6 +25,47 @@ Object.assign(PurdyShellCard.prototype, {
     return String(u.name).trim().split(/\s+/)[0];
   },
 
+  /* Where a "this is playing" row should go.
+   *
+   * Once TV and music are one sheet, a row that opens the old `music` sheet
+   * lands somewhere the dock no longer goes, and a TV row that opens `tv` gets
+   * the remote with no way through to Listen. Both are the orphaning trap this
+   * card has hit twice — so the target is derived rather than configured: if a
+   * media sheet exists, everything routes there, on the face matching the row
+   * the user actually tapped. Installs without one are unchanged. */
+  _playTarget(face) {
+    const sheets = this._config.sheets || {};
+    if (sheets.media) return `data-sheet="media" data-face="${face}"`;
+    return face === "watch" ? "" : `data-sheet="music"`;
+  },
+
+  /* Presence in the header, replacing the `people` section.
+   *
+   * A ring means home. A red pip means the phone is under 25% — the one thing
+   * about a person that is ever actionable from a dashboard, and the only
+   * reason the old section's battery column existed. Steps are neither, so
+   * they move to more-info along with everything else. */
+  _hdrPeople() {
+    const list = this._config.people || [];
+    if (!list.length) return "";
+    const h = this._hass;
+    return `<span class="ps-pav">${list.map((p) => {
+      const st = pcState(h, p.entity);
+      const home = st === "home";
+      const batt = pcNum(h, p.battery);
+      const nm = pcName(h, p.entity, p.name);
+      const pic = h.states[p.entity] && h.states[p.entity].attributes.entity_picture;
+      const bits = [home ? "home" : (st || "").replace(/_/g, " ")];
+      if (batt != null) bits.push(`${Math.round(batt)}%`);
+      return `<span class="ps-pv ${home ? "home" : ""} ${batt != null && batt < 25 ? "low" : ""}"
+          data-info="${psEsc(p.entity)}" role="button" tabindex="0"
+          title="${psEsc(`${nm} — ${bits.join(", ")}`)}"
+          aria-label="${psEsc(`${nm}, ${bits.join(", ")}`)}">${pic
+            ? `<img src="${psEsc(pic)}" alt="" />`
+            : psEsc((nm || "?").charAt(0).toUpperCase())}</span>`;
+    }).join("")}</span>`;
+  },
+
   /* A 270° arc. `segs` are [fraction, colour] laid end to end. */
   _ringSvg(size, stroke, segs, goalFrac, goalCol) {
     const r = size / 2 - stroke / 2 - 2;
@@ -573,7 +614,7 @@ Object.assign(PurdyShellCard.prototype, {
          left out; with two it is the only thing telling them apart. */
       const sub = [[a.media_artist, album].filter(Boolean).join(" — "), np.name]
         .filter(Boolean).join(" · ");
-      rows.push(`<div class="ps-npr" data-sheet="music" role="button" tabindex="0">
+      rows.push(`<div class="ps-npr" ${this._playTarget("listen")} role="button" tabindex="0">
           <div class="ps-npart">${art
             ? `<img src="${psEsc(art)}" alt="" />`
             : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
@@ -595,9 +636,13 @@ Object.assign(PurdyShellCard.prototype, {
       const shown = app && app !== "unknown" && app !== "unavailable" ? app : "On";
       /* Prefer a sheet when one is configured; a hash link is the older path
          and leaves a Bubble pop-up to be closed. */
-      const open = sec.remote_sheet
-        ? `data-sheet="${psEsc(sec.remote_sheet)}"`
-        : `data-nav="${psEsc(sec.remote_link || "#tvs")}"`;
+      /* The media sheet wins when there is one; the older remote_sheet and
+         hash-link paths still work for an install without it. */
+      const open = (this._config.sheets || {}).media
+        ? this._playTarget("watch")
+        : (sec.remote_sheet
+          ? `data-sheet="${psEsc(sec.remote_sheet)}"`
+          : `data-nav="${psEsc(sec.remote_link || "#tvs")}"`);
       rows.push(`<div class="ps-npr" ${open} role="button" tabindex="0">
           <div class="ps-npart ps-npapp">${this._appIcon(sec, app)}</div>
           <div class="ps-grow">

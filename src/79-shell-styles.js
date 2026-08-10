@@ -91,7 +91,28 @@ const PS_STYLES = `
       /* status strip — no box, floats on the ground */
       .ps-stat { display: flex; align-items: flex-start; gap: 10px; padding: 2px 8px 14px; }
       .ps-stat h2 { font-size: var(--pc-fs-xl); font-weight: 640; letter-spacing: -.028em; margin: 0; line-height: 1.15; }
-      .ps-d { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; margin-top: 3px; }
+      .ps-d { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; margin-top: 3px;
+              display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+      /* Presence, in the chrome rather than in a section of its own.
+         The occupancy helper says "Brian Only"; two avatars with a ring say the
+         same thing without a heading, a card and 105px — and they say WHICH one
+         without being read. The tap target is padded out behind the paint, the
+         same way every round control on this card is.
+         (No backticks anywhere in this file's comments: it is one template
+         literal, and a single one terminates the whole stylesheet.) */
+      .ps-pav { display: flex; align-items: center; gap: 4px; }
+      /* No overflow:hidden on the avatar itself — it would clip the padded tap
+         target below. The image rounds itself instead. */
+      .ps-pv { position: relative; width: 21px; height: 21px; border-radius: 50%; cursor: pointer;
+               display: flex; align-items: center; justify-content: center;
+               background: var(--pc-fill-2); color: var(--ps-dim); font-size: var(--pc-fs-micro); font-weight: 700;
+               box-shadow: 0 0 0 1.5px var(--pc-fill-1); }
+      .ps-pv img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+      .ps-pv.home { box-shadow: 0 0 0 1.5px var(--ps-good); color: var(--ps-text); }
+      .ps-pv.low::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px;
+                          border-radius: 50%; background: var(--ps-bad); box-shadow: 0 0 0 1.5px #10141f; }
+      .ps-pv::before { content: ""; position: absolute; inset: -7px -3px; }
       .ps-rt { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .ps-wx { display: flex; align-items: center; gap: 7px; color: var(--ps-cool); font-size: var(--pc-fs-xl);
                font-weight: 640; font-variant-numeric: tabular-nums; letter-spacing: -.02em; cursor: pointer; }
@@ -495,6 +516,37 @@ const PS_STYLES = `
                   text-transform: uppercase; font-weight: 660; margin-top: 5px;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                   max-width: 190px; }
+      /* Today, beside the reading. The week's capsules run vertically because
+         seven of them share an axis; today is one span with a live position on
+         it, so it runs the way a day runs. */
+      .ps-wxtodaybox { margin-left: auto; flex: 1; min-width: 0; max-width: 208px; }
+      .ps-wxtodaybox .ps-wxrh { margin: 0 0 7px; }
+      .ps-wxtb { display: flex; align-items: center; gap: 7px; }
+      .ps-wxtbend { font-size: var(--pc-fs-xs); font-weight: 640; font-variant-numeric: tabular-nums;
+                    white-space: nowrap; }
+      .ps-wxtbend.lo { color: var(--ps-cool); }
+      .ps-wxtbend.hi { color: var(--ps-heat); }
+      .ps-wxtbtrack { position: relative; flex: 1; min-width: 0; height: 10px;
+                      border-radius: var(--pc-r-pill); background: var(--ps-track); }
+      .ps-wxtbfill { position: absolute; top: 0; bottom: 0; border-radius: var(--pc-r-pill);
+                     background: linear-gradient(90deg, var(--ps-cool), var(--ps-heat)); }
+      /* Only one end of the day is published — a stub, the same claim the week
+         rail's stub makes, not a bar reaching to an edge it does not know. */
+      .ps-wxtbfill.part { background: linear-gradient(90deg, var(--ps-cool), var(--ps-cool)); opacity: .55; }
+      .ps-wxtbnow { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px;
+                    border-radius: var(--pc-r-hair); background: var(--ps-text);
+                    box-shadow: 0 0 0 2px rgba(10,12,21,.85); z-index: 2; }
+
+      .ps-wxfacts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 11px; }
+      .ps-wxf { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                border-radius: var(--pc-r-sm); padding: 6px 9px; min-width: 0; }
+      .ps-wxf span { display: block; font-size: var(--pc-fs-micro); letter-spacing: .09em;
+                     text-transform: uppercase; color: var(--ps-dim); white-space: nowrap;
+                     overflow: hidden; text-overflow: ellipsis; }
+      .ps-wxf b { display: block; font-size: var(--pc-fs-md); font-weight: 640; margin-top: 2px;
+                  font-variant-numeric: tabular-nums; }
+      .ps-wxf b.wet { color: var(--ps-cool); }
+
       .ps-wxtiles { margin-left: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
                     gap: 6px; min-width: 0; }
       .ps-wxtile { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
@@ -509,6 +561,31 @@ const PS_STYLES = `
                      letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
       .ps-wxtile b.lo { color: var(--ps-cool); }
       .ps-wxtile b.hi { color: var(--ps-heat); }
+      /* Inside the expand the tiles own the full width rather than sharing the
+         hero's row, so they stop being a strip squeezed beside a numeral. */
+      .ps-wxtiles.wide { margin-left: 0; width: 100%; }
+
+      /* Watch / Listen. A segmented control rather than two chips, because the
+         two are alternatives to each other — the same reason the systems pages
+         share a dock instead of stacking. */
+      .ps-mtabs { display: flex; gap: 3px; padding: 3px; margin: 0 0 12px;
+                  background: var(--pc-fill-1); border-radius: var(--pc-r-md); }
+      .ps-mtab { flex: 1; border: 0; cursor: pointer; font-family: inherit;
+                 padding: 8px 6px; border-radius: var(--pc-r-sm); background: none;
+                 text-align: center; color: var(--ps-muted);
+                 font-size: var(--pc-fs-sm); font-weight: 660; }
+      .ps-mtab.on { background: var(--pc-fill-3); color: var(--ps-text); }
+
+      /* The crew's landing-page face: one row per thing that needs a human, and
+         no row at all otherwise. */
+      .ps-cwneed { display: flex; align-items: center; gap: 11px; cursor: pointer;
+                   padding: 10px 12px; border-radius: var(--pc-r-lg);
+                   background: var(--pc-fill-1); border: 1px solid var(--pc-edge); }
+      .ps-cwneed + .ps-cwneed { margin-top: 7px; }
+      .ps-cwneed.warn { background: rgba(242,193,78,.10); border-color: rgba(242,193,78,.28); }
+      .ps-cwneed.bad { background: rgba(239,106,106,.10); border-color: rgba(239,106,106,.30); }
+      .ps-cwneed.warn .ps-cwbadge ha-icon { color: var(--ps-warn); }
+      .ps-cwneed.bad .ps-cwbadge ha-icon { color: var(--ps-bad); }
 
       .ps-wxtabs { display: flex; gap: 6px; margin: 14px 0 0; }
       .ps-wxtab { font-size: var(--pc-fs-micro); font-weight: 660; padding: 5px 11px;
@@ -604,9 +681,20 @@ const PS_STYLES = `
       .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
       .ps-napr { display: flex; flex-direction: column; align-items: center; gap: 3px; }
       .ps-napr > span { font-size: var(--pc-fs-micro); font-variant-numeric: tabular-nums; }
-      .ps-jstat { display: flex; justify-content: space-between; gap: 10px;
+      .ps-jstat { display: flex; align-items: center; gap: 10px;
                   font-size: var(--pc-fs-xs); color: var(--ps-muted);
                   font-variant-numeric: tabular-nums; padding: 0 2px; }
+      /* Start / stop the Hatch, which is start / stop the sleep session. */
+      .ps-jhatch { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
+                   border: 0; cursor: pointer; position: relative;
+                   background: var(--pc-fill-2); color: var(--ps-muted);
+                   display: flex; align-items: center; justify-content: center; }
+      .ps-jhatch.on { background: rgba(170,120,255,.18); color: var(--ps-deep); }
+      .ps-jhatch.armed { width: auto; border-radius: var(--pc-r-pill); padding: 0 10px;
+                         background: rgba(239,106,106,.16); color: var(--ps-bad); }
+      .ps-jhx { font-size: var(--pc-fs-micro); font-weight: 700; white-space: nowrap; }
+      .ps-jhatch .ps-ico { width: 15px; height: 15px; }
+      .ps-jhatch::after { content: ""; position: absolute; inset: -11px -4px; }
       .ps-hypplot { position: relative; }
       /* Default to letting the browser scroll; claim the gesture only once a
          long press has deliberately entered scrub mode. */
