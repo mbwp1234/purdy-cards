@@ -3101,7 +3101,7 @@ check('a full waste drawer raises a row and a very full one is critical', (() =>
 check('a full dirty tank raises a row, and says it is an estimate', (() => {
   const h = mkCrew({ 'sensor.dirty': { state: '85', attributes: {} } })._secCrew(crewAlertCfg);
   return /ps-cwneed warn/.test(h) && /Empty Jeeves/.test(h) && /dirty water/.test(h)
-    && /≈85% full/.test(h) && /6 washes/.test(h);
+    && /85% full/.test(h) && /6 washes/.test(h);
 })());
 check('an overflowing dirty tank is critical', (() =>
   /ps-cwneed bad/.test(mkCrew({ 'sensor.dirty': { state: '100', attributes: {} } })
@@ -3199,16 +3199,14 @@ check('the vacuum gauge leads with the dirty tank, not the charge',
   /dirty tank/.test(crewHtml) && !/>battery</.test(crewHtml) && !/>job</.test(crewHtml));
 check('the collapsed face answers do-I-need-to-go-to-the-machine',
   /Clean water/.test(crewHtml) && /Mop pad/.test(crewHtml) && /Filter/.test(crewHtml));
-/* The estimate is marked on the READING, and only when the level IS the counted
-   proxy — an install whose vacuum publishes a real level must not be told its
-   measurement is a guess. */
-check('the ring numeral carries the approximation, not a second row',
-  /<b>≈30%<\/b>/.test(crewHtml));
-check('a vacuum that publishes a real level gets no tilde', (() => {
-  const cfg = { ...crewCfg, vacuum: { ...crewCfg.vacuum, wash_counter: undefined } };
-  const s = new SH(); s.setConfig({ sections: [cfg] }); s._hass = mkCrew()._hass;
-  return /<b>30%<\/b>/.test(s._secCrew(cfg));
-})());
+/* NO tilde on the tank, and that is a different call from the mileage. You act
+   on a tank level or you do not; there is no truer number it could be taken
+   for. The honesty lives where it is useful — the panel's count and its words —
+   so the reading is bare and the WORKING is what must never go missing. */
+check('the tank reading is bare, with no approximation mark',
+  /<b>30%<\/b>/.test(crewHtml) && !/≈30%/.test(crewHtml));
+check('distance keeps its tilde — an assumed path width is inside it',
+  /≈/.test(crewVac) && /mi</.test(crewVac));
 /* The panel must not restate the face four centimetres below it. */
 check('the panel carries the working, not the water situation over again', (() => {
   const panel = crewVac.slice(crewVac.indexOf('ps-cwpanel'));
@@ -3229,8 +3227,8 @@ check('runs are still shown', /Runs/.test(crewVac) && /219/.test(crewVac));
 /* The dirty level has no sensor behind it — Dreame reports both tanks as
    present/absent only — so the panel shows the working and says so. A figure
    with no measurement behind it must never pass for one. */
-check('the dirty tank is marked as an estimate and shows its working',
-  /≈30%/.test(crewVac) && /6 of 20 washes/.test(crewVac) && /Aug/.test(crewVac));
+check('the dirty tank shows its working, which is the only honesty it has',
+  /6 of 20 washes/.test(crewVac) && /Aug/.test(crewVac));
 check('the panel says why the tank level is counted rather than measured',
   /ps-cwfine/.test(crewVac) && /self-wash cycles, not measured/.test(crewVac));
 

@@ -11847,11 +11847,19 @@ function psCrewMiles(areaValue, unit, widthM) {
  * and no dirty-water LEVEL anywhere in the 233 entities — both tanks report
  * present/absent only, and `low_water` is a single boolean that flips near
  * empty. So the dirty tank is a PROXY: every self-wash cycle is counted and
- * divided by a hand-set capacity. That is an estimate, it is drawn with a "≈"
- * and the count it is built from is shown beside it, on the same argument as
- * the derived mileage above — a figure with no sensor behind it must never
- * pass for a measurement. Clean water is a STATE, not a bar, because a boolean
- * rendered as a meter is a precision claim nothing supports. */
+ * divided by a hand-set capacity.
+ *
+ * It carries NO "≈", deliberately, and that is a different call from the
+ * mileage above. A tilde on a tank you are deciding whether to go and empty
+ * buys nothing — you act on it or you do not, and there is no second, truer
+ * number it could be mistaken for. The honesty is kept where it is actually
+ * useful instead: the panel shows the count the figure was built from and says
+ * in words that it is counted rather than measured, which is also what tells
+ * you the capacity needs correcting. Distance keeps its tilde because it is a
+ * lifetime brag with an ASSUMED path width inside it.
+ *
+ * Clean water is a STATE, not a bar, because a boolean rendered as a meter is
+ * a precision claim nothing supports. */
 function psCrewWater(hass, v) {
   const st = (hass && hass.states[v.entity]) || null;
   const a = (st && st.attributes) || {};
@@ -11972,11 +11980,6 @@ Object.assign(PurdyShellCard.prototype, {
         : w.dirty >= dirtyAt * 0.6 ? "var(--ps-warn)" : "var(--ps-cool)";
 
     const clean = psCrewCleanText(w);
-    /* The "≈" belongs on the READING, not in a second row restating it. It is
-       earned only when the level is the counted proxy: an install whose vacuum
-       genuinely publishes a tank level would be told a measurement is a guess,
-       which is the same lie as the reverse. wash_counter is what says so. */
-    const prox = v.wash_counter ? "≈" : "";
 
     return `<div class="ps-cwcard ${open ? "open" : ""}">
         <button class="ps-cwface" type="button" data-crewzone="vac">
@@ -11985,7 +11988,7 @@ Object.assign(PurdyShellCard.prototype, {
             ${this._crewRing(92,
               { frac: w.dirty == null ? null : w.dirty / 100, col: dirtyCol },
               { frac: inner == null ? null : inner / 100, col: "var(--ps-cool)" })}
-            <div class="ps-cwrv"><b>${w.dirty == null ? "—" : `${prox}${Math.round(w.dirty)}%`}</b><span>dirty tank</span></div>
+            <div class="ps-cwrv"><b>${psCrewPct(w.dirty)}</b><span>dirty tank</span></div>
           </div>
           ${this._crewLine("Clean water",
             `<b class="${clean.sev}">${psEsc(clean.text)}</b>`)}
@@ -12157,10 +12160,10 @@ Object.assign(PurdyShellCard.prototype, {
       areaSt && areaSt.attributes.unit_of_measurement, m.path_width_m || 0.3);
     const runs = psCrewNum(h, m.runs);
 
-    /* "6 of 20 washes since 6 Aug" is the working the estimate is built from,
-       which is what makes the ≈ honest rather than decorative — and it is also
-       the number to correct the capacity against once a tank has been filled
-       and emptied for real. */
+    /* "6 of 20 washes since 6 Aug" is the working the estimate is built from.
+       With no tilde on the reading this line IS the honesty, so it is not
+       optional dressing — and it is also the number to correct the capacity
+       against once a tank has been filled and emptied for real. */
     const since = [
       w.washes == null ? null
         : w.cap == null ? `${Math.round(w.washes)} washes`
@@ -12381,7 +12384,7 @@ Object.assign(PurdyShellCard.prototype, {
     if (water.dirty != null && water.dirty >= wAbove) {
       out.push({ icon: "mdi:cup-water", sev: water.dirty >= 100 ? "bad" : "warn",
         text: `Empty ${v.name || "the vacuum"}'s dirty water`,
-        sub: `≈${Math.round(water.dirty)}% full${
+        sub: `${Math.round(water.dirty)}% full${
           water.washes == null ? "" : ` — ${Math.round(water.washes)} washes`}` });
     }
     if (water.low === true) {
