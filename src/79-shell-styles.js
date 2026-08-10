@@ -879,13 +879,27 @@ const PS_STYLES = `
       .ps-cwrv { position: absolute; inset: 0; display: flex; flex-direction: column;
                  align-items: center; justify-content: center; line-height: 1.05; }
       .ps-cwrv b { font-size: var(--pc-fs-xl); font-weight: 680; font-variant-numeric: tabular-nums; }
+      /* The caption lives INSIDE the horseshoe, so it is bounded by the ring's
+         bore and not by the card. A one-word caption never showed it; "dirty
+         tank" ran out past the stroke on both sides and the arc drew straight
+         through the lettering. Wrapping is the fix rather than a shorter word,
+         because the word is the noun the number needs — and the bore is wide
+         enough for two lines when it is not wide enough for one. */
       .ps-cwrv span { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
-                      color: var(--ps-dim); font-weight: 650; margin-top: 3px; }
+                      color: var(--ps-dim); font-weight: 650; margin-top: 3px;
+                      max-width: 62px; text-align: center; line-height: 1.15;
+                      text-wrap: balance; }
       .ps-cwl { display: flex; align-items: baseline; gap: 6px; font-size: var(--pc-fs-xs);
                 padding-top: 4px; border-top: 1px solid var(--ps-hair-soft); }
       .ps-cwl em { font-style: normal; color: var(--ps-dim); flex: 1; min-width: 0; }
       .ps-cwl b { font-weight: 650; font-variant-numeric: tabular-nums; min-width: 0; }
       .ps-cwl b.warn { color: var(--ps-warn); }
+      .ps-cwl b.bad { color: var(--ps-bad); }
+      /* The footnote under a derived figure. Dim and small, because it explains
+         a number rather than being one — but it clears 4.5:1 like every other
+         label, since an explanation nobody can read is not one. */
+      .ps-cwfine { font-size: var(--pc-fs-micro); color: var(--ps-dim); line-height: 1.45;
+                   margin: 6px 0 2px; }
 
       /* The panel is full width UNDER the grid, never inside a 50% card —
          squeezing dispatch into half the screen is what wrapped the room
