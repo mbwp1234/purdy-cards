@@ -146,8 +146,32 @@ function patchConfig(cfg, name) {
     if (i < 0) { console.log("  no section keyed " + m.key + " to merge into"); return; }
     sections[i] = { ...sections[i], ...m };
   });
-  out.sections = sections;
-  console.log(`  patched config with ${name} (${sections.length} sections)`);
+  /* Re-ranking the screen is the commonest thing worth photographing and was
+     the one thing the patcher could not do — a reorder had to be deployed to be
+     seen, which is the loop this whole harness exists to replace. Keys not
+     named keep their order, after the ones that are, so a partial list is a
+     promotion rather than a silent truncation. An unknown key is called out:
+     silently ignoring it would photograph the OLD order and look like the
+     reorder simply had no effect. */
+  let dropped = [];
+  if (Array.isArray(patch.$dropSections)) {
+    dropped = patch.$dropSections.filter((k) => sections.some((x) => x && x.key === k));
+    patch.$dropSections.filter((k) => !dropped.includes(k))
+      .forEach((k) => console.log("  no section keyed " + k + " to drop"));
+  }
+  let ordered = sections.filter((x) => !(x && dropped.includes(x.key)));
+  if (Array.isArray(patch.$orderSections)) {
+    patch.$orderSections.filter((k) => !ordered.some((x) => x && x.key === k))
+      .forEach((k) => console.log("  no section keyed " + k + " to order"));
+    const rank = (x) => {
+      const i = patch.$orderSections.indexOf(x && x.key);
+      return i < 0 ? patch.$orderSections.length + ordered.indexOf(x) : i;
+    };
+    ordered = [...ordered].sort((a, b) => rank(a) - rank(b));
+  }
+  out.sections = ordered;
+  console.log(`  patched config with ${name} (${ordered.length} sections: ${
+    ordered.map((x) => (x && x.key) || "?").join(", ")})`);
   return out;
 }
 

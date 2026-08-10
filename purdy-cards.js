@@ -4096,28 +4096,37 @@ class PurdyRemoteCard extends PcBaseCard {
         .pwr ha-icon { color: var(--pc-bad); }
         .pwr.off ha-icon { color: var(--pc-good); }
 
+        /* A 26px logo and a 9px label do not need an 80px square around them.
+           aspect-ratio:1 made every cell as tall as the column was wide, so
+           eight apps took 167px to draw about 70px of content — and the remote
+           came to 716px inside a sheet with roughly 600 to give it, which is
+           why the transport keys fell off the bottom. A fixed row height keeps
+           the same four columns, the same eight apps and the same touch target
+           while giving 39px back. */
         .apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; }
         .app {
-          aspect-ratio: 1; border: 0; cursor: pointer; font-family: inherit;
+          height: 58px; border: 0; cursor: pointer; font-family: inherit;
           border-radius: 16px; background: var(--pc-panel-2);
           display: flex; flex-direction: column; align-items: center;
-          justify-content: center; gap: 5px; padding: 0;
+          justify-content: center; gap: 4px; padding: 0;
           font-size: 9px; letter-spacing: 0.04em; color: var(--pc-muted);
         }
-        .app svg { width: 26px; height: 26px; }
+        .app svg { width: 24px; height: 24px; }
 
-        .dpad { position: relative; width: 214px; height: 214px; margin: 10px auto 0; }
+        /* 214px with 54px keys and an 84px centre is larger than any physical
+           remote. 46 / 70 is still comfortably past the 44px touch floor. */
+        .dpad { position: relative; width: 176px; height: 176px; margin: 10px auto 0; }
         .dpad .ring { position: absolute; inset: 0; border-radius: 50%; background: var(--pc-panel-2); }
         .dpad button { position: absolute; border: 0; background: none; cursor: pointer; padding: 0;
           display: flex; align-items: center; justify-content: center; color: var(--pc-text); }
-        .dpad .k { width: 54px; height: 54px; border-radius: 50%; }
+        .dpad .k { width: 46px; height: 46px; border-radius: 50%; }
         .dpad .k:active { background: var(--pc-chip); }
-        .dpad .up { top: 8px; left: 80px; }
-        .dpad .dn { bottom: 8px; left: 80px; }
-        .dpad .lf { left: 8px; top: 80px; }
-        .dpad .rt { right: 8px; top: 80px; }
+        .dpad .up { top: 6px; left: 65px; }
+        .dpad .dn { bottom: 6px; left: 65px; }
+        .dpad .lf { left: 6px; top: 65px; }
+        .dpad .rt { right: 6px; top: 65px; }
         .dpad .ok {
-          width: 84px; height: 84px; border-radius: 50%; top: 65px; left: 65px;
+          width: 70px; height: 70px; border-radius: 50%; top: 53px; left: 53px;
           background: var(--pc-chip); font-size: 13.5px; font-weight: 650;
         }
         .dpad ha-icon { --mdc-icon-size: 26px; }
@@ -4144,13 +4153,19 @@ class PurdyRemoteCard extends PcBaseCard {
       </style>
 
       <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
-        <div class="hd">
+        ${/* Hosted in a sheet, the shell blanks the title because its own chrome
+              already names the card — which left this row as nothing but an
+              "N on" chip, floating alone above a selector whose live dots say
+              the same thing. So the header row goes with the title rather than
+              becoming a 31px restatement. Standalone, with a title, it renders
+              exactly as before. */""}
+        ${!this._config.title ? "" : `<div class="hd">
           <b>${this._config.title}</b>
           <span class="spacer"></span>
           <span class="chip ${onCount ? "good" : ""}">
             ${onCount ? '<span class="cdot"></span>' : ""}${onCount} on
           </span>
-        </div>
+        </div>`}
 
         ${tvs.length > 1 ? `
           <div class="seg">
@@ -4203,12 +4218,14 @@ class PurdyRemoteCard extends PcBaseCard {
             <button class="ok" type="button" data-cmd="DPAD_CENTER">OK</button>
           </div>
 
+          ${/* Two rows of three became one row of six. Navigation and transport
+                are both "what I press while something is on", and at 56px wide
+                each they are still wider than they are tall. This is the 57px
+                that puts the play button back on screen. */""}
           <div class="row">
             ${key("mdi:arrow-u-left-top", "BACK")}
             ${key("mdi:home", "HOME")}
             ${key("mdi:menu", "MENU")}
-          </div>
-          <div class="row">
             ${key("mdi:rewind", "MEDIA_REWIND")}
             ${key("mdi:play-pause", "MEDIA_PLAY_PAUSE")}
             ${key("mdi:fast-forward", "MEDIA_FAST_FORWARD")}
@@ -5325,6 +5342,9 @@ class PurdyShellCard extends PcBaseCard {
     this._open = null;        // key of the expanded section, or null
     this._openGroups = {};    // "sectionKey|groupName" -> true for open groups
     this._sheet = null;       // "alerts" when the alert sheet is showing
+    /* Which face the Media sheet is showing. null means "let the live state
+       decide" — a tap overrides it only while the sheet stays open. */
+    this._mediaPick = null;
     /* Systems is a MODE, not a section: the column and the dock both swap.
        null is the house; "systems" is the server, and _page is which of its
        pages is showing. See 77-shell-systems.js. */
@@ -5474,6 +5494,11 @@ class PurdyShellCard extends PcBaseCard {
        behind every section rather than living in one — so the section walk
        below will never see it. The same treatment the server: block needed. */
     push((c.weather_fx || {}).entity);
+    /* Both TOP-LEVEL keys, same reasoning as weather_fx above: the section walk
+       will never reach them, so a person coming home or the thermometer moving
+       would not repaint until the 30s clock came round. */
+    push(c.weather_temp);
+    (c.people || []).forEach((p) => { push(p.entity); push(p.battery); });
     (c.attention || []).forEach((r) => push(r.entity));
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
@@ -5739,14 +5764,23 @@ class PurdyShellCard extends PcBaseCard {
    * position from resetting under the thumb every time a state changes.
    */
   _mountSheetCard() {
-    const spec = (this._config.sheets || {})[this._sheet];
+    /* The Media sheet hosts a card on one face and our own markup on the
+       other, so the mount is keyed on sheet AND face — a key of just the sheet
+       name would let the remote survive a switch to Listen and back with a
+       stale hass, or worse, mount into a slot that is not there. */
+    const sheets = this._config.sheets || {};
+    const face = this._sheet === "media" ? this._mediaFace() : null;
+    const spec = this._sheet === "media"
+      ? (face === "watch" ? ((sheets.media && sheets.media.card) ? sheets.media : sheets.tv) : null)
+      : sheets[this._sheet];
+    const key = face ? `${this._sheet}:${face}` : this._sheet;
     const host = this.shadowRoot.getElementById("ps-host");
     if (!spec || !spec.card || !host) {
       this._hosted = null;
       this._hostedKey = null;
       return;
     }
-    if (this._hosted && this._hostedKey === this._sheet && host.firstChild) {
+    if (this._hosted && this._hostedKey === key && host.firstChild) {
       this._hosted.hass = this._hass;
       return;
     }
@@ -5755,7 +5789,7 @@ class PurdyShellCard extends PcBaseCard {
     if (!tag || !customElements.get(tag)) {
       host.innerHTML = `<div class="ps-nohist">${psEsc(tag || "card")} is not registered</div>`;
       this._hosted = null;
-      this._hostedKey = this._sheet;
+      this._hostedKey = key;
       return;
     }
 
@@ -5786,7 +5820,7 @@ class PurdyShellCard extends PcBaseCard {
            throwing out of the render and taking the whole shell down. */
         host.innerHTML = `<div class="ps-nohist">${psEsc(tag)}: ${psEsc((err2 && err2.message) || "bad config")}</div>`;
         this._hosted = null;
-        this._hostedKey = this._sheet;
+        this._hostedKey = key;
         return;
       }
     }
@@ -5794,7 +5828,7 @@ class PurdyShellCard extends PcBaseCard {
     host.innerHTML = "";
     host.appendChild(el);
     this._hosted = el;
-    this._hostedKey = this._sheet;
+    this._hostedKey = key;
   }
 
   _render() {
@@ -5819,8 +5853,19 @@ class PurdyShellCard extends PcBaseCard {
       ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
       : "good";
 
-    const wTemp = c.weather && this._hass.states[c.weather]
-      ? this._hass.states[c.weather].attributes.temperature : null;
+    /* The header's reading and the weather section's hero must come from ONE
+       sensor. They did not: the header took `temperature` off the forecast
+       provider (NWS, 73°) while the hero read the yard thermometer (75.9°), and
+       both were on screen at once — a fourteen-degree disagreement in the worst
+       case, three centimetres apart. The card's own rule is that a provider is
+       authoritative about the FUTURE and merely opinionated about the present,
+       so `weather_temp:` names the measured sensor and the provider entity is
+       left to do what it is good at. Falls back to the old behaviour when no
+       sensor is configured, so an install without one is unchanged. */
+    const wTemp = c.weather_temp && pcNum(this._hass, c.weather_temp) != null
+      ? pcNum(this._hass, c.weather_temp)
+      : (c.weather && this._hass.states[c.weather]
+        ? this._hass.states[c.weather].attributes.temperature : null);
     const wState = pcState(this._hass, c.weather);
 
     const sections = [];
@@ -5865,9 +5910,17 @@ class PurdyShellCard extends PcBaseCard {
                 everything under it is one. The greeting changes three times a
                 day and the name never does; neither earns 22px. */""}
           <h2>${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</h2>
-          <div class="ps-d">${now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
+          ${/* Presence used to be a section: two rows reading "Home · 80% ·
+                3,805", 105px, with nothing to tap and nothing to decide. It is
+                ambient, so it belongs in the chrome. The avatars also supersede
+                the occupancy WORD — house_occupancy is Home / Away / Brian Only
+                / Tayler Only, which is per-person presence spelled out, and two
+                rings say which without being read. Occupancy still prints when
+                no people: is configured. */""}
+          <div class="ps-d"><span>${now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
             · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${
-              c.occupancy ? " · " + psEsc(pcState(this._hass, c.occupancy)) : ""}</div>
+              c.people && c.people.length ? ""
+                : (c.occupancy ? " · " + psEsc(pcState(this._hass, c.occupancy)) : "")}</span>${this._hdrPeople()}</div>
         </div>
         <div class="ps-rt">
           ${wTemp == null ? "" : `<div class="ps-wx" data-info="${psEsc(c.weather)}">
@@ -5909,7 +5962,7 @@ class PurdyShellCard extends PcBaseCard {
     const np = this._nowPlaying();
     if (!np) return "";
     const art = np.st.attributes.entity_picture_local;
-    return `<div class="ps-mini" id="ps-mini" data-sheet="music" role="button" tabindex="0">
+    return `<div class="ps-mini" id="ps-mini" ${this._playTarget("listen")} role="button" tabindex="0">
         <div class="ps-mart">${art
           ? `<img src="${psEsc(art)}" alt="" />`
           : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
@@ -6014,6 +6067,27 @@ class PurdyShellCard extends PcBaseCard {
 
     /* Two-tap confirm for anything destructive: the first tap arms, the
        second runs. A modal would be heavier than the action deserves. */
+    /* Starting the Hatch needs no guard: the worst case is white noise in an
+       empty room, which you can hear. Stopping it does — see the arm below.
+
+       The scene is preferred over a bare turn_on when one is configured,
+       because the put-down is a whole setup: Brown Noise at 0.48 with the night
+       light dim red, not merely "the speaker is on". */
+    this._each("[data-hatch]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (el.dataset.hatch !== "start") return;
+        const sec = this._config.sections.find((x) => x.type === "nursery");
+        if (!sec || !sec.hatch) return;
+        if (sec.start_scene) {
+          this._hass.callService("scene", "turn_on", { entity_id: sec.start_scene });
+        } else {
+          this._hass.callService("media_player", "media_play", { entity_id: sec.hatch });
+        }
+        this._render();
+      });
+    });
+
     this._each("[data-arm]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -6037,6 +6111,15 @@ class PurdyShellCard extends PcBaseCard {
           this._render();
         } else if (k === "sdel") {
           this._schedDelete();
+        } else if (k === "hatch") {
+          /* Stopping the sound machine ends the sleep session — in the room and
+             in the record every nursery number is derived from — so it takes
+             the arm rather than firing on one tap. */
+          const sec = this._config.sections.find((x) => x.type === "nursery");
+          if (sec && sec.hatch) {
+            this._hass.callService("media_player", "media_stop", { entity_id: sec.hatch });
+          }
+          this._render();
         } else if (k.indexOf("sy:") === 0) {
           /* Reboot, shut down, stop the array. The entity is in the key so
              this stays generic — the arm is the only thing core owns. */
@@ -6255,6 +6338,22 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const k = el.dataset.sheet;
         this._sheet = this._sheet === k ? null : k;
+        /* A row can ask for a face as well as a sheet, so tapping the TV row in
+           Now playing lands on Watch and a music row lands on Listen. Without
+           this the sheet would open on whatever the live state happened to
+           favour, which is the wrong answer when the user has just pointed at
+           the thing they mean. */
+        if (this._sheet && el.dataset.face) this._mediaPick = el.dataset.face;
+        this._render();
+      });
+    });
+
+    /* The Media sheet's Watch / Listen tabs. The pick lasts as long as the
+       sheet is open — see _mediaFace. */
+    this._each("[data-media]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._mediaPick = el.dataset.media;
         this._render();
       });
     });
@@ -6265,7 +6364,7 @@ class PurdyShellCard extends PcBaseCard {
     }));
     ["ps-close", "ps-scrim"].forEach((id) => {
       this._one(id, (el) =>
-        el.addEventListener("click", () => { this._sheet = null; this._render(); }));
+        el.addEventListener("click", () => { this._sheet = null; this._mediaPick = null; this._render(); }));
     });
 
     this._each("[data-step]", (el) => {
@@ -6752,6 +6851,47 @@ Object.assign(PurdyShellCard.prototype, {
     const u = this._hass && this._hass.user;
     if (!u || !u.name) return "";
     return String(u.name).trim().split(/\s+/)[0];
+  },
+
+  /* Where a "this is playing" row should go.
+   *
+   * Once TV and music are one sheet, a row that opens the old `music` sheet
+   * lands somewhere the dock no longer goes, and a TV row that opens `tv` gets
+   * the remote with no way through to Listen. Both are the orphaning trap this
+   * card has hit twice — so the target is derived rather than configured: if a
+   * media sheet exists, everything routes there, on the face matching the row
+   * the user actually tapped. Installs without one are unchanged. */
+  _playTarget(face) {
+    const sheets = this._config.sheets || {};
+    if (sheets.media) return `data-sheet="media" data-face="${face}"`;
+    return face === "watch" ? "" : `data-sheet="music"`;
+  },
+
+  /* Presence in the header, replacing the `people` section.
+   *
+   * A ring means home. A red pip means the phone is under 25% — the one thing
+   * about a person that is ever actionable from a dashboard, and the only
+   * reason the old section's battery column existed. Steps are neither, so
+   * they move to more-info along with everything else. */
+  _hdrPeople() {
+    const list = this._config.people || [];
+    if (!list.length) return "";
+    const h = this._hass;
+    return `<span class="ps-pav">${list.map((p) => {
+      const st = pcState(h, p.entity);
+      const home = st === "home";
+      const batt = pcNum(h, p.battery);
+      const nm = pcName(h, p.entity, p.name);
+      const pic = h.states[p.entity] && h.states[p.entity].attributes.entity_picture;
+      const bits = [home ? "home" : (st || "").replace(/_/g, " ")];
+      if (batt != null) bits.push(`${Math.round(batt)}%`);
+      return `<span class="ps-pv ${home ? "home" : ""} ${batt != null && batt < 25 ? "low" : ""}"
+          data-info="${psEsc(p.entity)}" role="button" tabindex="0"
+          title="${psEsc(`${nm} — ${bits.join(", ")}`)}"
+          aria-label="${psEsc(`${nm}, ${bits.join(", ")}`)}">${pic
+            ? `<img src="${psEsc(pic)}" alt="" />`
+            : psEsc((nm || "?").charAt(0).toUpperCase())}</span>`;
+    }).join("")}</span>`;
   },
 
   /* A 270° arc. `segs` are [fraction, colour] laid end to end. */
@@ -7302,7 +7442,7 @@ Object.assign(PurdyShellCard.prototype, {
          left out; with two it is the only thing telling them apart. */
       const sub = [[a.media_artist, album].filter(Boolean).join(" — "), np.name]
         .filter(Boolean).join(" · ");
-      rows.push(`<div class="ps-npr" data-sheet="music" role="button" tabindex="0">
+      rows.push(`<div class="ps-npr" ${this._playTarget("listen")} role="button" tabindex="0">
           <div class="ps-npart">${art
             ? `<img src="${psEsc(art)}" alt="" />`
             : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
@@ -7324,9 +7464,13 @@ Object.assign(PurdyShellCard.prototype, {
       const shown = app && app !== "unknown" && app !== "unavailable" ? app : "On";
       /* Prefer a sheet when one is configured; a hash link is the older path
          and leaves a Bubble pop-up to be closed. */
-      const open = sec.remote_sheet
-        ? `data-sheet="${psEsc(sec.remote_sheet)}"`
-        : `data-nav="${psEsc(sec.remote_link || "#tvs")}"`;
+      /* The media sheet wins when there is one; the older remote_sheet and
+         hash-link paths still work for an install without it. */
+      const open = (this._config.sheets || {}).media
+        ? this._playTarget("watch")
+        : (sec.remote_sheet
+          ? `data-sheet="${psEsc(sec.remote_sheet)}"`
+          : `data-nav="${psEsc(sec.remote_link || "#tvs")}"`);
       rows.push(`<div class="ps-npr" ${open} role="button" tabindex="0">
           <div class="ps-npart ps-npapp">${this._appIcon(sec, app)}</div>
           <div class="ps-grow">
@@ -8908,7 +9052,11 @@ Object.assign(PurdyShellCard.prototype, {
        work; the point of moving the TV off a Bubble pop-up is the surface, not
        the contents. The element itself is attached after the patch — it cannot
        be expressed as a string — so this only leaves it a mount point. */
-    const hosted = (this._config.sheets || {})[this._sheet];
+    /* Media is excluded: it also names a card, but it owns its own chrome —
+       the two tabs have to sit above the mount point, and the generic path
+       would render the remote alone with no way to reach Listen. */
+    const hosted = this._sheet === "media"
+      ? null : (this._config.sheets || {})[this._sheet];
     if (hosted && hosted.card) {
       /* `dim` is for a hosted card that hardcodes a light surface instead of
          reading HA's card variables — dreame-vacuum-map-card writes #fff in
@@ -8967,8 +9115,103 @@ Object.assign(PurdyShellCard.prototype, {
        user's pick \u2014 so picking a room changed the highlight and nothing else,
        which is what made choosing a speaker feel broken. One target, and the
        room list is what sets it. */
+    /* The crew, behind the dock. Same body as the section drew, same handlers —
+       only the header differs, and the sheet chrome names itself rather than
+       printing "Crew" twice. The section stays in the config as `alerts_only`,
+       so the landing page keeps the moments that need a human and nothing else.
+
+       The vacuum map is reached from the Jeeves tile inside this body, which is
+       the door that had to move with it: replacing a surface orphans whatever
+       was only reachable through it, and this card has lost the music presets
+       and the vacuum map to exactly that mistake before. */
+    if (this._sheet === "crew") {
+      const sec = (this._config.sections || []).find((x) => x.type === "crew");
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.name || sec.title || "Crew")}</span>
+            ${this._crewChip(sec)}${close}</div>
+          ${this._crewBody(sec, { vac: true })}
+        </div>`;
+    }
+
+    /* One sheet, two verbs.
+     *
+     * Television and music are the same question — what is on — and they were
+     * two dock buttons answering it. Merging them frees a slot AND fixes the
+     * remote, which measured 716px inside a sheet with about 600 to give it, so
+     * the transport keys you reach for while something is playing were the part
+     * that fell off the bottom.
+     *
+     * Which face opens is not a remembered preference: it is what is actually
+     * on. See _mediaFace. */
+    if (this._sheet === "media") {
+      const face = this._mediaFace();
+      const sec = (this._config.sections || []).find((x) => x.type === "music");
+      const tabs = `<div class="ps-mtabs" role="tablist">
+          <button class="ps-mtab${face === "watch" ? " on" : ""}" type="button"
+            data-media="watch" role="tab" aria-selected="${face === "watch"}">Watch</button>
+          <button class="ps-mtab${face === "listen" ? " on" : ""}" type="button"
+            data-media="listen" role="tab" aria-selected="${face === "listen"}">Listen</button>
+        </div>`;
+      const spec = (this._config.sheets || {}).media || {};
+      const title = psEsc(spec.title || "Media");
+      if (face === "watch") {
+        return `<div class="ps-scrim" id="ps-scrim"></div>
+          <div class="ps-sheet tall">
+            <div class="ps-sheeth"><span class="ps-lbl">${title}</span>${close}</div>
+            ${tabs}
+            <div class="ps-host" id="ps-host"></div>
+          </div>`;
+      }
+      if (!sec) return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          <div class="ps-sheeth"><span class="ps-lbl">${title}</span>${close}</div>
+          ${tabs}
+          <div class="ps-nohist">No music section is configured.</div>
+        </div>`;
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${title}${
+            this._musicTargetName(sec)}</span>${close}</div>
+          ${tabs}
+          ${this._musicBody(sec)}
+        </div>`;
+    }
+
     if (this._sheet === "music") {
       const sec = (this._config.sections || []).find((x) => x.type === "music");
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Music${
+            this._musicTargetName(sec)}</span>${close}</div>
+          ${this._musicBody(sec)}
+        </div>`;
+    }
+
+    if (this._sheet === "schedule") {
+      const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Thermostat schedule</span>${close}</div>
+          ${this._scheduleHtml(sec)}
+        </div>`;
+    }
+    return "";
+  },
+
+  /* The music sheet's body, lifted out of _sheetHtml so the Media sheet can
+     render the same thing under its Listen tab. Television and music are the
+     same question — what is on — and they were two dock buttons answering it;
+     the body had to be shared before they could be one.
+
+     Nothing here changed in the lift. The derivations and the markup moved
+     together, which is the only safe way to move a block this size: leaving
+     the derivations behind would have left them computing for a caller that
+     no longer used them. */
+  _musicBody(sec) {
       const np = this._nowPlaying();
       if (!sec) return "";
       const target = this._activePlayer();
@@ -9010,10 +9253,7 @@ Object.assign(PurdyShellCard.prototype, {
           </div>`;
       }).join("");
 
-      return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet tall">
-          <div class="ps-sheeth"><span class="ps-lbl">Music${
-            tname ? ` \u00B7 ${psEsc(tname.name)}` : ""}</span>${close}</div>
+    return `
           <div class="ps-now" style="margin-bottom:12px">
             <div class="ps-art">${art
               ? `<img src="${psEsc(art)}" alt="" />`
@@ -9077,19 +9317,40 @@ Object.assign(PurdyShellCard.prototype, {
           ${this._pinsHtml()}
 
           <div style="margin-top:14px">${this._recentHtml()}</div>
-        </div>`;
-    }
+      `;
+  },
 
-    if (this._sheet === "schedule") {
-      const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
-      if (!sec) return "";
-      return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet tall">
-          <div class="ps-sheeth"><span class="ps-lbl">Thermostat schedule</span>${close}</div>
-          ${this._scheduleHtml(sec)}
-        </div>`;
-    }
-    return "";
+  /* Which face the Media sheet opens on.
+   *
+   * A remembered preference is the wrong answer: you open this sheet BECAUSE
+   * something is on, and the thing that is on is the thing you want. So the
+   * live state decides, and a tap only overrides it for as long as the sheet is
+   * open (_mediaPick is cleared when the sheet closes, the same way _wxPick is
+   * a session-scoped override of a config default).
+   *
+   * Both on is the only genuinely ambiguous case, and there the tap wins;
+   * neither on opens Listen, because starting music from nothing is the
+   * commoner cold start — the televisions are usually turned on at the set. */
+  _mediaFace() {
+    if (this._mediaPick === "watch" || this._mediaPick === "listen") return this._mediaPick;
+    const tvOn = ((this._config.sheets || {}).media || {}).tvs
+      || (((this._config.sheets || {}).media || {}).card || {}).tvs
+      || (((this._config.sheets || {}).tv || {}).card || {}).tvs || [];
+    const anyTv = tvOn.some((t) => {
+      const st = pcState(this._hass, t.media_player || t.remote);
+      return st && st !== "off" && st !== "unavailable" && st !== "unknown";
+    });
+    const anyMusic = !!this._nowPlaying();
+    if (anyTv && !anyMusic) return "watch";
+    return "listen";
+  },
+
+  /* The target room, for the sheet header. Named separately because the
+     header is the caller's and the body is not. */
+  _musicTargetName(sec) {
+    const t = this._activePlayer();
+    const n = (sec.players || []).find((p) => p.entity === t);
+    return n ? ` \u00B7 ${psEsc(n.name)}` : "";
   },
 });
 
@@ -9713,7 +9974,22 @@ Object.assign(PurdyShellCard.prototype, {
     let chipTxt = "Awake";
     if (playing && live) {
       chipCls = live.hadExit ? "deep" : "lt";
-      chipTxt = live.hadExit ? `Asleep ${psHM(live.asleepMinutes)}` : `Settling ${psHM(live.minutes)}`;
+      /* During the NIGHT the ring under this chip already reads the same
+         minutes — "Asleep 2h 51m" sat three centimetres above "2h 51m
+         TONIGHT" all night, which is when you actually look at it. The rule
+         had been applied to the awake case and missed here.
+         So on the night the chip carries the thing the ring cannot: how many
+         times somebody has had to go in. That is the number you want at 2am,
+         and zero is worth saying out loud rather than leaving blank.
+         A nap is different — the ring is showing last night, so the nap's own
+         asleep time is new information and stays. */
+      const isNight = !!(live === nightSession && nightSession.active);
+      chipTxt = !live.hadExit ? `Settling ${psHM(live.minutes)}`
+        : isNight ? (live.interventions
+          ? `${live.interventions} wake-up${live.interventions > 1 ? "s" : ""}`
+          : "Undisturbed")
+          : `Asleep ${psHM(live.asleepMinutes)}`;
+      if (isNight && live.interventions) chipCls = "lt";
     } else if (playing) {
       chipCls = "deep"; chipTxt = "Asleep";
     } else if (stats.wakeWindowMin != null) {
@@ -9783,9 +10059,29 @@ Object.assign(PurdyShellCard.prototype, {
             noData ? (err ? "recorder unavailable" : loaded ? "none yet" : "loading…") : "none yet"}</span>`}</div>
         </div>
       </div>
-      ${noData ? "" : `<div class="ps-jstat">
+      ${/* The one thing done in this room every single day, and the card could
+            not do it: start the Hatch to put him down, stop it to get him up.
+            Both meant leaving for the media page. The sound machine IS the
+            session boundary, so this control is also the thing that starts and
+            ends the record the rest of the section is derived from.
+
+            Stopping is guarded by a two-tap arm, the same as cancelling a hold
+            or deleting a schedule window: an accidental tap while he is asleep
+            ends the session in the data and the white noise in the room. */""}
+      ${noData && !sec.hatch ? "" : `<div class="ps-jstat">
         <span>${psEsc(statusL)}</span>
+        <span class="ps-grow"></span>
         <span>${psEsc(statusR)}</span>
+        ${!sec.hatch ? "" : `<button class="ps-jhatch ${playing ? "on" : ""} ${
+          this._armed === "hatch" ? "armed" : ""}" type="button"
+          data-arm="${playing ? "hatch" : ""}" data-hatch="${playing ? "" : "start"}"
+          aria-label="${playing ? "Stop the Hatch" : "Start the Hatch"}">
+          ${this._armed === "hatch"
+            ? `<span class="ps-jhx">Stop?</span>`
+            : `<svg viewBox="0 0 24 24" class="ps-ico">${playing
+              ? `<rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/>`
+              : `<path d="M7.5 4.8 19 12 7.5 19.2Z"/>`}</svg>`}
+        </button>`}
       </div>`}
       ${wifiOk ? "" : `<div class="ps-chips"><span class="ps-chip bad">Hatch offline</span></div>`}
 
@@ -11885,23 +12181,34 @@ Object.assign(PurdyShellCard.prototype, {
     });
   },
 
-  _secCrew(sec) {
+  /* The status chip, named separately so the sheet header can carry it too. */
+  _crewChip(sec) {
     const h = this._hass;
-    if (!h) return "";
     const v = sec.vacuum || {};
     const l = sec.litter || {};
-    const w = sec.washer || {};
-    const open = this._crewOpen || {};
-
     const states = [v.entity, l.entity].filter(Boolean).map((e) => pcState(h, e));
     const busy = states.filter((s) => s === "cleaning" || s === "returning").length;
     const bad = states.filter((s) => s === "error").length;
-    const chip = bad
+    return bad
       ? `<span class="ps-chip bad"><span class="ps-dot"></span>${bad} error${bad > 1 ? "s" : ""}</span>`
       : busy
         ? `<span class="ps-chip cool"><span class="ps-dot"></span>${busy} running</span>`
         : `<span class="ps-chip good"><span class="ps-dot"></span>All docked</span>`;
+  },
 
+  /* The full crew body, shared by the section and the sheet.
+   *
+   * `openDefault` is how the sheet opens with Jeeves already expanded. In the
+   * column an expanded panel pushed everything below it down, so collapsed was
+   * the right default; a sheet has the room, and leaving it collapsed would put
+   * the vacuum map — the whole reason the map sheet exists — two taps behind a
+   * dock button instead of one. It is a DEFAULT, not a force: the moment
+   * anyone taps a tile _crewOpen exists and wins, so collapsing it sticks. */
+  _crewBody(sec, openDefault) {
+    const v = sec.vacuum || {};
+    const l = sec.litter || {};
+    const w = sec.washer || {};
+    const open = this._crewOpen || openDefault || {};
     const cards = [
       v.entity ? this._crewVacCard(v, !!open.vac) : "",
       l.entity ? this._crewLitterCard(l, !!open.litter) : "",
@@ -11910,11 +12217,94 @@ Object.assign(PurdyShellCard.prototype, {
     /* The panels sit BELOW the grid at full width, not inside the 50% card —
        a dispatch panel squeezed into half the screen is what made the room
        chips wrap six rows deep. */
-    return `${this._head(sec, chip)}
-      <div class="ps-cwgrid">${cards}</div>
+    return `<div class="ps-cwgrid">${cards}</div>
       ${open.vac && v.entity ? this._crewVacPanel(v) : ""}
       ${open.litter && l.entity ? this._crewLitterPanel(l) : ""}
       ${w.entity ? this._crewWasher(w) : ""}`;
+  },
+
+  /* What, if anything, needs a HUMAN.
+   *
+   * This is the whole argument for moving the crew behind the dock. The section
+   * measured 329px — the second largest thing on the phone — and the great
+   * majority of the time it said: everything is docked, nothing is running, the
+   * washer is off. That is a lot of screen to report an absence. Jeeves is idle
+   * most of the day, the litter box is interesting twice a month, and the washer
+   * matters for the twenty minutes after it finishes.
+   *
+   * So the landing page keeps only the moments that need you, and the rest of
+   * it — the map, the rooms, the wear parts, the pet trend — lives in the dock
+   * app where there is room for it. A section renderer that returns "" is
+   * dropped entirely, divider and all, so a quiet house costs nothing.
+   */
+  _crewNeeds(sec) {
+    const h = this._hass;
+    const out = [];
+    const v = sec.vacuum || {};
+    const l = sec.litter || {};
+    const w = sec.washer || {};
+
+    if (pcState(h, v.entity) === "error") {
+      out.push({ icon: v.icon || "mdi:robot-vacuum-alert", sev: "bad",
+        text: `${v.name || "Vacuum"} needs help`, sub: "Stopped with an error" });
+    }
+    if (pcState(h, l.entity) === "error") {
+      out.push({ icon: "mdi:alert-circle-outline", sev: "bad",
+        text: `${l.name || "Litter box"} needs a reset`, sub: "Stopped with an error" });
+    }
+
+    const drawer = pcNum(h, l.waste_drawer);
+    const dAt = sec.drawer_above == null ? 85 : sec.drawer_above;
+    if (drawer != null && drawer >= dAt) {
+      out.push({ icon: "mdi:delete-alert-outline", sev: drawer >= 95 ? "bad" : "warn",
+        text: "Waste drawer is nearly full", sub: `${Math.round(drawer)}% — empty it` });
+    }
+
+    if (pcState(h, w.entity) === "Finished") {
+      const started = psParseTs(pcState(h, w.start_time));
+      out.push({ icon: w.icon || "mdi:washing-machine", sev: "warn",
+        text: `${w.name || "Washer"} has finished`,
+        sub: started ? `Started ${new Date(started).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Unload it" });
+    }
+
+    /* Consumables are a warn, never a critical: a filter at 15% still works.
+       They are also collapsed into one row rather than five, the same way the
+       attention card folds eleven battery sensors into a line. */
+    const wAt = sec.wear_below == null ? 20 : sec.wear_below;
+    const worn = (v.wear || []).filter((x) => {
+      const n = pcNum(h, x.entity);
+      return n != null && n <= wAt;
+    });
+    if (worn.length) {
+      out.push({ icon: "mdi:tools", sev: "warn",
+        text: `${worn.length} ${v.name || "vacuum"} part${worn.length > 1 ? "s" : ""} to replace`,
+        sub: worn.map((x) => `${x.label} ${Math.round(pcNum(h, x.entity))}%`).join(" · ") });
+    }
+    return out;
+  },
+
+  _secCrew(sec) {
+    const h = this._hass;
+    if (!h) return "";
+
+    /* alerts_only is the landing-page face: nothing at all unless something
+       needs doing. The dock app carries everything else. */
+    if (sec.alerts_only) {
+      const needs = this._crewNeeds(sec);
+      if (!needs.length) return "";
+      return needs.map((n) => `<div class="ps-cwneed ${psEsc(n.sev)}" data-sheet="${
+        psEsc(sec.sheet || "crew")}" role="button" tabindex="0">
+          <div class="ps-cwbadge"><ha-icon icon="${psEsc(n.icon)}"></ha-icon></div>
+          <div class="ps-grow">
+            <div class="ps-cwt ps-trunc">${psEsc(n.text)}</div>
+            ${n.sub ? `<div class="ps-cwd ps-trunc">${psEsc(n.sub)}</div>` : ""}
+          </div>
+          <span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+        </div>`).join("");
+    }
+
+    return `${this._head(sec, this._crewChip(sec))}
+      ${this._crewBody(sec)}`;
   },
 
   _crewWasher(w) {
@@ -12388,6 +12778,124 @@ Object.assign(PurdyShellCard.prototype, {
     return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(ts).getDay()];
   },
 
+  /* ------------------------------------------------------------- today ----*/
+
+  /* Today's range, from both halves of what is known.
+   *
+   * The measured statistics say what the day HAS done; the forecast says what
+   * it still will. Neither alone is today: before noon the measured max is a
+   * morning reading, and late in the day NWS has already dropped the daytime
+   * period so the forecast high is gone. Taking the outer envelope of the two
+   * is true whichever half exists, and when only one does the capsule draws as
+   * a stub rather than inventing the other end — the same rule the week rail
+   * follows. */
+  _wxTodayRange() {
+    const st = (this._wxStats || []).find((d) => d.partial);
+    const fc = (this._wxFc || []).find((d) => d.today);
+    const los = [st && st.min, fc && fc.lo].filter((v) => v != null);
+    const his = [st && st.max, fc && fc.hi].filter((v) => v != null);
+    return {
+      lo: los.length ? Math.min(...los) : null,
+      hi: his.length ? Math.max(...his) : null,
+      pop: fc ? fc.pop : null,
+      condition: fc ? fc.condition : null,
+    };
+  },
+
+  /* The horizontal cousin of `_wxCapsule`, and deliberately its own function.
+   *
+   * The week's capsules are seven columns on a shared vertical axis, which is
+   * what makes the SHAPE of the week readable at a glance. Today is one span
+   * with a live position on it, so the axis runs the other way and the thing
+   * being encoded is different: not "how does this day compare to its
+   * neighbours" but "where in today's range are we right now". Rotating the
+   * vertical one would have meant one function with an orientation flag and two
+   * sets of geometry inside it — the hypnogram argument again. */
+  _wxTodayBar(r, live) {
+    if (r.lo == null && r.hi == null) return "";
+    const lo = r.lo == null ? r.hi : r.lo;
+    const hi = r.hi == null ? r.lo : r.hi;
+    /* The live reading can sit outside a range the statistics have not caught
+       up with, so the domain takes it in — a tick floating past the end of its
+       own bar is the contradiction this already had to be fixed for once. */
+    const vals = [lo, hi];
+    if (live != null) vals.push(live);
+    const pad = 2;
+    const dLo = Math.min(...vals) - pad;
+    const dHi = Math.max(...vals) + pad;
+    const span = Math.max(1, dHi - dLo);
+    const pct = (v) => (((v - dLo) / span) * 100);
+    const l = pct(lo);
+    const w = Math.max(4, pct(hi) - l);
+    const partial = r.lo == null || r.hi == null;
+    return `<div class="ps-wxtb">
+        <span class="ps-wxtbend lo">${this._wxDeg(r.lo)}</span>
+        <div class="ps-wxtbtrack">
+          <i class="ps-wxtbfill${partial ? " part" : ""}" style="left:${l.toFixed(1)}%;width:${w.toFixed(1)}%"></i>
+          ${live == null ? "" : `<i class="ps-wxtbnow" style="left:${pct(live).toFixed(1)}%"></i>`}
+        </div>
+        <span class="ps-wxtbend hi">${this._wxDeg(r.hi)}</span>
+      </div>`;
+  },
+
+  /* Three facts, chosen by what the providers here actually publish.
+   *
+   * A fixed list would be half dashes: NWS has no apparent temperature and no
+   * UV index at all, OpenWeatherMap's sensor platform reports `unknown` for dew
+   * point, and met.no carries UV only on its daily forecast. So this is a
+   * priority order that stops at three, and a day with nothing to say about
+   * rain simply shows the next thing down. */
+  _wxTodayFacts(sec, r) {
+    const h = this._hass;
+    const fc = sec.forecast && h.states[sec.forecast];
+    const feels = sec.feels_from && h.states[sec.feels_from];
+    const pick = (k) => {
+      const v = feels ? pcNumOf(feels, k) : null;
+      return v == null ? (fc ? pcNumOf(fc, k) : null) : v;
+    };
+
+    const out = [];
+    const add = (label, v, cls) => {
+      if (v == null || v === "" || out.length >= 3) return;
+      out.push(`<div class="ps-wxf"><span>${psEsc(label)}</span><b class="${cls || ""}">${v}</b></div>`);
+    };
+
+    /* Rain first when there is any: it is the one fact that changes what you
+       do today rather than how it feels. A dry day says nothing at all here
+       instead of "0%", which reads as a measurement of nothing. */
+    if (r.pop != null && r.pop >= 5) add("Rain", `${Math.round(r.pop)}%`, r.pop >= 50 ? "wet" : "");
+
+    const app = pick("apparent_temperature");
+    /* Only when it disagrees with the reading — "feels 76°" beside 75.9° is a
+       tile spent saying nothing. */
+    const live = this._wxLive(sec);
+    if (app != null && (live == null || Math.abs(app - live) >= 2)) {
+      add("Feels", this._wxDeg(app), live != null && app > live ? "wet" : "");
+    }
+
+    const sun = sec.sun && h.states[sec.sun];
+    if (sun) {
+      const up = sun.state === "above_horizon";
+      const when = up ? sun.attributes.next_setting : sun.attributes.next_rising;
+      const d = when ? new Date(when) : null;
+      if (d && !isNaN(d.getTime())) {
+        add(up ? "Sunset" : "Sunrise", psMinsToClock(d.getHours() * 60 + d.getMinutes()));
+      }
+    }
+
+    const hum = pick("humidity");
+    if (hum != null) add("Humidity", `${Math.round(hum)}%`);
+    const ws = pick("wind_speed");
+    /* A bare "2" is not a wind speed. The unit comes off whichever provider
+       answered, because the two here do not agree on it. */
+    if (ws != null) {
+      const unit = (((feels || fc || {}).attributes) || {}).wind_speed_unit || "";
+      add("Wind", `${Math.round(ws)}${unit ? ` ${psEsc(unit)}` : ""}`);
+    }
+
+    return out.length ? `<div class="ps-wxfacts">${out.join("")}</div>` : "";
+  },
+
   _wxDeg(v, digits) {
     return v == null ? "—" : `${v.toFixed(digits == null ? 0 : digits)}°`;
   },
@@ -12780,16 +13288,23 @@ Object.assign(PurdyShellCard.prototype, {
     const rail = this._wxRail(sec);
     const fcSt = sec.forecast && h.states[sec.forecast];
 
-    /* The chip carries the reading and, when they differ, how it feels — the
-       pair worth having on a collapsed header in August. When they agree there
-       is nothing to add, so the condition takes the second slot instead. */
-    const app = sec.feels_from ? pcNumOf(h.states[sec.feels_from], "apparent_temperature") : null;
-    const hot = live != null && app != null && Math.abs(app - live) >= 2;
-    const chipBits = [live == null ? null : this._wxDeg(live)];
-    if (hot) chipBits.push(`feels ${this._wxDeg(app)}`);
-    else if (fcSt) chipBits.push(pcWxText(fcSt.state));
-    const chip = `<span class="ps-chip ${hot && app > live ? "warn" : "cool"}"><span class="ps-dot"></span>${
-      psEsc(chipBits.filter(Boolean).join(" · ")) || "—"}</span>`;
+    /* The chip no longer carries the reading.
+     *
+     * It used to, because the collapsed face was a week rail and the number was
+     * nowhere else on the section. The reading is now the first thing in the
+     * body, three centimetres below — which is exactly the duplication this
+     * card has had to remove twice already ("Up 2h 0m" beside "Awake 2h 0m",
+     * "Feels like 100°" above its own chip). So the chip carries what the body
+     * does not: what is coming. The first wet day if there is one, the
+     * condition otherwise. */
+    const wet = (this._wxFc || []).find((d) => !d.today &&
+      (/rain|pour|lightning|snow|hail|sleet/.test(String(d.condition || "")) ||
+        (d.pop != null && d.pop >= 50)));
+    const chipTxt = wet
+      ? `${pcWxText(wet.condition) || "Rain"} ${this._wxDow(wet.ts, false)}`
+      : (fcSt ? pcWxText(fcSt.state) : "");
+    const chip = `<span class="ps-chip ${wet ? "warn" : "cool"}"><span class="ps-dot"></span>${
+      psEsc(chipTxt) || "—"}</span>`;
 
     /* Today's low is the honest anchor for the delta. "Since this morning" is
        what the reference card said, but it is only true if nothing colder
@@ -12830,6 +13345,20 @@ Object.assign(PurdyShellCard.prototype, {
       : `<span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
         psEsc(nHist > st.days ? "min–max, plus today so far" : "min–max range")}</span>`;
 
+    /* Collapsed is TODAY; expanded is the week.
+     *
+     * The section was 464px — the largest thing on the phone — and it spent
+     * that height in the wrong order. Measured: the rail is 217px of it and the
+     * furniture around it the rest, and on a 390x844 phone the first screen
+     * ended part-way down, so the seven-day rail the section exists for was
+     * always below the fold while the part you DID see was a reading.
+     *
+     * Splitting by tense fixes both halves at once. Today is what you glance
+     * at; the week is what you go looking for, and going looking is what the
+     * chevron is for. Nothing is deleted — the tabs, both rails, the hourly
+     * strip, the min/avg/max tiles and the detail rows are all one tap away. */
+    const todayR = this._wxTodayRange();
+
     return `${this._head(sec, chip)}
       <div class="ps-wxhero">
         <div class="ps-wxheronum">
@@ -12837,17 +13366,33 @@ Object.assign(PurdyShellCard.prototype, {
           ${delta}
           <div class="ps-wxsrc">${psEsc(srcName)}</div>
         </div>
-        <div class="ps-wxtiles">
+        ${/* No caption over an empty box. Before the first statistics answer
+              lands, and on a provider that has published neither half of today,
+              there is no range to draw — and a labelled box with nothing in it
+              claims the section is broken rather than that today is not known
+              yet. The reading and the facts still stand on their own. */""}
+        ${todayR.lo == null && todayR.hi == null ? "" : `<div class="ps-wxtodaybox">
+          <div class="ps-wxrh"><span class="ps-wxlb">Today</span><span class="ps-wxrb">${
+            psEsc(todayR.condition ? pcWxText(todayR.condition) : "range")}</span></div>
+          ${this._wxTodayBar(todayR, live)}
+        </div>`}
+      </div>
+      ${this._wxTodayFacts(sec, todayR)}
+      ${this._wxNote(sec)}
+      <div class="ps-xtra">
+        ${/* The window is named ONCE, here, rather than three times as "MIN 7D
+              / AVG 7D / MAX 7D" — which is what it was, and each of the three
+              wrapped to two lines. */""}
+        <div class="ps-wxrh"><span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
+          psEsc(`last ${st.days || sec.days || 7} days`)}</span></div>
+        <div class="ps-wxtiles wide">
           ${this._wxTile("Min", st.min, "lo")}
           ${this._wxTile("Avg", st.mean, "")}
           ${this._wxTile("Max", st.max, "hi")}
         </div>
-      </div>
-      ${tabs}
-      <div class="ps-wxrh">${railLabel}</div>
-      ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
-      ${this._wxNote(sec)}
-      <div class="ps-xtra">
+        ${tabs}
+        <div class="ps-wxrh">${railLabel}</div>
+        ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
         ${this._wxHourly(sec)}
         ${this._wxRows(sec)}
       </div>`;
@@ -12946,7 +13491,28 @@ const PS_STYLES = `
       /* status strip — no box, floats on the ground */
       .ps-stat { display: flex; align-items: flex-start; gap: 10px; padding: 2px 8px 14px; }
       .ps-stat h2 { font-size: var(--pc-fs-xl); font-weight: 640; letter-spacing: -.028em; margin: 0; line-height: 1.15; }
-      .ps-d { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; margin-top: 3px; }
+      .ps-d { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; margin-top: 3px;
+              display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+      /* Presence, in the chrome rather than in a section of its own.
+         The occupancy helper says "Brian Only"; two avatars with a ring say the
+         same thing without a heading, a card and 105px — and they say WHICH one
+         without being read. The tap target is padded out behind the paint, the
+         same way every round control on this card is.
+         (No backticks anywhere in this file's comments: it is one template
+         literal, and a single one terminates the whole stylesheet.) */
+      .ps-pav { display: flex; align-items: center; gap: 4px; }
+      /* No overflow:hidden on the avatar itself — it would clip the padded tap
+         target below. The image rounds itself instead. */
+      .ps-pv { position: relative; width: 21px; height: 21px; border-radius: 50%; cursor: pointer;
+               display: flex; align-items: center; justify-content: center;
+               background: var(--pc-fill-2); color: var(--ps-dim); font-size: var(--pc-fs-micro); font-weight: 700;
+               box-shadow: 0 0 0 1.5px var(--pc-fill-1); }
+      .ps-pv img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+      .ps-pv.home { box-shadow: 0 0 0 1.5px var(--ps-good); color: var(--ps-text); }
+      .ps-pv.low::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px;
+                          border-radius: 50%; background: var(--ps-bad); box-shadow: 0 0 0 1.5px #10141f; }
+      .ps-pv::before { content: ""; position: absolute; inset: -7px -3px; }
       .ps-rt { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .ps-wx { display: flex; align-items: center; gap: 7px; color: var(--ps-cool); font-size: var(--pc-fs-xl);
                font-weight: 640; font-variant-numeric: tabular-nums; letter-spacing: -.02em; cursor: pointer; }
@@ -13350,6 +13916,37 @@ const PS_STYLES = `
                   text-transform: uppercase; font-weight: 660; margin-top: 5px;
                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                   max-width: 190px; }
+      /* Today, beside the reading. The week's capsules run vertically because
+         seven of them share an axis; today is one span with a live position on
+         it, so it runs the way a day runs. */
+      .ps-wxtodaybox { margin-left: auto; flex: 1; min-width: 0; max-width: 208px; }
+      .ps-wxtodaybox .ps-wxrh { margin: 0 0 7px; }
+      .ps-wxtb { display: flex; align-items: center; gap: 7px; }
+      .ps-wxtbend { font-size: var(--pc-fs-xs); font-weight: 640; font-variant-numeric: tabular-nums;
+                    white-space: nowrap; }
+      .ps-wxtbend.lo { color: var(--ps-cool); }
+      .ps-wxtbend.hi { color: var(--ps-heat); }
+      .ps-wxtbtrack { position: relative; flex: 1; min-width: 0; height: 10px;
+                      border-radius: var(--pc-r-pill); background: var(--ps-track); }
+      .ps-wxtbfill { position: absolute; top: 0; bottom: 0; border-radius: var(--pc-r-pill);
+                     background: linear-gradient(90deg, var(--ps-cool), var(--ps-heat)); }
+      /* Only one end of the day is published — a stub, the same claim the week
+         rail's stub makes, not a bar reaching to an edge it does not know. */
+      .ps-wxtbfill.part { background: linear-gradient(90deg, var(--ps-cool), var(--ps-cool)); opacity: .55; }
+      .ps-wxtbnow { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px;
+                    border-radius: var(--pc-r-hair); background: var(--ps-text);
+                    box-shadow: 0 0 0 2px rgba(10,12,21,.85); z-index: 2; }
+
+      .ps-wxfacts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 11px; }
+      .ps-wxf { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                border-radius: var(--pc-r-sm); padding: 6px 9px; min-width: 0; }
+      .ps-wxf span { display: block; font-size: var(--pc-fs-micro); letter-spacing: .09em;
+                     text-transform: uppercase; color: var(--ps-dim); white-space: nowrap;
+                     overflow: hidden; text-overflow: ellipsis; }
+      .ps-wxf b { display: block; font-size: var(--pc-fs-md); font-weight: 640; margin-top: 2px;
+                  font-variant-numeric: tabular-nums; }
+      .ps-wxf b.wet { color: var(--ps-cool); }
+
       .ps-wxtiles { margin-left: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
                     gap: 6px; min-width: 0; }
       .ps-wxtile { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
@@ -13364,6 +13961,31 @@ const PS_STYLES = `
                      letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
       .ps-wxtile b.lo { color: var(--ps-cool); }
       .ps-wxtile b.hi { color: var(--ps-heat); }
+      /* Inside the expand the tiles own the full width rather than sharing the
+         hero's row, so they stop being a strip squeezed beside a numeral. */
+      .ps-wxtiles.wide { margin-left: 0; width: 100%; }
+
+      /* Watch / Listen. A segmented control rather than two chips, because the
+         two are alternatives to each other — the same reason the systems pages
+         share a dock instead of stacking. */
+      .ps-mtabs { display: flex; gap: 3px; padding: 3px; margin: 0 0 12px;
+                  background: var(--pc-fill-1); border-radius: var(--pc-r-md); }
+      .ps-mtab { flex: 1; border: 0; cursor: pointer; font-family: inherit;
+                 padding: 8px 6px; border-radius: var(--pc-r-sm); background: none;
+                 text-align: center; color: var(--ps-muted);
+                 font-size: var(--pc-fs-sm); font-weight: 660; }
+      .ps-mtab.on { background: var(--pc-fill-3); color: var(--ps-text); }
+
+      /* The crew's landing-page face: one row per thing that needs a human, and
+         no row at all otherwise. */
+      .ps-cwneed { display: flex; align-items: center; gap: 11px; cursor: pointer;
+                   padding: 10px 12px; border-radius: var(--pc-r-lg);
+                   background: var(--pc-fill-1); border: 1px solid var(--pc-edge); }
+      .ps-cwneed + .ps-cwneed { margin-top: 7px; }
+      .ps-cwneed.warn { background: rgba(242,193,78,.10); border-color: rgba(242,193,78,.28); }
+      .ps-cwneed.bad { background: rgba(239,106,106,.10); border-color: rgba(239,106,106,.30); }
+      .ps-cwneed.warn .ps-cwbadge ha-icon { color: var(--ps-warn); }
+      .ps-cwneed.bad .ps-cwbadge ha-icon { color: var(--ps-bad); }
 
       .ps-wxtabs { display: flex; gap: 6px; margin: 14px 0 0; }
       .ps-wxtab { font-size: var(--pc-fs-micro); font-weight: 660; padding: 5px 11px;
@@ -13459,9 +14081,20 @@ const PS_STYLES = `
       .ps-naps { display: flex; gap: 8px; margin-top: 7px; }
       .ps-napr { display: flex; flex-direction: column; align-items: center; gap: 3px; }
       .ps-napr > span { font-size: var(--pc-fs-micro); font-variant-numeric: tabular-nums; }
-      .ps-jstat { display: flex; justify-content: space-between; gap: 10px;
+      .ps-jstat { display: flex; align-items: center; gap: 10px;
                   font-size: var(--pc-fs-xs); color: var(--ps-muted);
                   font-variant-numeric: tabular-nums; padding: 0 2px; }
+      /* Start / stop the Hatch, which is start / stop the sleep session. */
+      .ps-jhatch { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
+                   border: 0; cursor: pointer; position: relative;
+                   background: var(--pc-fill-2); color: var(--ps-muted);
+                   display: flex; align-items: center; justify-content: center; }
+      .ps-jhatch.on { background: rgba(170,120,255,.18); color: var(--ps-deep); }
+      .ps-jhatch.armed { width: auto; border-radius: var(--pc-r-pill); padding: 0 10px;
+                         background: rgba(239,106,106,.16); color: var(--ps-bad); }
+      .ps-jhx { font-size: var(--pc-fs-micro); font-weight: 700; white-space: nowrap; }
+      .ps-jhatch .ps-ico { width: 15px; height: 15px; }
+      .ps-jhatch::after { content: ""; position: absolute; inset: -11px -4px; }
       .ps-hypplot { position: relative; }
       /* Default to letting the browser scroll; claim the gesture only once a
          long press has deliberately entered scrub mode. */
@@ -14273,7 +14906,12 @@ const PD_BORROW = [
      stepper would have grown the identical bug without it */
   "_optGoal",
   /* render plumbing */
-  "_patch", "_each", "_one", "_claim", "_mountSheetCard",
+  /* _mediaFace rides along with _mountSheetCard, which now asks it which face
+     of the Media sheet is showing before deciding what to mount. The desk has
+     no Media button today, so the call never fires — but the borrow is about
+     what the method CAN reach, not what it happens to reach, and a desk dock
+     entry pointing at a media sheet should work the day it is added. */
+  "_patch", "_each", "_one", "_claim", "_mountSheetCard", "_mediaFace",
   /* greeting + name, and the state-string prettifier */
   "_greeting", "_who", "_humanize",
   /* geometry that is genuinely one picture at two sizes */

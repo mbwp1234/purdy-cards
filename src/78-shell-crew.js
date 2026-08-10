@@ -411,23 +411,34 @@ Object.assign(PurdyShellCard.prototype, {
     });
   },
 
-  _secCrew(sec) {
+  /* The status chip, named separately so the sheet header can carry it too. */
+  _crewChip(sec) {
     const h = this._hass;
-    if (!h) return "";
     const v = sec.vacuum || {};
     const l = sec.litter || {};
-    const w = sec.washer || {};
-    const open = this._crewOpen || {};
-
     const states = [v.entity, l.entity].filter(Boolean).map((e) => pcState(h, e));
     const busy = states.filter((s) => s === "cleaning" || s === "returning").length;
     const bad = states.filter((s) => s === "error").length;
-    const chip = bad
+    return bad
       ? `<span class="ps-chip bad"><span class="ps-dot"></span>${bad} error${bad > 1 ? "s" : ""}</span>`
       : busy
         ? `<span class="ps-chip cool"><span class="ps-dot"></span>${busy} running</span>`
         : `<span class="ps-chip good"><span class="ps-dot"></span>All docked</span>`;
+  },
 
+  /* The full crew body, shared by the section and the sheet.
+   *
+   * `openDefault` is how the sheet opens with Jeeves already expanded. In the
+   * column an expanded panel pushed everything below it down, so collapsed was
+   * the right default; a sheet has the room, and leaving it collapsed would put
+   * the vacuum map — the whole reason the map sheet exists — two taps behind a
+   * dock button instead of one. It is a DEFAULT, not a force: the moment
+   * anyone taps a tile _crewOpen exists and wins, so collapsing it sticks. */
+  _crewBody(sec, openDefault) {
+    const v = sec.vacuum || {};
+    const l = sec.litter || {};
+    const w = sec.washer || {};
+    const open = this._crewOpen || openDefault || {};
     const cards = [
       v.entity ? this._crewVacCard(v, !!open.vac) : "",
       l.entity ? this._crewLitterCard(l, !!open.litter) : "",
@@ -436,11 +447,94 @@ Object.assign(PurdyShellCard.prototype, {
     /* The panels sit BELOW the grid at full width, not inside the 50% card —
        a dispatch panel squeezed into half the screen is what made the room
        chips wrap six rows deep. */
-    return `${this._head(sec, chip)}
-      <div class="ps-cwgrid">${cards}</div>
+    return `<div class="ps-cwgrid">${cards}</div>
       ${open.vac && v.entity ? this._crewVacPanel(v) : ""}
       ${open.litter && l.entity ? this._crewLitterPanel(l) : ""}
       ${w.entity ? this._crewWasher(w) : ""}`;
+  },
+
+  /* What, if anything, needs a HUMAN.
+   *
+   * This is the whole argument for moving the crew behind the dock. The section
+   * measured 329px — the second largest thing on the phone — and the great
+   * majority of the time it said: everything is docked, nothing is running, the
+   * washer is off. That is a lot of screen to report an absence. Jeeves is idle
+   * most of the day, the litter box is interesting twice a month, and the washer
+   * matters for the twenty minutes after it finishes.
+   *
+   * So the landing page keeps only the moments that need you, and the rest of
+   * it — the map, the rooms, the wear parts, the pet trend — lives in the dock
+   * app where there is room for it. A section renderer that returns "" is
+   * dropped entirely, divider and all, so a quiet house costs nothing.
+   */
+  _crewNeeds(sec) {
+    const h = this._hass;
+    const out = [];
+    const v = sec.vacuum || {};
+    const l = sec.litter || {};
+    const w = sec.washer || {};
+
+    if (pcState(h, v.entity) === "error") {
+      out.push({ icon: v.icon || "mdi:robot-vacuum-alert", sev: "bad",
+        text: `${v.name || "Vacuum"} needs help`, sub: "Stopped with an error" });
+    }
+    if (pcState(h, l.entity) === "error") {
+      out.push({ icon: "mdi:alert-circle-outline", sev: "bad",
+        text: `${l.name || "Litter box"} needs a reset`, sub: "Stopped with an error" });
+    }
+
+    const drawer = pcNum(h, l.waste_drawer);
+    const dAt = sec.drawer_above == null ? 85 : sec.drawer_above;
+    if (drawer != null && drawer >= dAt) {
+      out.push({ icon: "mdi:delete-alert-outline", sev: drawer >= 95 ? "bad" : "warn",
+        text: "Waste drawer is nearly full", sub: `${Math.round(drawer)}% — empty it` });
+    }
+
+    if (pcState(h, w.entity) === "Finished") {
+      const started = psParseTs(pcState(h, w.start_time));
+      out.push({ icon: w.icon || "mdi:washing-machine", sev: "warn",
+        text: `${w.name || "Washer"} has finished`,
+        sub: started ? `Started ${new Date(started).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Unload it" });
+    }
+
+    /* Consumables are a warn, never a critical: a filter at 15% still works.
+       They are also collapsed into one row rather than five, the same way the
+       attention card folds eleven battery sensors into a line. */
+    const wAt = sec.wear_below == null ? 20 : sec.wear_below;
+    const worn = (v.wear || []).filter((x) => {
+      const n = pcNum(h, x.entity);
+      return n != null && n <= wAt;
+    });
+    if (worn.length) {
+      out.push({ icon: "mdi:tools", sev: "warn",
+        text: `${worn.length} ${v.name || "vacuum"} part${worn.length > 1 ? "s" : ""} to replace`,
+        sub: worn.map((x) => `${x.label} ${Math.round(pcNum(h, x.entity))}%`).join(" · ") });
+    }
+    return out;
+  },
+
+  _secCrew(sec) {
+    const h = this._hass;
+    if (!h) return "";
+
+    /* alerts_only is the landing-page face: nothing at all unless something
+       needs doing. The dock app carries everything else. */
+    if (sec.alerts_only) {
+      const needs = this._crewNeeds(sec);
+      if (!needs.length) return "";
+      return needs.map((n) => `<div class="ps-cwneed ${psEsc(n.sev)}" data-sheet="${
+        psEsc(sec.sheet || "crew")}" role="button" tabindex="0">
+          <div class="ps-cwbadge"><ha-icon icon="${psEsc(n.icon)}"></ha-icon></div>
+          <div class="ps-grow">
+            <div class="ps-cwt ps-trunc">${psEsc(n.text)}</div>
+            ${n.sub ? `<div class="ps-cwd ps-trunc">${psEsc(n.sub)}</div>` : ""}
+          </div>
+          <span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>
+        </div>`).join("");
+    }
+
+    return `${this._head(sec, this._crewChip(sec))}
+      ${this._crewBody(sec)}`;
   },
 
   _crewWasher(w) {

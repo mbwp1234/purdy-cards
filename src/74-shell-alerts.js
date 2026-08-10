@@ -238,7 +238,11 @@ Object.assign(PurdyShellCard.prototype, {
        work; the point of moving the TV off a Bubble pop-up is the surface, not
        the contents. The element itself is attached after the patch — it cannot
        be expressed as a string — so this only leaves it a mount point. */
-    const hosted = (this._config.sheets || {})[this._sheet];
+    /* Media is excluded: it also names a card, but it owns its own chrome —
+       the two tabs have to sit above the mount point, and the generic path
+       would render the remote alone with no way to reach Listen. */
+    const hosted = this._sheet === "media"
+      ? null : (this._config.sheets || {})[this._sheet];
     if (hosted && hosted.card) {
       /* `dim` is for a hosted card that hardcodes a light surface instead of
          reading HA's card variables — dreame-vacuum-map-card writes #fff in
@@ -297,8 +301,103 @@ Object.assign(PurdyShellCard.prototype, {
        user's pick \u2014 so picking a room changed the highlight and nothing else,
        which is what made choosing a speaker feel broken. One target, and the
        room list is what sets it. */
+    /* The crew, behind the dock. Same body as the section drew, same handlers —
+       only the header differs, and the sheet chrome names itself rather than
+       printing "Crew" twice. The section stays in the config as `alerts_only`,
+       so the landing page keeps the moments that need a human and nothing else.
+
+       The vacuum map is reached from the Jeeves tile inside this body, which is
+       the door that had to move with it: replacing a surface orphans whatever
+       was only reachable through it, and this card has lost the music presets
+       and the vacuum map to exactly that mistake before. */
+    if (this._sheet === "crew") {
+      const sec = (this._config.sections || []).find((x) => x.type === "crew");
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.name || sec.title || "Crew")}</span>
+            ${this._crewChip(sec)}${close}</div>
+          ${this._crewBody(sec, { vac: true })}
+        </div>`;
+    }
+
+    /* One sheet, two verbs.
+     *
+     * Television and music are the same question — what is on — and they were
+     * two dock buttons answering it. Merging them frees a slot AND fixes the
+     * remote, which measured 716px inside a sheet with about 600 to give it, so
+     * the transport keys you reach for while something is playing were the part
+     * that fell off the bottom.
+     *
+     * Which face opens is not a remembered preference: it is what is actually
+     * on. See _mediaFace. */
+    if (this._sheet === "media") {
+      const face = this._mediaFace();
+      const sec = (this._config.sections || []).find((x) => x.type === "music");
+      const tabs = `<div class="ps-mtabs" role="tablist">
+          <button class="ps-mtab${face === "watch" ? " on" : ""}" type="button"
+            data-media="watch" role="tab" aria-selected="${face === "watch"}">Watch</button>
+          <button class="ps-mtab${face === "listen" ? " on" : ""}" type="button"
+            data-media="listen" role="tab" aria-selected="${face === "listen"}">Listen</button>
+        </div>`;
+      const spec = (this._config.sheets || {}).media || {};
+      const title = psEsc(spec.title || "Media");
+      if (face === "watch") {
+        return `<div class="ps-scrim" id="ps-scrim"></div>
+          <div class="ps-sheet tall">
+            <div class="ps-sheeth"><span class="ps-lbl">${title}</span>${close}</div>
+            ${tabs}
+            <div class="ps-host" id="ps-host"></div>
+          </div>`;
+      }
+      if (!sec) return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          <div class="ps-sheeth"><span class="ps-lbl">${title}</span>${close}</div>
+          ${tabs}
+          <div class="ps-nohist">No music section is configured.</div>
+        </div>`;
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${title}${
+            this._musicTargetName(sec)}</span>${close}</div>
+          ${tabs}
+          ${this._musicBody(sec)}
+        </div>`;
+    }
+
     if (this._sheet === "music") {
       const sec = (this._config.sections || []).find((x) => x.type === "music");
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Music${
+            this._musicTargetName(sec)}</span>${close}</div>
+          ${this._musicBody(sec)}
+        </div>`;
+    }
+
+    if (this._sheet === "schedule") {
+      const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">Thermostat schedule</span>${close}</div>
+          ${this._scheduleHtml(sec)}
+        </div>`;
+    }
+    return "";
+  },
+
+  /* The music sheet's body, lifted out of _sheetHtml so the Media sheet can
+     render the same thing under its Listen tab. Television and music are the
+     same question — what is on — and they were two dock buttons answering it;
+     the body had to be shared before they could be one.
+
+     Nothing here changed in the lift. The derivations and the markup moved
+     together, which is the only safe way to move a block this size: leaving
+     the derivations behind would have left them computing for a caller that
+     no longer used them. */
+  _musicBody(sec) {
       const np = this._nowPlaying();
       if (!sec) return "";
       const target = this._activePlayer();
@@ -340,10 +439,7 @@ Object.assign(PurdyShellCard.prototype, {
           </div>`;
       }).join("");
 
-      return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet tall">
-          <div class="ps-sheeth"><span class="ps-lbl">Music${
-            tname ? ` \u00B7 ${psEsc(tname.name)}` : ""}</span>${close}</div>
+    return `
           <div class="ps-now" style="margin-bottom:12px">
             <div class="ps-art">${art
               ? `<img src="${psEsc(art)}" alt="" />`
@@ -407,19 +503,40 @@ Object.assign(PurdyShellCard.prototype, {
           ${this._pinsHtml()}
 
           <div style="margin-top:14px">${this._recentHtml()}</div>
-        </div>`;
-    }
+      `;
+  },
 
-    if (this._sheet === "schedule") {
-      const sec = (this._config.sections || []).find((x) => x.type === "climate" && x.schedule);
-      if (!sec) return "";
-      return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet tall">
-          <div class="ps-sheeth"><span class="ps-lbl">Thermostat schedule</span>${close}</div>
-          ${this._scheduleHtml(sec)}
-        </div>`;
-    }
-    return "";
+  /* Which face the Media sheet opens on.
+   *
+   * A remembered preference is the wrong answer: you open this sheet BECAUSE
+   * something is on, and the thing that is on is the thing you want. So the
+   * live state decides, and a tap only overrides it for as long as the sheet is
+   * open (_mediaPick is cleared when the sheet closes, the same way _wxPick is
+   * a session-scoped override of a config default).
+   *
+   * Both on is the only genuinely ambiguous case, and there the tap wins;
+   * neither on opens Listen, because starting music from nothing is the
+   * commoner cold start — the televisions are usually turned on at the set. */
+  _mediaFace() {
+    if (this._mediaPick === "watch" || this._mediaPick === "listen") return this._mediaPick;
+    const tvOn = ((this._config.sheets || {}).media || {}).tvs
+      || (((this._config.sheets || {}).media || {}).card || {}).tvs
+      || (((this._config.sheets || {}).tv || {}).card || {}).tvs || [];
+    const anyTv = tvOn.some((t) => {
+      const st = pcState(this._hass, t.media_player || t.remote);
+      return st && st !== "off" && st !== "unavailable" && st !== "unknown";
+    });
+    const anyMusic = !!this._nowPlaying();
+    if (anyTv && !anyMusic) return "watch";
+    return "listen";
+  },
+
+  /* The target room, for the sheet header. Named separately because the
+     header is the caller's and the body is not. */
+  _musicTargetName(sec) {
+    const t = this._activePlayer();
+    const n = (sec.players || []).find((p) => p.entity === t);
+    return n ? ` \u00B7 ${psEsc(n.name)}` : "";
   },
 });
 

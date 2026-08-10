@@ -618,7 +618,22 @@ Object.assign(PurdyShellCard.prototype, {
     let chipTxt = "Awake";
     if (playing && live) {
       chipCls = live.hadExit ? "deep" : "lt";
-      chipTxt = live.hadExit ? `Asleep ${psHM(live.asleepMinutes)}` : `Settling ${psHM(live.minutes)}`;
+      /* During the NIGHT the ring under this chip already reads the same
+         minutes — "Asleep 2h 51m" sat three centimetres above "2h 51m
+         TONIGHT" all night, which is when you actually look at it. The rule
+         had been applied to the awake case and missed here.
+         So on the night the chip carries the thing the ring cannot: how many
+         times somebody has had to go in. That is the number you want at 2am,
+         and zero is worth saying out loud rather than leaving blank.
+         A nap is different — the ring is showing last night, so the nap's own
+         asleep time is new information and stays. */
+      const isNight = !!(live === nightSession && nightSession.active);
+      chipTxt = !live.hadExit ? `Settling ${psHM(live.minutes)}`
+        : isNight ? (live.interventions
+          ? `${live.interventions} wake-up${live.interventions > 1 ? "s" : ""}`
+          : "Undisturbed")
+          : `Asleep ${psHM(live.asleepMinutes)}`;
+      if (isNight && live.interventions) chipCls = "lt";
     } else if (playing) {
       chipCls = "deep"; chipTxt = "Asleep";
     } else if (stats.wakeWindowMin != null) {
@@ -688,9 +703,29 @@ Object.assign(PurdyShellCard.prototype, {
             noData ? (err ? "recorder unavailable" : loaded ? "none yet" : "loading…") : "none yet"}</span>`}</div>
         </div>
       </div>
-      ${noData ? "" : `<div class="ps-jstat">
+      ${/* The one thing done in this room every single day, and the card could
+            not do it: start the Hatch to put him down, stop it to get him up.
+            Both meant leaving for the media page. The sound machine IS the
+            session boundary, so this control is also the thing that starts and
+            ends the record the rest of the section is derived from.
+
+            Stopping is guarded by a two-tap arm, the same as cancelling a hold
+            or deleting a schedule window: an accidental tap while he is asleep
+            ends the session in the data and the white noise in the room. */""}
+      ${noData && !sec.hatch ? "" : `<div class="ps-jstat">
         <span>${psEsc(statusL)}</span>
+        <span class="ps-grow"></span>
         <span>${psEsc(statusR)}</span>
+        ${!sec.hatch ? "" : `<button class="ps-jhatch ${playing ? "on" : ""} ${
+          this._armed === "hatch" ? "armed" : ""}" type="button"
+          data-arm="${playing ? "hatch" : ""}" data-hatch="${playing ? "" : "start"}"
+          aria-label="${playing ? "Stop the Hatch" : "Start the Hatch"}">
+          ${this._armed === "hatch"
+            ? `<span class="ps-jhx">Stop?</span>`
+            : `<svg viewBox="0 0 24 24" class="ps-ico">${playing
+              ? `<rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/>`
+              : `<path d="M7.5 4.8 19 12 7.5 19.2Z"/>`}</svg>`}
+        </button>`}
       </div>`}
       ${wifiOk ? "" : `<div class="ps-chips"><span class="ps-chip bad">Hatch offline</span></div>`}
 
