@@ -3627,6 +3627,201 @@ check('_startNursery is actually called, not merely defined',
   /this\._startNursery\(\);/.test(
     fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
 
+/* ---------------------------------------------------------------------------
+ * Corrections.
+ *
+ * The regression case is REAL and is the reason the feature exists: on
+ * 2026-08-10 the Hatch ran 08:52-09:53 and the room was visited at 08:52,
+ * 09:08, 09:22 and 09:42. The nap's settle_max_min is 30 minutes measured from
+ * the session start, so the chain stopped at the 09:22 trip and the 09:42
+ * re-settle was filed as an intervention DURING sleep: 31 minutes asleep on a
+ * nap that was eleven. Raising the cap fixes that morning and swallows the head
+ * of a genuinely long nap on another, so the fix is a human override.
+ */
+const napEdits = SH.helpers.applyNapEdits;
+const parseEdits = SH.helpers.parseNapEdits;
+const writeEdits = SH.helpers.writeNapEdits;
+
+const failedNap = () => nsess(
+  [{ t: NT(8, 52, 23), s: 'playing' }, { t: NT(9, 53, 41), s: 'idle' }],
+  [{ t: NT(8, 51, 0), s: 'on' }, { t: NT(8, 52, 38), s: 'off' },
+   { t: NT(9, 8, 21), s: 'on' }, { t: NT(9, 9, 30), s: 'off' },
+   { t: NT(9, 22, 23), s: 'on' }, { t: NT(9, 24, 0), s: 'off' },
+   { t: NT(9, 42, 16), s: 'on' }, { t: NT(9, 43, 30), s: 'off' }],
+  { now: NT(12, 0) });
+
+check('the 2026-08-10 nap really does over-report, unedited', (() => {
+  const s = failedNap();
+  return s.length === 1 && s[0].asleepMinutes > 25 && s[0].interventions === 1;
+})());
+
+check('an override rewrites the sleep window and everything derived from it', (() => {
+  const base = failedNap();
+  const start = base[0].from;
+  /* Fell asleep at 09:43, woke when the Hatch stopped. */
+  const out = napEdits(base, [{ start, from: 51, to: 61 }]);
+  return out.length === 1 && out[0].edited === true
+    && out[0].asleepMinutes === 10 && out[0].settleMinutes === 51
+    /* The 09:42 trip was the end of the put-down, so it stops being a
+       wake-up as well as stopping being sleep. */
+    && out[0].interventions === 0
+    && out[0].longestStretch === 10;
+})());
+
+check('an override is matched on start time within a tolerance, not exactly', (() => {
+  const base = failedNap();
+  const out = napEdits(base, [{ start: base[0].from + 90000, from: 51, to: 61 }]);
+  return out.length === 1 && out[0].edited === true;
+})());
+
+check('an override for a different session is left alone', (() => {
+  const base = failedNap();
+  const out = napEdits(base, [{ start: base[0].from + 40 * 60000, from: 5, to: 10 }]);
+  return out.length === 1 && !out[0].edited && out[0].asleepMinutes === base[0].asleepMinutes;
+})());
+
+/* "Didn't sleep" is a real zero and must survive as one — the same rule that
+   keeps a missing reading apart from a measured nothing, from the other side. */
+check('a session corrected to no sleep reports zero, not the derived figure', (() => {
+  const base = failedNap();
+  const out = napEdits(base, [{ start: base[0].from, from: 61, to: 61 }]);
+  return out[0].asleepMinutes === 0 && out[0].edited === true;
+})());
+
+check('a deleted session disappears entirely', (() => {
+  const out = napEdits(failedNap(), [{ start: failedNap()[0].from, del: true }]);
+  return out.length === 0;
+})());
+
+check('an override can never invert or escape the Hatch span', (() => {
+  const base = failedNap();
+  const out = napEdits(base, [{ start: base[0].from, from: 900, to: -50 }]);
+  const span = Math.round((base[0].to - base[0].from) / 60000);
+  return out[0].settledAt <= base[0].to && out[0].wokeAt >= out[0].settledAt
+    && out[0].settleMinutes <= span && out[0].asleepMinutes >= 0;
+})());
+
+check('wokeAt is present on an underived session so every surface can read it',
+  failedNap()[0].wokeAt === failedNap()[0].to);
+
+check('the raw door trips survive the correction as evidence', (() => {
+  const base = failedNap();
+  const out = napEdits(base, [{ start: base[0].from, from: 51, to: 61 }]);
+  return (out[0].doorAt || []).length === 4 && out[0].events.length === 0;
+})());
+
+check('the store round-trips', (() => {
+  const list = [{ start: NT(8, 52), from: 51, to: 61 }, { start: NT(20, 0), del: true }];
+  const back = parseEdits(writeEdits(list));
+  return back.length === 2 && back[0].from === 51 && back[1].del === true
+    && Math.abs(back[0].start - NT(8, 52)) < 60000;
+})());
+
+/* An input_text reads "unknown" before it is ever written, and truncates at
+   255 — both have bitten this project's other stores. */
+check('an unwritten store parses as no corrections',
+  parseEdits('unknown').length === 0 && parseEdits('').length === 0
+    && parseEdits(null).length === 0 && parseEdits('junk~~x|9').length === 0);
+
+check('the store drops the oldest entries rather than failing the write', (() => {
+  const many = Array.from({ length: 40 }, (_, i) => ({ start: NT(8, 0) + i * 86400000, from: 5, to: 60 }));
+  const raw = writeEdits(many);
+  return raw.length <= 255 && parseEdits(raw).length < 40 && parseEdits(raw).length > 5;
+})());
+
+const editedCard = (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
+    edits: { store: 'input_text.napedits' } }] });
+  s._testNow = NT(12, 0);
+  const start = Math.round(NT(8, 52, 23) / 60000);
+  s._hass = { states: {
+    'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'input_text.napedits': { state: `${start}~51~61`, attributes: {} } } };
+  s._nursery = {
+    'media_player.h': [{ t: NT(8, 52, 23), s: 'playing' }, { t: NT(9, 53, 41), s: 'idle' }],
+    'binary_sensor.d': [{ t: NT(8, 51, 0), s: 'on' }, { t: NT(8, 52, 38), s: 'off' },
+      { t: NT(9, 8, 21), s: 'on' }, { t: NT(9, 9, 30), s: 'off' },
+      { t: NT(9, 22, 23), s: 'on' }, { t: NT(9, 24, 0), s: 'off' },
+      { t: NT(9, 42, 16), s: 'on' }, { t: NT(9, 43, 30), s: 'off' }] };
+  return s;
+})();
+
+check('the card reads its corrections out of the store', (() => {
+  const sess = editedCard._nurserySessions(editedCard._config.sections[0]);
+  return sess.length === 1 && sess[0].edited === true && sess[0].asleepMinutes === 10;
+})());
+
+/* A corrected figure and a measured one must not render identically. This is
+   the zero-versus-missing rule at a new surface, and it has shipped broken at
+   every previous new surface. */
+check('a corrected session is marked wherever it is drawn', (() => {
+  const html = editedCard._secNursery(editedCard._config.sections[0]);
+  return /ps-edd/.test(html) && /\.ps-edd \{/.test(SH.styles);
+})());
+
+check('the mark exists on the desk too, which reads the same store',
+  /\.ps-edd \{/.test(defined['purdy-desk-card'].styles));
+
+check('the rows are long-press targets only where there is somewhere to write', (() => {
+  const withStore = editedCard._secNursery(editedCard._config.sections[0]);
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
+  s._testNow = NT(12, 0);
+  s._hass = editedCard._hass;
+  s._nursery = editedCard._nursery;
+  const without = s._secNursery(s._config.sections[0]);
+  return /data-napedit=/.test(withStore) && /Press and hold/.test(withStore)
+    && !/data-napedit=/.test(without) && !/Press and hold/.test(without);
+})());
+
+check('the correction sheet draws the session, both steppers and the door trips', (() => {
+  const s = editedCard;
+  s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
+  const html = s._sheetHtml([]);
+  s._sheet = null; s._napEdit = null;
+  return /Correct this nap/.test(html)
+    && /data-napstep="from:-5"/.test(html) && /data-napstep="to:5"/.test(html)
+    && /ps-nesave/.test(html) && /data-arm="napdel"/.test(html)
+    /* The derived figure is named beside the correction, so the card can be
+       checked rather than merely believed. */
+    && /derived|saved/.test(html);
+})());
+
+check('a stepper cannot push woke before fell-asleep', (() => {
+  const s = editedCard;
+  s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
+  for (let i = 0; i < 30; i += 1) s._napEditStep('to', -5);
+  const ok = s._napEdit.to >= s._napEdit.from;
+  s._sheet = null; s._napEdit = null;
+  return ok;
+})());
+
+check('the napdel arm is routed, not merely rendered',
+  /k === "napdel"/.test(fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+
+check('_bindNapEdit is actually called, not merely defined',
+  /this\._bindNapEdit\(\);/.test(
+    fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+
+check('the corrections store is in the watched set', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d',
+    edits: { store: 'input_text.napedits' } }] });
+  return (s._watched || []).indexOf('input_text.napedits') >= 0;
+})());
+
+/* The desk borrows _nurserySessions, which now applies the store — so the two
+   store readers have to come with it or the borrowed method throws. */
+check('the desk borrows the corrections readers alongside the derivation', (() => {
+  const src = fs.readFileSync(new URL('../src/80-desk-core.js', import.meta.url), 'utf8');
+  return /"_napEditStore", "_napEdits"/.test(src);
+})());
+
 /* An MA player mirrors its source device: a Twitch stream came back as
    media_content_type "music", and only a missing title kept it off the screen. */
 const isMusic = SH.helpers.isMusic;

@@ -310,6 +310,25 @@ Object.assign(PurdyShellCard.prototype, {
        the door that had to move with it: replacing a surface orphans whatever
        was only reachable through it, and this card has lost the music presets
        and the vacuum map to exactly that mistake before. */
+    /* Correcting a session. A sheet for the same reason the schedule editor is
+       one: it slides over the list you were reading instead of pushing it down
+       the screen, so the row you long-pressed is still where you left it when
+       the sheet closes. */
+    if (this._sheet === "napedit") {
+      const body = this._napEditHtml();
+      if (!body) return "";
+      const s = this._napEditSpan();
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          ${/* No time chip: the rail immediately below carries the session's
+                start and end, and a chip repeating the start is the fifth
+                time that duplication would have shipped. */""}
+          <div class="ps-sheeth"><span class="ps-lbl">${
+            s && s.night ? "Correct the night" : "Correct this nap"}</span>${close}</div>
+          ${body}
+        </div>`;
+    }
+
     if (this._sheet === "crew") {
       const sec = (this._config.sections || []).find((x) => x.type === "crew");
       if (!sec) return "";

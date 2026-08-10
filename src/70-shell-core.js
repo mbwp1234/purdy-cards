@@ -84,6 +84,10 @@ class PurdyShellCard extends PcBaseCard {
     /* Which face the Media sheet is showing. null means "let the live state
        decide" — a tap overrides it only while the sheet stays open. */
     this._mediaPick = null;
+    /* The nursery session being corrected: {start, from, to} in minutes from
+       the session start. Session-scoped like _mediaPick — closing the sheet
+       throws it away rather than remembering a half-made edit. */
+    this._napEdit = null;
     /* Systems is a MODE, not a section: the column and the dock both swap.
        null is the house; "systems" is the server, and _page is which of its
        pages is showing. See 77-shell-systems.js. */
@@ -273,6 +277,10 @@ class PurdyShellCard extends PcBaseCard {
       }
       if (s.type === "nursery") {
         push(s.hatch); push(s.door); push(s.hatch_wifi); push(s.light);
+        /* The corrections store. Without it a saved edit would not appear
+           until the 30s clock came round — a control that answers half a
+           minute later reads as one that did nothing. */
+        push((s.edits || {}).store);
       }
       /* The hero number is a watched state, not part of the weather fetch, so
          the reading on screen moves with the thermometer rather than waiting up
@@ -700,6 +708,7 @@ class PurdyShellCard extends PcBaseCard {
     this._bindScrub();
     this._bindLights();
     this._bindCrew();
+    this._bindNapEdit();
     this._bindSystems();
     this._reserve();
     /* Only while the music sheet is open, and only when the answer could have
@@ -873,6 +882,12 @@ class PurdyShellCard extends PcBaseCard {
             this._hass.callService("media_player", "media_stop", { entity_id: sec.hatch });
           }
           this._render();
+        } else if (k === "napdel") {
+          /* Recording that a session never happened at all. It only removes
+             the session from the card's reading of history — the recorder is
+             untouched, so the arm is about the averages this feeds, not about
+             losing data. */
+          this._napEditDelete();
         } else if (k.indexOf("sy:") === 0) {
           /* Reboot, shut down, stop the array. The entity is in the key so
              this stays generic — the arm is the only thing core owns. */
@@ -1117,7 +1132,9 @@ class PurdyShellCard extends PcBaseCard {
     }));
     ["ps-close", "ps-scrim"].forEach((id) => {
       this._one(id, (el) =>
-        el.addEventListener("click", () => { this._sheet = null; this._mediaPick = null; this._render(); }));
+        el.addEventListener("click", () => {
+          this._sheet = null; this._mediaPick = null; this._napEdit = null; this._render();
+        }));
     });
 
     this._each("[data-step]", (el) => {
@@ -1569,6 +1586,7 @@ class PurdyShellCard extends PcBaseCard {
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
+      parseNapEdits: psParseNapEdits, writeNapEdits: psWriteNapEdits, applyNapEdits: psApplyNapEdits,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
       healthMeter: psHealthMeter, hmDur: psHmDur, hmDomain: psHmDomain, hmPos: psHmPos,

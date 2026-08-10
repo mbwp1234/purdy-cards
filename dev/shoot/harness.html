@@ -206,6 +206,23 @@ function buildHass(states) {
          face is otherwise unphotographable whenever the televisions are off,
          which is most of the day. */
       if (P.get("media")) { el._mediaPick = P.get("media"); touched = true; }
+      /* The correction sheet. It is opened by a long press, which is the one
+         entry point a URL cannot express, and the sheet has no content at all
+         until a session is chosen — so this picks one out of the card's own
+         derived list rather than inventing a start time. `last` / `first` /
+         `night`, or an index. */
+      if (P.get("napedit") && el._nurserySection && el._openNapEdit) {
+        const sec = el._nurserySection();
+        const all = sec ? el._nurserySessions(sec) : [];
+        const want = P.get("napedit");
+        const naps = all.filter((s) => !s.night);
+        const pick = want === "night" ? [...all].reverse().find((s) => s.night)
+          : want === "first" ? naps[0]
+          : /^\d+$/.test(want) ? naps[+want]
+          : naps[naps.length - 1];
+        if (pick) { el._openNapEdit(pick.from); touched = true; }
+        else note(`napedit=${want} matched no session`);
+      }
       if (touched) { if (el._expandWatched) el._expandWatched(); el._render(); }
     };
 

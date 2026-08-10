@@ -253,6 +253,24 @@ const PS_STYLES = `
       .ps-jr .ps-l { color: var(--ps-muted); flex: 1; }
       .ps-jr .ps-v { font-weight: 650; }
 
+      /* Correcting a session. The press-and-hold target must not also be a
+         text selection or a callout target, or a long press on iOS raises the
+         magnifier over the row it is meant to open. */
+      [data-napedit] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+      /* A corrected reading is marked wherever it shows. It is deliberately the
+         accent colour rather than a warning one: an edit is not a fault, it is
+         a fact the sensors could not reach. */
+      .ps-edd { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+                background: var(--ps-cool); margin-right: 6px; vertical-align: middle; }
+      .ps-edd.ring { position: absolute; top: 1px; right: 1px; margin: 0; }
+      .ps-neb { padding: 2px 0 4px; }
+      .ps-ner { display: flex; align-items: center; gap: 10px; padding: 7px 2px;
+                font-size: var(--pc-fs-sm); font-variant-numeric: tabular-nums; }
+      .ps-ner .ps-l { color: var(--ps-muted); flex: 1; }
+      .ps-ner b { min-width: 74px; text-align: center; font-size: var(--pc-fs-md); font-weight: 650; }
+      .ps-nesum { padding: 8px 2px 2px; font-size: var(--pc-fs-md); }
+      .ps-nesum b { font-size: var(--pc-fs-lg); font-weight: 700; }
+
       /* people */
       .ps-ppl { display: flex; gap: 8px; }
       .ps-pw { flex: 1; display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: var(--pc-r-lg);

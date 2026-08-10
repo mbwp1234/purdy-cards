@@ -428,6 +428,11 @@ const PD_STYLES = `
         font-size: var(--pc-fs-xs); font-variant-numeric: tabular-nums;
       }
       .pd-jr .pd-l { color: var(--ps-muted); flex: 1; min-width: 0; }
+      /* Same mark as the phone draws, same name, because it means the same
+         thing: this figure came from a person, not from the sensors. */
+      .ps-edd { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+                background: var(--ps-cool); margin-right: 6px; vertical-align: middle; }
+      .ps-edd.ring { position: absolute; top: 1px; right: 1px; margin: 0; }
       .pd-jr .pd-v { font-weight: 640; }
       .pd-jr .pd-c { color: var(--ps-dim); text-align: right; max-width: 46%;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
