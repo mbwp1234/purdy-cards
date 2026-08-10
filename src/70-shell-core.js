@@ -19,7 +19,7 @@
    "Configuration error" — not just the one section. */
 const PS_SECTIONS = [
   "sleep", "climate", "people", "music", "rooms", "quick", "calendar", "systems", "tv",
-  "nowplaying", "nursery", "lights", "crew", "weather",
+  "nowplaying", "nursery", "lights", "crew", "weather", "health",
 ];
 
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
@@ -281,6 +281,15 @@ class PurdyShellCard extends PcBaseCard {
         push(s.sensor); push(s.forecast); push(s.feels_from);
         push(s.gttc_outdoor); push(s.sun);
       }
+      if (s.type === "health") {
+        [s.sleep_total, s.sleep_deep, s.sleep_core, s.sleep_rem, s.sleep_awake,
+         s.hrv, s.resting_hr, s.respiratory, s.walking_hr,
+         s.hearing, s.effort, s.ride, s.hr_series].forEach(push);
+        const L = s.load || {}, F = s.fitness || {}, Wk = s.walking || {};
+        [L.steps, L.exercise, L.active, L.distance, L.flights, L.stand].forEach(push);
+        [F.ftp, F.wkg, F.weight, F.vo2].forEach(push);
+        [Wk.speed, Wk.step_len, Wk.support, Wk.asymmetry].forEach(push);
+      }
       if (s.type === "lights") {
         (s.lights || []).forEach((x) => {
           push(x.entity); push(x.hide_when_unavailable);
@@ -342,6 +351,10 @@ class PurdyShellCard extends PcBaseCard {
         }
       }
       if (s.type === "sleep" && s.sleep_state) ids.add(s.sleep_state);
+      /* The overnight heart trace rides the same 26h fetch. Its samples all
+         carry one upload timestamp, so it is plotted by index — but the
+         recorder query is identical to any other series. */
+      if (s.type === "health" && s.hr_series) ids.add(s.hr_series);
     });
     /* The systems mode's CPU graph rides the same 26h fetch — one more id on a
        request that is already going out beats a second request. */
@@ -629,6 +642,7 @@ class PurdyShellCard extends PcBaseCard {
         lights: () => this._secLights(sec),
         crew: () => this._secCrew(sec),
         weather: () => this._secWeather(sec),
+        health: () => this._secHealth(sec),
       }[sec.type]();
       if (!body) return;   // a self-hiding section takes its divider with it
       sections.push({ key: sec.key, html: body, open: this._open === sec.key });
@@ -1557,6 +1571,7 @@ class PurdyShellCard extends PcBaseCard {
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
+      healthMeter: psHealthMeter, hmDur: psHmDur, hmDomain: psHmDomain, hmPos: psHmPos,
     };
   }
 

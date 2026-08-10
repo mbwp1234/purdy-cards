@@ -6092,6 +6092,185 @@ check('the condition map is keyed on HA states, not invented ones',
   /const PS_WXFX = \{/.test(wxSrc) && /"lightning-rainy": "storm"/.test(wxSrc));
 
 
+/* ---------------------------------------------------------------------------
+   health — THE METER, and the four states.
+
+   The fourth state is the one that matters: a missing reading draws NO TRACK
+   AT ALL. An empty rail is a claim that the number is low, which is the
+   zero-vs-missing rule arriving at a new surface. The same holds for a band
+   that does not exist yet, which is what lets the section ship before the
+   capture layer that will produce the bands.
+   --------------------------------------------------------------------------- */
+const { healthMeter: psHealthMeterFn, hmDur: psHmDurFn, hmDomain: psHmDomainFn } = SH.helpers;
+
+check('a meter with no reading draws no track at all',
+  !/ps-hmt/.test(psHealthMeterFn({ label: 'VO2 max', value: null, band: { lo: 40, hi: 50 } })));
+check('a meter with no reading says so',
+  /No reading/.test(psHealthMeterFn({ label: 'VO2 max', value: null })));
+check('a value with no band ALSO draws no track',
+  !/ps-hmt/.test(psHealthMeterFn({ label: 'FTP', value: 200 })));
+/* A missing READING is captioned; a missing BAND is silent. Before the capture
+   layer exists every meter lacks a band, and captioning each one put eleven
+   identical grey lines down the section on the first live render. */
+check('a value with no band says nothing at all',
+  !/No band/.test(psHealthMeterFn({ label: 'FTP', value: 200 })));
+check('a value with no band still shows the value',
+  /200/.test(psHealthMeterFn({ label: 'FTP', value: 200 })));
+check('a value with a band draws the track',
+  /ps-hmt/.test(psHealthMeterFn({ label: 'Resting', value: 59, band: { lo: 55, hi: 63 } })));
+
+const mtrIn = psHealthMeterFn({ label: 'Resting', value: 59, band: { lo: 55, hi: 63 } });
+const mtrLow = psHealthMeterFn({ label: 'Asleep', value: 5.6, band: { lo: 6.8, hi: 8.2 } });
+const mtrHiBad = psHealthMeterFn({ label: 'Resting', value: 70, band: { lo: 55, hi: 63 } });
+const mtrHiOk = psHealthMeterFn({ label: 'HRV', value: 44, band: { lo: 26, hi: 38 }, hiOk: true });
+check('in band carries no modifier class', /class="ps-hmd "/.test(mtrIn));
+check('below the band is amber', /ps-hmd out/.test(mtrLow));
+check('above the band is amber when above is a fault', /ps-hmd out/.test(mtrHiBad));
+check('above the band is cyan where above is not a fault', /ps-hmd high/.test(mtrHiOk));
+check('a questionable value is grey, never green',
+  /ps-hmd q/.test(psHealthMeterFn({ label: 'Asymmetry', value: 0, band: { lo: 0, hi: 3 }, q: true })));
+check('the hearing band is a ceiling, filled from the floor',
+  /ps-hmb cap[^>]*left:0%/.test(psHealthMeterFn({
+    label: 'Sound', value: 76, band: { lo: 40, hi: 80, dlo: 40, dhi: 105 }, cap: true })));
+
+// decimal hours are not a duration anybody reads
+check('5.61 hours reads as 5h 37m', psHmDurFn(5.61) === '5h 37m');
+check('under an hour drops the hours', psHmDurFn(0.84) === '50m');
+check('a missing duration is a dash, never 0m', psHmDurFn(null) === '—');
+// a band with no explicit domain gets one, so config stays small
+check('a bare band lands in the middle third', (() => {
+  const d = psHmDomainFn({ lo: 55, hi: 63 });
+  return d.lo === 47 && d.hi === 71;
+})());
+check('a nonsense band yields no domain, and therefore no track',
+  psHmDomainFn({ lo: 5, hi: 5 }) === null && psHmDomainFn(null) === null);
+
+const hlCfg = {
+  type: 'health', key: 'body', title: 'Body',
+  sleep_total: 'hae.tot', sleep_deep: 'hae.deep', sleep_core: 'hae.core',
+  sleep_rem: 'hae.rem', sleep_awake: 'hae.awake',
+  hr_series: 'hae.hr', hrv: 'hae.hrv', resting_hr: 'hae.rhr',
+  respiratory: 'hae.resp', walking_hr: 'hae.whr',
+  load: { steps: 'hae.steps', exercise: 'hae.ex', active: 'hae.act' },
+  fitness: { ftp: 'sensor.ftp', weight: 'sensor.wt', vo2: 'sensor.vo2' },
+  walking: { asymmetry: 'hae.asym' },
+  hearing: 'hae.db',
+};
+const hlStates = {
+  'hae.tot': { state: '5.61', attributes: {} },
+  'hae.deep': { state: '0.84', attributes: {} },
+  'hae.core': { state: '3.13', attributes: {} },
+  'hae.rem': { state: '1.63', attributes: {} },
+  'hae.awake': { state: '0.05', attributes: {} },
+  'hae.hrv': { state: '31.36', attributes: {} },
+  'hae.rhr': { state: '59', attributes: {} },
+  'hae.resp': { state: '18', attributes: {} },
+  'hae.whr': { state: '104', attributes: {} },
+  'hae.steps': { state: '4817', attributes: {} },
+  'hae.ex': { state: '39', attributes: {} },
+  'hae.act': { state: '264.41', attributes: {} },
+  'hae.asym': { state: '0', attributes: {} },
+  'hae.db': { state: '76.24', attributes: {} },
+  'sensor.ftp': { state: '200', attributes: {} },
+  'sensor.wt': { state: '70.31', attributes: {} },
+  'sensor.vo2': { state: 'unknown', attributes: {} },
+};
+const mkHl = (over, bands) => {
+  const s = new SH();
+  s.setConfig({ sections: [{ ...hlCfg, bands: bands || {} }] });
+  s._hass = { states: { ...hlStates, ...(over || {}) } };
+  /* All ~235 samples carry one upload timestamp, so the trace is plotted by
+     index; the fixture gives them near-identical times on purpose. */
+  s._history = { 'hae.hr': [60, 58, 57, 59, 62, 88, 104].map((v, i) => ({ t: 1000 + i, s: String(v) })) };
+  return s;
+};
+const hlSec = { ...hlCfg, bands: {} };
+const hl = mkHl()._secHealth(hlSec);
+
+check('setConfig accepts a health section', (() => {
+  try { new SH().setConfig({ sections: [hlCfg] }); return true; } catch (e) { return false; }
+})());
+check('the collapsed face carries exactly three meters',
+  (hl.split('ps-xtra')[0] || '').split('class="ps-hm"').length - 1 === 3);
+check('the collapsed chip carries the load, not the verdict', /39m active/.test(hl));
+check('the collapsed chip never claims a roll-up', !/all in band/i.test(hl));
+
+/* Apple publishes four totals and no times. Any window on this section would
+   be invented - and the invented one disagreed with its own reading. */
+check('no sleep window is ever printed', !/→/.test(hl));
+check('the trace carries no tick labels', !/ps-axl|11 PM|6:41/.test(hl));
+check('the trace says it is not to scale in time', /not to scale in time/.test(hl));
+check('the trace is drawn from x=0, by index', /points="0\.0,/.test(hl));
+/* Painted before the fill, the gradient covers it and the section ships with
+   an invisible reference - which is what the mockup's first screenshot caught.
+   indexOf('<line') is not enough: it matches <linearGradient, which sits
+   before the polygon and made this assertion pass for the wrong reason. */
+check('the resting line is painted after the fill', (() => {
+  const poly = hl.indexOf('<polygon');
+  const line = hl.indexOf('<line ');
+  return poly > -1 && line > poly;
+})());
+
+check('sleep efficiency is nowhere on the section', !/efficien/i.test(hl));
+check('the stage bar is drawn', /ps-hstage/.test(hl));
+check('with no band, a zero asymmetry still warns in the note',
+  /Asymmetry reads a flat 0%/.test(hl) && !/ps-hmd q/.test(hl));
+check('with a band, a zero asymmetry gets the grey dot, never the green one',
+  /ps-hmd q/.test(mkHl(null, { asymmetry: { lo: 0, hi: 3 } })
+    ._secHealth({ ...hlCfg, bands: { asymmetry: { lo: 0, hi: 3 } } })));
+check('an unknown VO2 max draws no track and no zero',
+  /VO2 max<\/div><div class="ps-hmv none">—<\/div><div class="ps-hmn">No reading/
+    .test(hl.replace(/\n\s*/g, '')));
+check('the section is not papered with band captions', !/No band yet/.test(hl));
+check('a blank VO2 beside a live FTP names the cause', /Garmin offline/.test(hl));
+check('load draws counters and says why it has no bands',
+  /ps-hctr/.test(hl) && /No bands here, deliberately/.test(hl));
+
+// with no bands the sentence has nothing to add, so it is not drawn - it used
+// to restate the three meters sitting directly above it
+check('with no bands there is no sentence', !/ps-hsyn/.test(hl));
+
+// and with bands it reads them aloud
+const hlBands = { asleep: { lo: 6.8, hi: 8.2 }, hrv: { lo: 26, hi: 38 }, resting_hr: { lo: 55, hi: 63 } };
+const hlB = mkHl(null, hlBands)._secHealth({ ...hlCfg, bands: hlBands });
+check('a short night reads as short', /Short night/.test(hlB));
+check('in-band recovery reads as recovered', /fully recovered/.test(hlB));
+check('the banded collapsed face draws its tracks', /ps-hmt/.test(hlB));
+
+// the section disappears rather than drawing a band of dashes
+check('a section with nothing to say renders nothing', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [hlCfg] });
+  s._hass = { states: {} };
+  return s._secHealth(hlSec) === '';
+})());
+
+// the recorder failing and the recorder being empty are different facts
+check('a recorder failure says so rather than showing an empty graph', (() => {
+  const s = mkHl(); s._histErr = 'nope'; s._history = {};
+  return /Recorder did not answer/.test(s._secHealth(hlSec));
+})());
+check('no samples yet is its own message', (() => {
+  const s = mkHl(); s._history = {};
+  return /No samples yet/.test(s._secHealth(hlSec));
+})());
+
+// every entity the section reads must repaint it
+check('health entities land in the watched set', (() => {
+  const s = mkHl();
+  return ['hae.tot', 'hae.hrv', 'hae.steps', 'sensor.ftp', 'hae.asym', 'hae.db']
+    .every((id) => s._watched.includes(id));
+})());
+check('the trace rides the existing history fetch', mkHl()._historyEntities().includes('hae.hr'));
+
+// the shape that hides a missing reading, banned at the source
+const hlSrc = fs.readFileSync(new URL('../src/78c-shell-health.js', import.meta.url), 'utf8');
+check('the health source never defaults a reading to zero',
+  !/\?\? 0\)/.test(hlSrc) && !/\) \|\| 0/.test(hlSrc));
+check('the health stylesheet has no loose font-size',
+  !/font-size:\s*\d/.test(shs.split('health / Body')[1] || ''));
+
+
 // double-define guard: a second load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

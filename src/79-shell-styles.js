@@ -1431,6 +1431,80 @@ const PS_STYLES = `
         animation: ps-wxdrift 30s linear infinite reverse;
       }
 
+      /* ------------------------------------------------------ health / Body
+
+         The METER is the only unit here. A missing reading gets .ps-hmn and no
+         .ps-hmt at all, so there is no rail to read as a low value - the rule
+         is enforced in the renderer, and there is deliberately no "empty rail"
+         style for it to fall back to. */
+      .ps-hmg { display: grid; gap: 13px 10px; }
+      .ps-hmg.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .ps-hmg.g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .ps-hmg.g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .ps-hm { min-width: 0; }
+      .ps-hmk { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
+                color: var(--ps-dim); font-weight: 650; margin-bottom: 3px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .ps-hmv { font-size: var(--pc-fs-lg); font-weight: 700; letter-spacing: -.03em;
+                font-variant-numeric: tabular-nums; line-height: 1.15; }
+      .ps-hmv u { text-decoration: none; font-size: var(--pc-fs-xs); color: var(--ps-dim);
+                  margin-left: 1px; letter-spacing: 0; font-weight: 600; }
+      .ps-hmv.none { color: var(--ps-dim); }
+      .ps-hmn { margin-top: 8px; font-size: var(--pc-fs-micro); letter-spacing: .08em;
+                text-transform: uppercase; color: var(--ps-dim); }
+      .ps-hmt { position: relative; height: 12px; margin-top: 6px; }
+      .ps-hmt::before { content: ""; position: absolute; left: 0; right: 0; top: 5px; height: 2px;
+                        background: var(--ps-track); border-radius: var(--pc-r-hair); }
+      .ps-hmb { position: absolute; top: 3px; height: 6px; border-radius: var(--pc-r-hair);
+                background: var(--pc-fill-3); border: 1px solid var(--pc-edge); }
+      .ps-hmb.cap { background: rgba(129,201,149,.16); border-color: rgba(129,201,149,.30); }
+      .ps-hmd { position: absolute; top: 1px; width: 10px; height: 10px; border-radius: var(--pc-r-pill);
+                background: var(--ps-good); border: 2px solid #0b0f16; transform: translateX(-50%); }
+      .ps-hmd.out { background: var(--ps-warn); }
+      .ps-hmd.high { background: var(--ps-cool); }
+      .ps-hmd.q { background: var(--ps-dim); }
+
+      .ps-hblk { display: flex; flex-direction: column; gap: 9px; }
+      .ps-hbh { display: flex; align-items: center; gap: 8px; }
+      .ps-hbt { font-size: var(--pc-fs-md); font-weight: 700; letter-spacing: -.01em; }
+      .ps-hbw { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
+                color: var(--ps-dim); font-weight: 650; flex: 1; min-width: 0; }
+      .ps-hsyn { font-size: var(--pc-fs-sm); color: var(--ps-muted); margin-top: 10px; line-height: 1.45; }
+      .ps-hsyn b { color: var(--ps-text); font-weight: 650; }
+      .ps-hsyn em { font-style: normal; color: var(--ps-good); font-weight: 650; }
+      .ps-hsyn em.w { color: var(--ps-warn); }
+      .ps-hcap { font-size: var(--pc-fs-micro); letter-spacing: .08em; text-transform: uppercase;
+                 color: var(--ps-dim); }
+      .ps-hnote { font-size: var(--pc-fs-xs); color: var(--ps-dim); line-height: 1.45; }
+      .ps-hnote b { color: var(--ps-muted); font-weight: 650; }
+
+      .ps-hstage { display: flex; height: 15px; border-radius: var(--pc-r-xs); overflow: hidden; gap: 1.5px; }
+      .ps-hstage i { display: block; height: 100%; }
+      .ps-hstage i.d { background: var(--ps-deep); }
+      .ps-hstage i.c { background: var(--ps-light); }
+      .ps-hstage i.r { background: var(--ps-cool); }
+      .ps-hstage i.a { background: var(--ps-awake); }
+      .ps-hslg { display: flex; flex-wrap: wrap; gap: 6px 13px; }
+      .ps-hslg span { font-size: var(--pc-fs-xs); color: var(--ps-muted); display: flex;
+                      align-items: center; gap: 5px; }
+      .ps-hslg i { width: 7px; height: 7px; border-radius: var(--pc-r-hair); flex: 0 0 auto; }
+      .ps-hslg i.d { background: var(--ps-deep); }
+      .ps-hslg i.c { background: var(--ps-light); }
+      .ps-hslg i.r { background: var(--ps-cool); }
+      .ps-hslg i.a { background: var(--ps-awake); }
+      .ps-hslg b { color: var(--ps-text); font-weight: 650; font-variant-numeric: tabular-nums; }
+
+      .ps-htrace { display: block; width: 100%; height: 62px; }
+
+      .ps-hctr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+      .ps-hct { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+                border-radius: var(--pc-r-xs); padding: 9px 7px; min-width: 0; text-align: center; }
+      .ps-hct b { display: block; font-size: var(--pc-fs-lg); font-weight: 700; letter-spacing: -.03em;
+                  font-variant-numeric: tabular-nums; }
+      .ps-hct b u { text-decoration: none; font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-left: 1px; }
+      .ps-hct span { display: block; font-size: var(--pc-fs-micro); letter-spacing: .07em;
+                     text-transform: uppercase; color: var(--ps-dim); margin-top: 3px; }
+
       @media (prefers-reduced-motion: reduce) {
         * { transition: none !important; }
         .ps-wxfx, .ps-wxfx::before, .ps-wxfx::after { animation: none !important; }
