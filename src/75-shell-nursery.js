@@ -442,6 +442,23 @@ function psApplyNapEdits(sessions, edits, tolMin) {
   return out;
 }
 
+/* When he WOKE, which is the end of the Hatch span unless a correction moved
+ * it in. Every surface that prints a wake time, or measures from one, has to
+ * go through this — otherwise a correction changes the asleep minutes and
+ * leaves the clock time beside them still reading the Hatch, which is exactly
+ * the "session's start, its block on the day rail and its length disagreeing"
+ * that recording the WINDOW rather than a duration was supposed to prevent.
+ *
+ * Shipped that way from the start: the night rail alone read `wokeAt`, while
+ * the night's "Down / up" row, the nap rows, the day rail and the awake-since
+ * chip all read `to`. Reported as a corrected wake-up not moving anything on
+ * the dashboard — and the chip is the loudest of them, since a wake time
+ * pulled 25 minutes earlier is 25 minutes missing from the wake window that
+ * decides when the next nap is due. */
+function psWokeAt(s) {
+  return s && s.wokeAt != null ? s.wokeAt : (s || {}).to;
+}
+
 /* Cross-session numbers: the ones worth having whether or not this card is
    what displays them.
  *
@@ -483,7 +500,7 @@ function psNurseryStats(sessions, opts) {
   const live = all.find((s) => s.active);
   const ended = all.filter((s) => !s.active);
   const last = ended.length ? ended[ended.length - 1] : null;
-  const wakeSince = live || !last ? null : last.to;
+  const wakeSince = live || !last ? null : psWokeAt(last);
   const wakeWindowMin = wakeSince == null ? null : Math.max(0, Math.round((now - wakeSince) / 60000));
 
   /* When the next nap is due — the question the wake window is the INPUT to.
@@ -983,9 +1000,10 @@ Object.assign(PurdyShellCard.prototype, {
 
     let bars = "";
     (sessions || []).forEach((s) => {
-      if (s.to < t0 || s.from > t1) return;
+      const end = psWokeAt(s);
+      if (end < t0 || s.from > t1) return;
       const a = x(s.from);
-      const b = x(s.to);
+      const b = x(end);
       const short = !s.night && s.asleepMinutes < 30;
       bars += `<rect x="${a.toFixed(2)}" y="6" width="${Math.max(0.5, b - a).toFixed(2)}"
         height="6" rx="2" fill="${s.night ? "var(--ps-deep)" : short ? "var(--ps-warn)" : "var(--ps-light)"}"
@@ -1221,9 +1239,9 @@ Object.assign(PurdyShellCard.prototype, {
           <div class="ps-jr"><span class="ps-l">Longest stretch</span>
             <span class="ps-v">${psHM(nightSession.longestStretch)}</span>
             <span class="ps-flat">${stats.avgStretch == null ? "" : psHM(stats.avgStretch) + " avg"}</span></div>
-          <div class="ps-jr"><span class="ps-l">Down / up</span>
+          <div class="ps-jr"><span class="ps-l">${edd(nightSession)}Down / up</span>
             <span class="ps-v">${psClock(nightSession.from)} – ${
-              nightSession.active ? "now" : psClock(nightSession.to)}</span>
+              nightSession.active ? "now" : psClock(psWokeAt(nightSession))}</span>
             <span class="ps-flat">${stats.bedSpread == null ? "" : "±" + stats.bedSpread + "m"}</span></div>
           <div class="ps-jr"><span class="ps-l">Settled</span>
             <span class="ps-v">${nightSession.hadExit ? psClock(nightSession.settledAt) : "—"}</span>
@@ -1236,7 +1254,7 @@ Object.assign(PurdyShellCard.prototype, {
         <div class="ps-jrs">
           ${todayNaps.length ? todayNaps.map((s) => `
             <div class="ps-jr"${editable ? ` data-napedit="${s.from}"` : ""}>
-              <span class="ps-l">${edd(s)}${psClock(s.from)} – ${s.active ? "now" : psClock(s.to)}</span>
+              <span class="ps-l">${edd(s)}${psClock(s.from)} – ${s.active ? "now" : psClock(psWokeAt(s))}</span>
               <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " so far" : ""}</span>
               <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
                 !s.active && s.asleepMinutes < catnapUnder ? "short" : s.interventions ? s.interventions + " in" : ""}</span></div>`).join("")

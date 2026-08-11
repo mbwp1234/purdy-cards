@@ -510,7 +510,7 @@ Object.assign(PurdyDeskCard.prototype, {
         ed ? `<span class="ps-edd" title="Corrected"></span>` : ""}${psEsc(l)}</span>
         <span class="pd-v">${psEsc(v)}</span><span class="pd-c">${psEsc(c || "")}</span></div>`;
     const napRows = naps.map((n) => row(
-      pdClock(n.from) + " – " + pdClock(n.to),
+      pdClock(n.from) + " – " + pdClock(psWokeAt(n)),
       psHM(n.asleepMinutes),
       n.interventions ? `${n.interventions} in` : "",
       n.edited
@@ -519,7 +519,7 @@ Object.assign(PurdyDeskCard.prototype, {
     const nightRows = night ? [
       row("Asleep", psDur(night.asleepMinutes),
         stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", night.edited),
-      row("Down / up", `${pdClock(night.from)} – ${pdClock(night.to)}`, ""),
+      row("Down / up", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", night.edited),
       row("Settled", pdClock(night.settledAt), `+${psHM(night.settleMinutes)} settling`),
       row("Interventions", String(night.interventions),
         (night.events || []).map((t) => pdClock(t)).join(" · ")),

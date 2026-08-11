@@ -1689,6 +1689,7 @@ class PurdyShellCard extends PcBaseCard {
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
       parseNapEdits: psParseNapEdits, writeNapEdits: psWriteNapEdits, applyNapEdits: psApplyNapEdits,
+      wokeAt: psWokeAt,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
       healthMeter: psHealthMeter, hmDur: psHmDur, hmDomain: psHmDomain, hmPos: psHmPos,
