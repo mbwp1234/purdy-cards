@@ -899,6 +899,8 @@ const PS_STYLES = `
       .ps-cwdot { width: 6px; height: 6px; border-radius: 50%; background: var(--ps-dim); flex: 0 0 auto; }
       .ps-cwdot.on { background: var(--ps-good); }
       .ps-cwnm { font-size: var(--pc-fs-xs); font-weight: 680; flex: 1; min-width: 0; }
+      .ps-cwas { font-size: var(--pc-fs-micro); color: var(--ps-dim); flex: 0 0 auto;
+        font-variant-numeric: tabular-nums; }
       .ps-cwcv { color: var(--ps-dim); display: flex; flex: 0 0 auto; }
       .ps-cwcard.open .ps-cwcv { color: var(--ps-cool); }
       .ps-cwcv svg { transform: rotate(90deg); }

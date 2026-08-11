@@ -76,8 +76,17 @@ function psCrewMiles(areaValue, unit, widthM) {
  * WHAT IT DOES NOT PUBLISH IS THE ONE YOU WANT. There is no clean-water LEVEL
  * and no dirty-water LEVEL anywhere in the 233 entities — both tanks report
  * present/absent only, and `low_water` is a single boolean that flips near
- * empty. So the dirty tank is a PROXY: every self-wash cycle is counted and
- * divided by a hand-set capacity.
+ * empty. So BOTH tanks are PROXIES off one counter of self-wash cycles: the
+ * dirty tank fills toward its capacity, the clean tank counts down from it.
+ *
+ * CLEAN WATER USED TO BE A STATE HERE, AND THE REASONING HAS CHANGED. It was
+ * drawn as "OK / Low / Tank out" because the only source was a boolean, and a
+ * boolean rendered as a meter is a precision claim nothing supports. That is
+ * still true of the boolean — what changed is that there is now a derived
+ * level to read instead (`clean_water`), calibrated against the tank's own
+ * low_water event rather than a hand-set number. So the level is drawn when
+ * one is configured and the WORDS REMAIN THE FALLBACK, which is what keeps an
+ * install with no such sensor from rendering a bar it cannot back up.
  *
  * It carries NO "≈", deliberately, and that is a different call from the
  * mileage above. A tilde on a tank you are deciding whether to go and empty
@@ -103,6 +112,7 @@ function psCrewWater(hass, v) {
 
   return {
     dirty: psCrewNum(hass, v.dirty_water),
+    clean: psCrewNum(hass, v.clean_water),
     washes,
     cap,
     emptiedAt: v.emptied_button ? pcState(hass, v.emptied_button) : null,
@@ -130,9 +140,20 @@ function psCrewMopText(w) {
 }
 
 /* Clean water is three states, not two. "Tank out" is not "low" — one is a
-   thing you fix by filling, the other by putting the tank back. */
-function psCrewCleanText(w) {
+   thing you fix by filling, the other by putting the tank back.
+
+   TANK OUT OUTRANKS THE LEVEL, because a percentage for a tank that is not in
+   the machine is a reading of nothing. Below that the derived level wins where
+   there is one, and the words are what a level-less install falls back to. */
+function psCrewCleanText(w, lowAt) {
   if (w.cleanTank && /remov|absent|not/i.test(w.cleanTank)) return { text: "Tank out", sev: "warn" };
+  const at = lowAt == null ? 25 : lowAt;
+  if (w.clean != null) {
+    return {
+      text: `${Math.round(w.clean)}%`,
+      sev: w.clean <= at * 0.4 ? "bad" : w.clean <= at ? "warn" : "",
+    };
+  }
   if (w.low === true) return { text: "Low", sev: "warn" };
   if (w.low === false) return { text: "OK", sev: "" };
   return { text: "—", sev: "" };
@@ -175,10 +196,15 @@ Object.assign(PurdyShellCard.prototype, {
     return `<div class="ps-cwl"><em>${psEsc(label)}</em>${valueHtml}</div>`;
   },
 
-  _crewCardHead(name, open, running, zone) {
+  /* `aside` is the demoted readout. Both rings now belong to the water, and
+     the charge had lived ONLY on the inner arc — replacing a surface orphans
+     whatever was reachable only through it, so it lands here rather than
+     vanishing. Dim and unlabelled: it is a glance, not a decision. */
+  _crewCardHead(name, open, running, aside) {
     return `<div class="ps-cwtop">
         <span class="ps-cwdot ${running ? "on" : ""}"></span>
         <span class="ps-cwnm">${psEsc(name)}</span>
+        ${aside ? `<span class="ps-cwas">${psEsc(aside)}</span>` : ""}
         <span class="ps-cwcv ${open ? "open" : ""}">${this._chev()}</span>
       </div>`;
   },
@@ -193,31 +219,53 @@ Object.assign(PurdyShellCard.prototype, {
     const filter = psCrewNum(h, v.filter);
     const w = psCrewWater(h, v);
 
-    /* THE DIRTY TANK IS THE HERO, not the charge. The charge is the one number
-       on this card that never needs a human: he docks himself and he is at 100%
-       whenever you look. The tank is the opposite — it is the reason you walk
-       to the machine, and it was drawn as a thin unlabelled inner arc while the
-       battery took the numeral. Swapped.
+    /* BOTH ARCS ARE THE WATER, because the water is the whole reason you walk
+       to this machine and the two tanks are the one job — you empty the dirty
+       one and fill the clean one on the same trip.
 
-       The inner arc keeps the two-ring shape and carries whatever the charge is
-       doing, unlabelled: the job while he is running, the battery while he is
-       not. Demoted to a picture, which is all it was ever worth here. */
+       They point OPPOSITE WAYS on purpose: the outer arc fills as the dirty
+       tank fills, the inner drains as the clean tank drains. That is what makes
+       two concentric arcs readable at a glance rather than decorative — a full
+       outer against an empty inner is "go service me" without reading a digit.
+
+       The charge lost its arc and did not lose its home: it moves to the head
+       as a dim aside (the job while he is running, the battery while he is
+       not). It was always the one number here that never needs a human — he
+       docks himself and reads 100% whenever you look. */
     const prog = running ? psCrewNum(h, v.progress) : null;
-    const inner = prog != null ? prog : batt;
     const dirtyAt = v.water_above == null ? 80 : v.water_above;
+    const cleanAt = v.clean_below == null ? 25 : v.clean_below;
     const dirtyCol = w.dirty == null ? "var(--ps-warn)"
       : w.dirty >= dirtyAt ? "var(--ps-bad)"
         : w.dirty >= dirtyAt * 0.6 ? "var(--ps-warn)" : "var(--ps-cool)";
+    const cleanCol = w.clean == null ? "var(--ps-warn)"
+      : w.clean <= cleanAt * 0.4 ? "var(--ps-bad)"
+        : w.clean <= cleanAt ? "var(--ps-warn)" : "var(--ps-cool)";
 
-    const clean = psCrewCleanText(w);
+    /* No clean LEVEL means no second arc — the ring shows a bare track rather
+       than borrowing the charge back, because an arc labelled by the line
+       beneath it must be the thing that line names. */
+    const innerFrac = w.clean != null ? w.clean / 100
+      : (v.clean_water ? null : (prog != null ? prog / 100 : (batt == null ? null : batt / 100)));
+    const innerCol = w.clean != null ? cleanCol : "var(--ps-cool)";
+
+    /* A NUMBER NEEDS ITS NOUN — the rule at the top of this file, and a bare
+       "100%" beside the name is the exact tile it was written about. So the
+       aside carries its own word, and it appears ONLY while he is running:
+       progress is the live thing worth a glance, and a row with nothing to say
+       says nothing. The charge moves to a labelled line in the panel, where a
+       figure you look up rather than monitor belongs. */
+    const aside = prog == null ? "" : `Cleaning ${Math.round(prog)}%`;
+
+    const clean = psCrewCleanText(w, cleanAt);
 
     return `<div class="ps-cwcard ${open ? "open" : ""}">
         <button class="ps-cwface" type="button" data-crewzone="vac">
-          ${this._crewCardHead(v.name || "Jeeves", open, running)}
+          ${this._crewCardHead(v.name || "Jeeves", open, running, aside)}
           <div class="ps-cwring">
             ${this._crewRing(92,
               { frac: w.dirty == null ? null : w.dirty / 100, col: dirtyCol },
-              { frac: inner == null ? null : inner / 100, col: "var(--ps-cool)" })}
+              { frac: innerFrac, col: innerCol })}
             <div class="ps-cwrv"><b>${psCrewPct(w.dirty)}</b><span>dirty tank</span></div>
           </div>
           ${this._crewLine("Clean water",
@@ -401,10 +449,18 @@ Object.assign(PurdyShellCard.prototype, {
       psCrewWhen(w.emptiedAt) ? `since ${psCrewWhen(w.emptiedAt)}` : null,
     ].filter(Boolean).join(" · ");
 
+    /* The charge lands here, labelled, because it lost its arc to the water and
+       an unlabelled number beside the name is the tile this file exists to undo.
+       This is where a figure you look up rather than monitor belongs. */
+    const batt = psCrewNum(h, v.battery);
+
     return `${since ? `<div class="ps-cwsub">Water</div>
-      ${this._crewLine("Since emptied", `<b>${psEsc(since)}</b>`)}
-      <div class="ps-cwfine">Both tanks report present or absent with no level,
-        so the dirty tank is counted from self-wash cycles, not measured.</div>` : ""}
+      ${this._crewLine("Since serviced", `<b>${psEsc(since)}</b>`)}
+      <div class="ps-cwfine">Neither tank publishes a level, so both are counted
+        from self-wash cycles, not measured — each tank's capacity is learned
+        from the run that emptied or filled it.</div>` : ""}
+      <div class="ps-cwsub">Robot</div>
+      ${this._crewLine("Battery", `<b>${psCrewPct(batt)}</b>`)}
       <div class="ps-cwsub">Lifetime</div>
       ${this._crewLine("Distance", `<b>${miles == null ? "—" : `≈${miles.toFixed(1)} mi`}</b>`)}
       ${this._crewLine("Runs", `<b>${runs == null ? "—" : Math.round(runs).toLocaleString()}</b>`)}`;

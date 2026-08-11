@@ -3288,6 +3288,70 @@ check('a removed clean tank is not the same fault as a low one', (() => {
     ._secCrew(crewCfg);
   return /Tank out/.test(h) && !/>Low</.test(h);
 })());
+/* BOTH ARCS ARE THE WATER (v1.66.0). The charge used to own the inner arc; it
+   now belongs to the clean tank, which has a derived level for the first time.
+   The two tanks point opposite ways — dirty fills, clean drains — so a full
+   outer against an empty inner reads as "go service me" without a digit.
+
+   The words stay the FALLBACK: an install with no clean_water sensor still
+   renders "OK / Low / Tank out" rather than a bar it cannot back up. */
+const crewCleanCfg = {
+  ...crewCfg,
+  vacuum: { ...crewCfg.vacuum, clean_water: 'sensor.clean' },
+};
+const crewCleanStates = { 'sensor.clean': { state: '55', attributes: { unit_of_measurement: '%' } } };
+
+check('a configured clean level is drawn as a level, not as OK', (() => {
+  const h = mkCrew(crewCleanStates)._secCrew(crewCleanCfg);
+  return /Clean water<\/em><b class="">55%/.test(h) && !/>OK</.test(h);
+})());
+
+check('the clean tank gets the inner arc and the charge no longer does', (() => {
+  const h = mkCrew(crewCleanStates)._secCrew(crewCleanCfg);
+  /* Two arcs at two radii: the outer is the dirty tank, the inner the clean
+     one. The battery reads 100 in this fixture, so an inner arc scaled to the
+     charge would be a FULL circle — a 55% arc proves it is the water. */
+  const arcs = h.match(/stroke-dasharray="([\d.]+)/g) || [];
+  return arcs.length >= 4 && !/Jeeves<\/span>\s*<span class="ps-cwas">100%/.test(h);
+})());
+
+/* A NUMBER NEEDS ITS NOUN — the rule this whole file was written around. The
+   charge was briefly a bare "100%" beside the name, which is the exact tile
+   ("Jeeves 10 %") the crew section replaced. Caught by a screenshot. */
+check('the head carries no unlabelled percentage', (() => {
+  const h = mkCrew(crewCleanStates)._secCrew(crewCleanCfg);
+  return !/ps-cwas">\d+%/.test(h);
+})());
+
+check('a running clean names the number in the head', (() => {
+  const h = mkCrew({ ...crewCleanStates,
+    'vacuum.j': { state: 'cleaning', attributes: crewStates['vacuum.j'].attributes },
+    'sensor.prog': { state: '43', attributes: { unit_of_measurement: '%' } } })
+    ._secCrew(crewCleanCfg);
+  return /ps-cwas">Cleaning 43%/.test(h);
+})());
+
+/* Replacing a surface orphans whatever was reachable only through it — the
+   charge lived ONLY on the inner arc, so it must land somewhere labelled. */
+check('the charge survives the arc it lost, labelled, in the panel', (() => {
+  const p = mkCrew(crewCleanStates, { vac: true })._secCrew(crewCleanCfg);
+  return /Battery<\/em><b>100%/.test(p);
+})());
+
+check('the words remain the fallback where no clean level is configured', (() => {
+  const h = mkCrew()._secCrew(crewCfg);
+  return /Clean water<\/em><b class="">OK/.test(h);
+})());
+
+/* Tank out outranks the level: a percentage for a tank that is not in the
+   machine is a reading of nothing. */
+check('a removed tank beats the level it would otherwise print', (() => {
+  const h = mkCrew({ ...crewCleanStates, 'vacuum.j': { state: 'docked', attributes: {
+    ...crewStates['vacuum.j'].attributes, clean_water_tank_status: 'Removed' } } })
+    ._secCrew(crewCleanCfg);
+  return /Tank out/.test(h) && !/55%/.test(h);
+})());
+
 check('a mop pad being washed or dried says which', (() => {
   const wash = mkCrew({ 'vacuum.j': { state: 'docked', attributes: {
     ...crewStates['vacuum.j'].attributes, washing: true } } })._secCrew(crewCfg);
