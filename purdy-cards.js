@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.66.0";
+const PC_VERSION = "1.67.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -7026,7 +7026,8 @@ class PurdyShellCard extends PcBaseCard {
       liveMusic: psLiveMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
-      nurserySessions: psNurserySessions, nurseryStats: psNurseryStats, dayKey: psDayKey, hm: psHM,
+      nurserySessions: psNurserySessions, nurseryStats: psNurseryStats,
+      nurseryNorms: psNurseryNorms, dayKey: psDayKey, hm: psHM,
       parseNapEdits: psParseNapEdits, writeNapEdits: psWriteNapEdits, applyNapEdits: psApplyNapEdits,
       wokeAt: psWokeAt,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
@@ -10284,6 +10285,77 @@ function psNurseryStats(sessions, opts) {
   };
 }
 
+/* HIS OWN NORMAL, per metric — the bands the expanded face reads against.
+ *
+ * The expanded view used to explain how each number was DERIVED: settling
+ * against asleep, the intervention list, the honest lower and upper bounds.
+ * That precision is right and survives below, but it is aimed at a reader who
+ * does not trust the number yet. The question actually being asked of this
+ * section every morning is "is that normal for him, and is the week going the
+ * right way" — which is the band-and-meter vocabulary from Body, pointed at
+ * Joel. It costs nothing extra to compute: the sessions are already derived
+ * from the seven-day fetch, so his normal is free where every Apple Health band
+ * needs a template mirror and a nightly ring buffer.
+ *
+ * A ring would be the wrong unit here for the reason it was wrong in Body: a
+ * ring shows a fraction of a goal, and nobody sets a goal for how long a baby
+ * sleeps. The night ring on the collapsed face survives precisely because it is
+ * already scaled to HIS OWN average rather than to a number somebody picked.
+ *
+ * Mean ± one standard deviation, over the completed nights in the window.
+ *
+ * TWO NIGHTS IS THE FLOOR, the same floor the nap prediction uses: a band drawn
+ * from one night is a claim about a baby stated with the confidence of a
+ * fortnight. Below it there is no band, and `psHealthMeter` then draws the value
+ * with NO TRACK AT ALL — which is the designed state, not a broken one.
+ *
+ * Each band carries a minimum half-width. Two reasons, and the second is the
+ * one that bites: a band narrower than the noise in the measurement claims a
+ * precision the door sensor does not have, and a perfectly consistent week
+ * would produce a ZERO-WIDTH band, which `psHmDomain` correctly refuses — so
+ * the meter would silently lose its rail on exactly the weeks it had the most
+ * to say. */
+function psNurseryNorms(sessions, opts) {
+  const o = opts || {};
+  const nights = (sessions || []).filter((s) => s.night && !s.active).slice(-(o.days || 7));
+
+  /* Bedtimes are shifted past midnight before anything is done with them, for
+     the same reason `psNurseryStats` shifts them: a 00:20 bedtime is a late
+     night, not an early one, and treating it as minute 20 drags the mean back
+     eleven hours and reports a wild spread on a settled week. The meter
+     compares a shifted value against a shifted band, so the rail never sees a
+     raw clock minute. */
+  const bedOf = (s) => {
+    const d = new Date(s.from);
+    const m = d.getHours() * 60 + d.getMinutes();
+    return m < 720 ? m + 1440 : m;
+  };
+
+  const band = (xs, floor) => {
+    if (xs.length < 2) return null;
+    const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const sd = Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length);
+    const half = Math.max(sd, floor);
+    return { lo: m - half, hi: m + half, mean: m };
+  };
+
+  return {
+    nights: nights.map((s) => ({
+      day: s.day,
+      from: s.from,
+      asleep: s.asleepMinutes,
+      bed: bedOf(s),
+      longest: s.longestStretch,
+      ins: s.interventions,
+      edited: !!s.edited,
+    })),
+    asleep: band(nights.map((s) => s.asleepMinutes), 15),
+    bed: band(nights.map(bedOf), 10),
+    longest: band(nights.map((s) => s.longestStretch), 20),
+    ins: band(nights.map((s) => s.interventions), 0.5),
+  };
+}
+
 Object.assign(PurdyShellCard.prototype, {
 
   /* A longer window than the shared 26h fetch, because this section is about
@@ -10713,6 +10785,124 @@ Object.assign(PurdyShellCard.prototype, {
       </div>`;
   },
 
+  /* The week of nights, as a column per night with HIS OWN BAND behind them.
+   *
+   * A meter answers "is this normal" for one night at one moment; it cannot
+   * answer "is it trending", and the two together were the whole ask. So the
+   * headline metric — how long he slept — gets the plot, and the supporting
+   * facts get meters underneath. "Slept" is deliberately NOT also a meter: the
+   * strip already is one, and a meter beside it would be the chip repeating the
+   * line next to it for the sixth time.
+   *
+   * A night with no data draws HATCHED, never as a zero column. A missing night
+   * and a night of no sleep are different facts, and a strip is the surface
+   * where a zero is most convincing — a short column reads as a bad night at a
+   * glance, and the recorder falling over for a day would look like one.
+   *
+   * The domain is padded BELOW the minimum, the lesson the hourly weather strip
+   * taught: his worst night sitting exactly on the baseline draws as a hairline
+   * and reads as no data, which is the one thing the hatching exists to keep
+   * apart from a real reading.
+   *
+   * It does not scrub. The night rail does, because a night has a shape you
+   * read along; this has seven values and they are each one number, already
+   * captioned by the day underneath. The day rail beside it is non-interactive
+   * for the same reason, so a plain railbox is established here as a plot you
+   * read rather than one you press — which is what keeps it off the affordance
+   * sweep's list. */
+  _nurseryWeek(norms, sec) {
+    const b = norms.asleep;
+    const nights = norms.nights;
+    if (!nights.length) return "";
+
+    const days = sec.days || 7;
+    const byDay = {};
+    nights.forEach((n) => { byDay[n.day] = n; });
+
+    /* Slots END YESTERDAY, not at the most recent night on record. Sliding the
+       strip up to the last night he actually has would quietly redraw a gap as
+       a full week and hide the very thing the hatching is for. */
+    const midnight = new Date(this._nowMs());
+    midnight.setHours(0, 0, 0, 0);
+    const slots = [];
+    for (let i = days; i >= 1; i -= 1) {
+      const d = new Date(midnight);
+      d.setDate(d.getDate() - i);
+      slots.push({ key: psDayKey(d), date: d });
+    }
+
+    const vals = nights.map((n) => n.asleep);
+    let lo = Math.min(...vals);
+    let hi = Math.max(...vals);
+    if (b) { lo = Math.min(lo, b.lo); hi = Math.max(hi, b.hi); }
+    const pad = Math.max(20, (hi - lo) * 0.18);
+    lo = Math.max(0, lo - pad);
+    hi += pad;
+    const y = (v) => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+
+    const lastKey = slots.length ? slots[slots.length - 1].key : null;
+    const cols = slots.map((sl) => {
+      const n = byDay[sl.key];
+      if (!n) return `<div class="ps-jwb miss"><i></i></div>`;
+      const last = sl.key === lastKey;
+      const hgt = y(n.asleep);
+      /* The corrected pip rides on the BAR, not on the column. Pinned to the
+         column it sat at the top of the plot with nothing under it — two of
+         them floating over the middle of the week, attached to nothing a reader
+         could connect them to. */
+      return `<div class="ps-jwb${last ? " last" : ""}" title="${psEsc(psHM(n.asleep))}">
+          <i style="height:${hgt.toFixed(1)}%"></i>${
+        n.edited ? `<span class="ps-edd wk" style="bottom:calc(${hgt.toFixed(1)}% + 4px)" title="Corrected"></span>` : ""}</div>`;
+    }).join("");
+
+    const labels = slots.map((sl) => `<span${sl.key === lastKey ? ` class="last"` : ""}>${
+      psEsc(sl.date.toLocaleDateString([], { weekday: "narrow" }))}</span>`).join("");
+
+    const bandEl = !b ? "" : `<div class="ps-jwband" style="bottom:${y(b.lo).toFixed(1)}%;height:${
+      Math.max(1, y(b.hi) - y(b.lo)).toFixed(1)}%"></div>
+      <div class="ps-jwavg" style="bottom:${y(b.mean).toFixed(1)}%"></div>`;
+
+    return `<div class="ps-hyp">
+        <div class="ps-hypt">
+          <span class="ps-lbl">How the week is going</span>
+          <span class="ps-grow"></span>
+          <b>${nights.length} of ${days} nights</b>
+        </div>
+        <div class="ps-railbox">
+          <div class="ps-jwk">${bandEl}<div class="ps-jwbars">${cols}</div></div>
+          <div class="ps-jwx">${labels}</div>
+        </div>
+      </div>`;
+  },
+
+  /* One line, and only where it can say something the plot above it cannot.
+   *
+   * The plot shows last night's column against the band; this says what that
+   * MEANS as a comparison — the distance from his usual, or how long the good
+   * run has been going. Both are arithmetic you would otherwise do by eye, which
+   * is the test a roll-up has to pass to earn a line at all. With no band there
+   * is nothing to compare against and the line is DROPPED rather than filled
+   * with a hedge. */
+  _nurseryVerdict(norms) {
+    const b = norms.asleep;
+    const ns = norms.nights;
+    if (!b || !ns.length) return "";
+    const last = ns[ns.length - 1];
+
+    if (last.asleep < b.lo) {
+      return `<div class="ps-jvd">Last night ran <em class="w">${
+        psEsc(psHM(Math.round(b.mean - last.asleep)))} short</em> of his usual.</div>`;
+    }
+    if (last.asleep > b.hi) {
+      return `<div class="ps-jvd">Last night ran <em>${
+        psEsc(psHM(Math.round(last.asleep - b.mean)))} longer</em> than his usual.</div>`;
+    }
+    let streak = 0;
+    for (let i = ns.length - 1; i >= 0 && ns[i].asleep >= b.lo && ns[i].asleep <= b.hi; i -= 1) streak += 1;
+    return `<div class="ps-jvd"><em>Normal for him</em>${
+      streak > 1 ? ` — ${streak} nights running inside his usual range` : ""}.</div>`;
+  },
+
   /* Today at a glance: the tail of last night, each nap where it fell, now,
      and tonight's expected bedtime as a ghost. Answers "are we on schedule"
      without a single number. */
@@ -10721,7 +10911,7 @@ Object.assign(PurdyShellCard.prototype, {
        of its width on hours nothing ever happens in, which squeezes the naps
        into slivers. The tail of last night and the head of tonight still land
        inside it. */
-    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const day = new Date(this._nowMs()); day.setHours(0, 0, 0, 0);
     const t0 = day.getTime() + 6 * 3600000;
     const t1 = day.getTime() + 22 * 3600000;
     const x = (t) => Math.max(0, Math.min(100, ((t - t0) / (t1 - t0)) * 100));
@@ -10738,8 +10928,14 @@ Object.assign(PurdyShellCard.prototype, {
         opacity="${s.night ? 0.75 : 1}"/>`;
     });
 
+    /* The ghost is placed on the SAME axis as everything else on this rail.
+       It was `(bedMean / 1440) * 100`, which is a position on a midnight-to-
+       midnight axis — and this axis runs 6am to 10pm, so a 7:23 PM bedtime drew
+       at 80.7% where it belongs at 83.6%: the expected bedtime marker sat half
+       an hour early, every day, with nothing to give it away. Surfacing bedtime
+       consistency as a metric is what made it visible. */
     const ghost = bedMean == null ? "" : (() => {
-      const gx = (bedMean / 1440) * 100;
+      const gx = Math.max(0, Math.min(97, x(day.getTime() + bedMean * 60000) - 3));
       return `<rect x="${gx.toFixed(2)}" y="3.5" width="6" height="11" rx="1.6" fill="none"
         stroke="var(--ps-deep)" stroke-width="0.6" stroke-dasharray="1.6 1.4"/>`;
     })();
@@ -10910,10 +11106,44 @@ Object.assign(PurdyShellCard.prototype, {
     /* One line of live status, and nothing else. Predicted bedtime comes from
        his own average rather than a configured time. */
     /* The chip carries awake-and-since now, so this line must not repeat it. */
-    const statusL = live ? `Down ${psClock(live.from)}` : "";
+    /* Plain words here too, and the SAME words as the block below — "Down" and
+       "settled" are the pair a stranger cannot tell apart, and fixing them only
+       where there was room to explain them would leave the collapsed face, the
+       face that is actually read every day, still speaking the old dialect. */
+    const statusL = live ? `Put down ${psClock(live.from)}` : "";
     const statusR = live
-      ? (live.hadExit ? `settled ${psClock(live.settledAt)}` : "settling…")
+      ? (live.hadExit ? `left him ${psClock(live.settledAt)}` : "still settling…")
       : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
+
+    /* His own bands, and the meters that read against them. Built here rather
+       than inside the expanded block because a renderer that is only called
+       from one place is still easier to reason about with its inputs named. */
+    const norms = psNurseryNorms(sessions, { days: sec.days || 7 });
+    const nb = nightSession && !nightSession.active ? nightSession : null;
+    const bedOf = (s) => {
+      const d = new Date(s.from);
+      const m = d.getHours() * 60 + d.getMinutes();
+      return m < 720 ? m + 1440 : m;
+    };
+    /* Three meters, not four. "Slept" is missing on purpose — the strip above
+       is already that metric against that band, and putting it here as well is
+       the chip restating the line beside it.
+       LONGEST RUN is hiOk and WENT IN is loOk: a long undisturbed run and an
+       undisturbed night both sit on the good side of his band, and drawing
+       either of them amber would call the best night of the week a fault. */
+    const meters = !nb ? "" : `<div class="ps-hmg g3 ps-jmet">
+        ${psHealthMeter({
+    label: "Bedtime", value: bedOf(nb), band: norms.bed, text: psClock(nb.from),
+  })}
+        ${psHealthMeter({
+    label: "Longest run", value: nb.longestStretch, band: norms.longest,
+    text: psHM(nb.longestStretch), hiOk: true,
+  })}
+        ${psHealthMeter({
+    label: "Went in", value: nb.interventions, band: norms.ins,
+    text: String(nb.interventions), unit: "×", loOk: true,
+  })}
+      </div>`;
 
     return `
       ${this._head(sec, `<span class="ps-chip ${chipCls}"><span class="ps-dot"></span>${psEsc(chipTxt)}</span>`)}
@@ -10957,26 +11187,40 @@ Object.assign(PurdyShellCard.prototype, {
       ${wifiOk ? "" : `<div class="ps-chips"><span class="ps-chip bad">Hatch offline</span></div>`}
 
       <div class="ps-xtra">
-        ${this._nurseryRail(nightSession, loaded, err)}
+        ${/* VERSUS HIS NORMAL FIRST; the derivation underneath as evidence.
+              What was here answered "where did this number come from" — right,
+              and still below, but aimed at a reader who does not trust the
+              figure yet. The question asked of this section each morning is
+              whether the night was normal for him and whether the week is going
+              the right way, so that is what it opens with now. */""}
+        ${this._nurseryWeek(norms, sec)}
+        ${this._nurseryVerdict(norms)}
+        ${meters}
         ${nightSession ? `
-        <div class="ps-jrs"${editable ? ` data-napedit="${nightSession.from}"` : ""}>
-          <div class="ps-jr"><span class="ps-l">${edd(nightSession)}Asleep</span>
-            <span class="ps-v">${psHM(nightSession.asleepMinutes)}</span>
-            <span class="${avg == null ? "ps-flat" : nightSession.asleepMinutes >= avg ? "ps-good" : "ps-warnc"}">${
-              avg == null ? "" : psHM(avg) + " avg"}</span></div>
-          <div class="ps-jr"><span class="ps-l">Longest stretch</span>
-            <span class="ps-v">${psHM(nightSession.longestStretch)}</span>
-            <span class="ps-flat">${stats.avgStretch == null ? "" : psHM(stats.avgStretch) + " avg"}</span></div>
-          <div class="ps-jr"><span class="ps-l">${edd(nightSession)}Down / up</span>
-            <span class="ps-v">${psClock(nightSession.from)} – ${
-              nightSession.active ? "now" : psClock(psWokeAt(nightSession))}</span>
-            <span class="ps-flat">${stats.bedSpread == null ? "" : "±" + stats.bedSpread + "m"}</span></div>
-          <div class="ps-jr"><span class="ps-l">Settled</span>
-            <span class="ps-v">${nightSession.hadExit ? psClock(nightSession.settledAt) : "—"}</span>
-            <span class="ps-flat">${nightSession.hadExit ? psHM(nightSession.settleMinutes) : "nobody went in"}</span></div>
-          ${nightSession.events.length ? `<div class="ps-jr"><span class="ps-l">Went in at</span>
-            <span class="ps-v">${nightSession.events.map((t) => psClock(t)).join(", ")}</span></div>` : ""}
-        </div>` : ""}
+        ${/* Five rows became two lines, in the words a person would use.
+              A stranger reading the old block could not tell "Down" from
+              "Settled" — and the honest gloss is not a definition, it is the
+              sequence: he went in the cot, somebody left the room, he woke.
+              "Left him" rather than "fell asleep" is deliberate and is the same
+              care the numbers already take: settledAt is when the PARENT LEFT,
+              a lower bound on when he dropped off, and no wording here is
+              allowed to claim the card knows the moment. */""}
+        <div class="ps-jstory"${editable ? ` data-napedit="${nightSession.from}"` : ""}>
+          ${edd(nightSession)}Put down <b>${psClock(nightSession.from)}</b>
+          ${nightSession.hadExit ? `<i>→</i> left him <b>${psClock(nightSession.settledAt)}</b>` : ""}
+          ${nightSession.active ? "" : `<i>→</i> woke <b>${psClock(psWokeAt(nightSession))}</b>`}
+        </div>
+        <div class="ps-jstoryn">${nightSession.hadExit
+          ? `${psEsc(psHM(nightSession.settleMinutes))} to settle him`
+          : "still settling — nobody has left the room yet"}${
+          nightSession.events.length
+            ? ` · went in at ${psEsc(nightSession.events.map((t) => psClock(t)).join(", "))}`
+            : nightSession.hadExit ? " · nobody went in" : ""}</div>` : ""}
+        ${/* The night's own shape, kept as the last piece of evidence rather
+              than the opening statement. Its legend is also the only place
+              settling and asleep are drawn apart in colour, which is what makes
+              the two words above it mean something. */""}
+        ${this._nurseryRail(nightSession, loaded, err)}
 
         ${this._nurseryDayRail(sessions, todayKey, stats.bedMean)}
         <div class="ps-jrs">
@@ -14635,6 +14879,11 @@ function psHmDur(h) {
  *   unit    small trailing unit, inside the numeral
  *   band    {lo, hi} from HIS readings, or null/absent when there is none yet
  *   hiOk    true when above the band is not a fault (HRV, REM)
+ *   loOk    the mirror, and it arrived with Joel: for wake-ups fewer is better,
+ *           so an undisturbed night sits BELOW his band and drawing it amber
+ *           would call the best night of the week a fault. Any "lower is
+ *           better" metric needs it — there was no such metric in Body, which
+ *           is the only reason the case went unbuilt.
  *   cap     true when the band is a published ceiling rather than a personal
  *           range — it is drawn filled from the floor, because "under the
  *           limit" is a different claim from "where you usually are"
@@ -14671,7 +14920,7 @@ function psHealthMeter(o) {
   let cls = "";
   if (o.q) cls = "q";
   else if (above) cls = o.hiOk ? "high" : "out";
-  else if (below) cls = "out";
+  else if (below) cls = o.loOk ? "high" : "out";
 
   const band = o.cap
     ? `<span class="ps-hmb cap" style="left:0%;width:${bHi.toFixed(1)}%"></span>`
@@ -15667,6 +15916,54 @@ const PS_STYLES = `
       .ps-edd { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
                 background: var(--ps-cool); margin-right: 6px; vertical-align: middle; }
       .ps-edd.ring { position: absolute; top: 1px; right: 1px; margin: 0; }
+      .ps-edd.wk { position: absolute; left: 50%; margin: 0; transform: translateX(-50%); }
+
+      /* The week of nights. A column per night, HIS OWN band behind them, and a
+         hatched slot where a night is missing — a short column reads as a bad
+         night at a glance, so a zero here is the most convincing lie the card
+         could tell. */
+      .ps-jwk { position: relative; height: 66px; }
+      /* The band is NEUTRAL, not another purple. Tinted with the bars' own hue
+         it read as one more bar lying on its side, and the week — the thing the
+         plot is for — came out muddy at a glance. His normal is context; the
+         nights are the data, and only one of them gets the colour. */
+      .ps-jwband { position: absolute; left: 0; right: 0; background: rgba(255,255,255,.045);
+                   border-top: 1px solid rgba(255,255,255,.14);
+                   border-bottom: 1px solid rgba(255,255,255,.14); }
+      .ps-jwavg { position: absolute; left: 0; right: 0; height: 1px; background: rgba(255,255,255,.30); }
+      .ps-jwbars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 6px; }
+      .ps-jwb { flex: 1; position: relative; height: 100%; min-width: 0; }
+      .ps-jwb i { position: absolute; left: 0; right: 0; bottom: 0; display: block;
+                  background: rgba(170,120,255,.42); border-radius: var(--pc-r-xs) var(--pc-r-xs) 0 0; }
+      .ps-jwb.last i { background: var(--ps-deep); }
+      /* A missing night keeps its full height — a short hatch would read as a
+         low value, which is the whole thing this is here to prevent — but it is
+         drawn QUIETLY. At the weight it first shipped, three absent nights were
+         the loudest thing in the plot and the four real ones looked like the
+         footnote. */
+      .ps-jwb.miss i { top: 0; height: auto; border-radius: var(--pc-r-xs);
+                       border: 1px dashed rgba(255,255,255,.07); background:
+                       repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 4px, transparent 4px 8px); }
+      .ps-jwx { display: flex; gap: 6px; margin-top: 5px; }
+      .ps-jwx span { flex: 1; min-width: 0; text-align: center; font-size: var(--pc-fs-micro);
+                     color: var(--ps-dim); font-weight: 650; letter-spacing: .06em; }
+      .ps-jwx span.last { color: var(--ps-text); }
+
+      /* The roll-up under the strip: a comparison, never a restatement. */
+      .ps-jvd { font-size: var(--pc-fs-sm); color: var(--ps-muted); line-height: 1.5; margin-top: 9px; }
+      .ps-jvd em { font-style: normal; font-weight: 650; color: var(--ps-good); }
+      .ps-jvd em.w { color: var(--ps-warn); }
+      .ps-jmet { margin-top: 13px; }
+
+      /* The night in the words a person would use, replacing five labelled
+         rows. The arrows carry the sequence, which is the thing "down" and
+         "settled" never managed to say. */
+      .ps-jstory { margin-top: 14px; font-size: var(--pc-fs-sm); color: var(--ps-muted);
+                   line-height: 1.6; font-variant-numeric: tabular-nums; cursor: pointer; }
+      .ps-jstory b { color: var(--ps-text); font-weight: 650; }
+      .ps-jstory i { font-style: normal; color: var(--ps-dim); margin: 0 3px; }
+      .ps-jstoryn { margin-top: 3px; font-size: var(--pc-fs-xs); color: var(--ps-dim);
+                    line-height: 1.5; font-variant-numeric: tabular-nums; }
       .ps-neb { padding: 2px 0 4px; }
       .ps-ner { display: flex; align-items: center; gap: 10px; padding: 7px 2px;
                 font-size: var(--pc-fs-sm); font-variant-numeric: tabular-nums; }
@@ -18267,8 +18564,8 @@ Object.assign(PurdyDeskCard.prototype, {
     }
     if (live) {
       const settled = live.settledAt && live.settledAt <= now;
-      if (!settled) return `Down ${pdClock(live.from)} · settling ${psHM(Math.round((now - live.from) / 60000))}`;
-      return `Down ${pdClock(live.from)} · settled ${pdClock(live.settledAt)} · asleep ${
+      if (!settled) return `Put down ${pdClock(live.from)} · settling ${psHM(Math.round((now - live.from) / 60000))}`;
+      return `Put down ${pdClock(live.from)} · left him ${pdClock(live.settledAt)} · asleep ${
         psHM(Math.round((now - live.settledAt) / 60000))}`;
     }
     if (stats.wakeWindowMin == null) return "Nothing recorded yet.";
@@ -18351,14 +18648,19 @@ Object.assign(PurdyDeskCard.prototype, {
       n.edited
     )).join("");
 
+    /* The same words as the phone. "Down" and "Settled" are the pair a stranger
+       cannot tell apart, and the desk borrows the phone's DATA — letting the two
+       surfaces label one derivation with two vocabularies is how a house ends up
+       arguing with itself about what "settled" means. The desk's own layout
+       rework is a later batch; the nouns are not. */
     const nightRows = night ? [
-      row("Asleep", psDur(night.asleepMinutes),
+      row("Slept", psDur(night.asleepMinutes),
         stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", night.edited),
-      row("Down / up", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", night.edited),
-      row("Settled", pdClock(night.settledAt), `+${psHM(night.settleMinutes)} settling`),
-      row("Interventions", String(night.interventions),
+      row("Put down / woke", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", night.edited),
+      row("Left him", pdClock(night.settledAt), `${psHM(night.settleMinutes)} to settle`),
+      row("Went in", String(night.interventions),
         (night.events || []).map((t) => pdClock(t)).join(" · ")),
-      row("Longest stretch", psDur(night.longestStretch),
+      row("Longest run", psDur(night.longestStretch),
         stats.avgStretch ? `7d ${psDur(stats.avgStretch)}` : ""),
     ].join("") : "";
 

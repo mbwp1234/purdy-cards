@@ -96,6 +96,11 @@ function psHmDur(h) {
  *   unit    small trailing unit, inside the numeral
  *   band    {lo, hi} from HIS readings, or null/absent when there is none yet
  *   hiOk    true when above the band is not a fault (HRV, REM)
+ *   loOk    the mirror, and it arrived with Joel: for wake-ups fewer is better,
+ *           so an undisturbed night sits BELOW his band and drawing it amber
+ *           would call the best night of the week a fault. Any "lower is
+ *           better" metric needs it — there was no such metric in Body, which
+ *           is the only reason the case went unbuilt.
  *   cap     true when the band is a published ceiling rather than a personal
  *           range — it is drawn filled from the floor, because "under the
  *           limit" is a different claim from "where you usually are"
@@ -132,7 +137,7 @@ function psHealthMeter(o) {
   let cls = "";
   if (o.q) cls = "q";
   else if (above) cls = o.hiOk ? "high" : "out";
-  else if (below) cls = "out";
+  else if (below) cls = o.loOk ? "high" : "out";
 
   const band = o.cap
     ? `<span class="ps-hmb cap" style="left:0%;width:${bHi.toFixed(1)}%"></span>`

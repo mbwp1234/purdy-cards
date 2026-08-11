@@ -268,6 +268,54 @@ const PS_STYLES = `
       .ps-edd { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
                 background: var(--ps-cool); margin-right: 6px; vertical-align: middle; }
       .ps-edd.ring { position: absolute; top: 1px; right: 1px; margin: 0; }
+      .ps-edd.wk { position: absolute; left: 50%; margin: 0; transform: translateX(-50%); }
+
+      /* The week of nights. A column per night, HIS OWN band behind them, and a
+         hatched slot where a night is missing — a short column reads as a bad
+         night at a glance, so a zero here is the most convincing lie the card
+         could tell. */
+      .ps-jwk { position: relative; height: 66px; }
+      /* The band is NEUTRAL, not another purple. Tinted with the bars' own hue
+         it read as one more bar lying on its side, and the week — the thing the
+         plot is for — came out muddy at a glance. His normal is context; the
+         nights are the data, and only one of them gets the colour. */
+      .ps-jwband { position: absolute; left: 0; right: 0; background: rgba(255,255,255,.045);
+                   border-top: 1px solid rgba(255,255,255,.14);
+                   border-bottom: 1px solid rgba(255,255,255,.14); }
+      .ps-jwavg { position: absolute; left: 0; right: 0; height: 1px; background: rgba(255,255,255,.30); }
+      .ps-jwbars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 6px; }
+      .ps-jwb { flex: 1; position: relative; height: 100%; min-width: 0; }
+      .ps-jwb i { position: absolute; left: 0; right: 0; bottom: 0; display: block;
+                  background: rgba(170,120,255,.42); border-radius: var(--pc-r-xs) var(--pc-r-xs) 0 0; }
+      .ps-jwb.last i { background: var(--ps-deep); }
+      /* A missing night keeps its full height — a short hatch would read as a
+         low value, which is the whole thing this is here to prevent — but it is
+         drawn QUIETLY. At the weight it first shipped, three absent nights were
+         the loudest thing in the plot and the four real ones looked like the
+         footnote. */
+      .ps-jwb.miss i { top: 0; height: auto; border-radius: var(--pc-r-xs);
+                       border: 1px dashed rgba(255,255,255,.07); background:
+                       repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 4px, transparent 4px 8px); }
+      .ps-jwx { display: flex; gap: 6px; margin-top: 5px; }
+      .ps-jwx span { flex: 1; min-width: 0; text-align: center; font-size: var(--pc-fs-micro);
+                     color: var(--ps-dim); font-weight: 650; letter-spacing: .06em; }
+      .ps-jwx span.last { color: var(--ps-text); }
+
+      /* The roll-up under the strip: a comparison, never a restatement. */
+      .ps-jvd { font-size: var(--pc-fs-sm); color: var(--ps-muted); line-height: 1.5; margin-top: 9px; }
+      .ps-jvd em { font-style: normal; font-weight: 650; color: var(--ps-good); }
+      .ps-jvd em.w { color: var(--ps-warn); }
+      .ps-jmet { margin-top: 13px; }
+
+      /* The night in the words a person would use, replacing five labelled
+         rows. The arrows carry the sequence, which is the thing "down" and
+         "settled" never managed to say. */
+      .ps-jstory { margin-top: 14px; font-size: var(--pc-fs-sm); color: var(--ps-muted);
+                   line-height: 1.6; font-variant-numeric: tabular-nums; cursor: pointer; }
+      .ps-jstory b { color: var(--ps-text); font-weight: 650; }
+      .ps-jstory i { font-style: normal; color: var(--ps-dim); margin: 0 3px; }
+      .ps-jstoryn { margin-top: 3px; font-size: var(--pc-fs-xs); color: var(--ps-dim);
+                    line-height: 1.5; font-variant-numeric: tabular-nums; }
       .ps-neb { padding: 2px 0 4px; }
       .ps-ner { display: flex; align-items: center; gap: 10px; padding: 7px 2px;
                 font-size: var(--pc-fs-sm); font-variant-numeric: tabular-nums; }

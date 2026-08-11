@@ -26,7 +26,14 @@ const names = Object.keys(defined);
 console.log('defined elements:', names.join(', '));
 
 let fail = 0;
-const check = (label, cond) => { console.log((cond?'  PASS  ':'  FAIL  ')+label); if(!cond) fail++; };
+/* `cond` is a VALUE, not a thunk. An uncalled arrow function is truthy, so
+   `check('x', () => whatever)` passes however wrong `whatever` is — twenty of
+   them went green in one pass while asserting nothing at all. The condition is
+   run for you if you hand one over rather than being silently believed. */
+const check = (label, cond) => {
+  const v = typeof cond === 'function' ? cond() : cond;
+  console.log((v?'  PASS  ':'  FAIL  ')+label); if(!v) fail++;
+};
 
 /* A DOM node real enough to reconcile against, and to stand in for a hosted
    custom element. The plain stub answers null to everything. */
@@ -3178,6 +3185,13 @@ const MUSIC_ON = { 'media_player.tv': { state: 'off', attributes: {} },
   'media_player.kit': { state: 'playing',
     attributes: { app_id: 'music_assistant', media_content_type: 'music', media_title: 'A song' } } };
 
+/* Both on, spelled out. It was `{ ...TV_ON, ...MUSIC_ON }`, and MUSIC_ON
+   carries `media_player.tv: off` — so the spread turned the television back off
+   and the "both on" pair actually tested music-only, twice. It went unnoticed
+   because both checks were also passing an uncalled arrow function. */
+const BOTH_ON = { 'media_player.tv': { state: 'playing', attributes: {} },
+  'media_player.kit': MUSIC_ON['media_player.kit'] };
+
 check('a television on and nothing playing opens Watch', () =>
   mediaCfg(TV_ON)._mediaFace() === 'watch');
 check('music playing and the televisions off opens Listen', () =>
@@ -3185,9 +3199,9 @@ check('music playing and the televisions off opens Listen', () =>
 check('nothing on opens Watch — the cold start you actually wanted', () =>
   mediaCfg(TV_OFF)._mediaFace() === 'watch');
 check('both on is ambiguous, so Watch takes it', () =>
-  mediaCfg({ ...TV_ON, ...MUSIC_ON })._mediaFace() === 'watch');
+  mediaCfg(BOTH_ON)._mediaFace() === 'watch');
 check('both on is ambiguous, so the tap still wins over the tie-break', () =>
-  mediaCfg({ ...TV_ON, ...MUSIC_ON }, 'listen')._mediaFace() === 'listen');
+  mediaCfg(BOTH_ON, 'listen')._mediaFace() === 'listen');
 check('default_face moves the tie-break without another release', (() => {
   /* The two cases the live state does not decide are the only ones this
      touches. It must NOT override a house that has answered the question. */
@@ -3242,8 +3256,15 @@ check('both faces carry the tabs, so neither is a dead end', (() => {
    everything docked, nothing running, washer off. The landing page keeps only
    the moments that need a human; the rest lives in the dock app. */
 const crewAlertCfg = { ...crewCfg, alerts_only: true, sheet: 'crew' };
+/* A GENUINELY quiet house. The shared fixture's filter is at 14%, under the 20%
+   consumables threshold, so it correctly raises a row — this check was reading
+   "nothing to report" off a house that had something to report, and passed
+   anyway because it was handing `check` an uncalled arrow function. The
+   consumable is lifted clear here rather than in the shared states, because
+   every other crew check wants that row present. */
 check('a quiet crew renders nothing at all on the landing page', () =>
-  mkCrew()._secCrew(crewAlertCfg) === '');
+  mkCrew({ 'sensor.filt': { state: '64', attributes: { unit_of_measurement: '%' } } })
+    ._secCrew(crewAlertCfg) === '');
 
 check('a finished washer raises a row', (() => {
   const h = mkCrew({ 'input_select.washer': { state: 'Finished', attributes: {} } })
@@ -3682,10 +3703,11 @@ check('a nap reading that crosses the hour asks for a smaller step', (() => {
   });
 })());
 
-/* Both rails are plots with an axis, so both sit in a box — a bare line on the
-   card ground does not read as one. */
-check('both rails sit in a box',
-  (nurseryRendered.html.match(/ps-railbox/g) || []).length === 2);
+/* Every rail is a plot with an axis, so every one sits in a box — a bare line
+   on the card ground does not read as one. Three now: the week of nights, the
+   night itself, and today. */
+check('every rail sits in a box',
+  (nurseryRendered.html.match(/ps-railbox/g) || []).length === 3);
 check('the night rail is labelled at the hours its gridlines fall on', (() => {
   const rail = nurseryRendered.html.slice(nurseryRendered.html.indexOf('data-scrub="night"'));
   const ticks = rail.slice(rail.indexOf('ps-railticks'), rail.indexOf('</div>', rail.indexOf('ps-railticks')));
@@ -3792,8 +3814,167 @@ check('the rail lives behind the expand, not in the collapsed view', (() => {
   return x > 0 && nurseryRendered.html.indexOf('data-scrub="night"') > x;
 })());
 
+/* ===========================================================================
+ * WITHIN HIS NORM — the expanded face reads against his own bands first.
+ *
+ * A band drawn from his own week is free here where every Apple Health band
+ * needs a template mirror and a nightly ring buffer, so these are the same unit
+ * as Body's meters pointed at data that already exists.
+ * ======================================================================== */
+const NORMS = SH.helpers.nurseryNorms;
+
+/* A four-night week shaped like his real one: one long night, then three that
+   settle into a range. Its own fixture rather than the shared one, which has a
+   single night — and a single night is exactly the case that must NOT produce a
+   band, so a band test riding on it would be vacuous. */
+const jweek = (() => {
+  const HR = 3600000, MIN = 60000;
+  const hatch = [];
+  const door = [];
+  /* Aug 3-6 evenings, ending the following morning. Asleep comes out 715 / 660
+     / 640 / 640 after the 5-minute settle is taken off. */
+  [[3, 720], [4, 665], [5, 645], [6, 645]].forEach(([d, mins]) => {
+    const start = new Date(2026, 7, d, 19, 10).getTime();
+    hatch.push({ t: start, s: 'playing' }, { t: start + mins * MIN, s: 'idle' });
+    door.push({ t: start + 4 * MIN, s: 'on' }, { t: start + 5 * MIN, s: 'off' });
+  });
+  const s = new SH();
+  /* `edits:` is what makes a session a correction target — without a store to
+     write to, the long press does nothing and the card correctly declines to
+     invite it. */
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
+    edits: { store: 'input_text.joel_nap_edits' } }] });
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'input_text.joel_nap_edits': { state: '', attributes: {} } } };
+  /* Pinned to the afternoon AFTER the last night, so the most recent completed
+     night is "yesterday" — which is the slot the strip highlights. */
+  s._testNow = new Date(2026, 7, 7, 15, 0).getTime();
+  s._nursery = { 'media_player.h': hatch, 'binary_sensor.d': door };
+  const sess = s._nurserySessions(s._config.sections[0]);
+  return { s, sess, html: s._secNursery(s._config.sections[0]),
+    norms: NORMS(sess, { days: 7 }), HR, MIN };
+})();
+
+check('the week fixture really is four nights', () => jweek.norms.nights.length === 4);
+check('a band comes from his own nights', () => {
+  const b = jweek.norms.asleep;
+  return b && b.lo < b.mean && b.mean < b.hi && Math.round(b.mean) === 664;
+});
+/* One night is an anecdote. The floor is the same one the nap prediction uses,
+   and below it there is NO band — which `psHealthMeter` draws as a value with
+   no track at all, the designed state rather than a broken one. */
+check('one night is not enough for a band', () => {
+  const n = NORMS([{ night: true, active: false, day: '2026-08-06', from: NT(19, 0),
+    asleepMinutes: 600, longestStretch: 300, interventions: 2 }], { days: 7 });
+  return n.asleep === null && n.bed === null && n.longest === null && n.ins === null;
+});
+/* A perfectly consistent week has a standard deviation of zero, and a
+   zero-width band is refused by psHmDomain — so without a floor the meter would
+   silently lose its rail on exactly the weeks it had the most to say. */
+check('a flawlessly consistent week still gets a band', () => {
+  const same = [0, 1, 2].map((i) => ({ night: true, active: false, day: `2026-08-0${3 + i}`,
+    from: new Date(2026, 7, 3 + i, 19, 0).getTime(),
+    asleepMinutes: 640, longestStretch: 300, interventions: 2 }));
+  const n = NORMS(same, { days: 7 });
+  return n.asleep && n.asleep.hi - n.asleep.lo === 30
+    && SH.helpers.hmDomain(n.asleep) !== null;
+});
+/* The same shift psNurseryStats makes: a 00:20 bedtime is a late night, not an
+   early one, and unshifted it would drag the mean back eleven hours. */
+check('the bedtime band counts after-midnight as late', () => {
+  const n = NORMS([
+    { night: true, active: false, day: '2026-08-05', from: new Date(2026, 7, 5, 23, 50).getTime(),
+      asleepMinutes: 600, longestStretch: 300, interventions: 1 },
+    { night: true, active: false, day: '2026-08-06', from: new Date(2026, 7, 7, 0, 20).getTime(),
+      asleepMinutes: 600, longestStretch: 300, interventions: 1 },
+  ], { days: 7 });
+  return n.bed && Math.round(n.bed.mean) === 1445;
+});
+
+/* A missing night is HATCHED, never a zero column. A strip is the surface where
+   a zero is most convincing — a short bar reads as a bad night at a glance, so
+   the recorder falling over for a day would look like one. */
+/* The delimiter matters: a bare `class="ps-jwb` also matches the band and the
+   bar wrapper, and would count nine slots in a seven-day week. */
+check('the week strip draws one slot per day, whatever was recorded', () =>
+  (jweek.html.match(/class="ps-jwb[ "]/g) || []).length === 7);
+check('a night with no data is hatched, not drawn as zero', () => {
+  const miss = (jweek.html.match(/ps-jwb miss/g) || []).length;
+  return miss === 3 && !/height:0\.0%/.test(jweek.html);
+});
+check('the hatched slot has a style of its own to be drawn with',
+  /\.ps-jwb\.miss i \{/.test(SH.styles));
+check('the most recent night is the one picked out',
+  (jweek.html.match(/ps-jwb last/g) || []).length === 1);
+check('his own band is drawn behind the week', () => /ps-jwband/.test(jweek.html)
+  && /ps-jwavg/.test(jweek.html));
+
+/* The roll-up is a COMPARISON, not a restatement — and with no band there is
+   nothing to compare against, so it is dropped rather than hedged. */
+check('the verdict names the run of normal nights',
+  /3 nights running inside his usual range/.test(jweek.html));
+check('the verdict is dropped when there is no band to judge against',
+  !/ps-jvd/.test(nurseryRendered.html));
+check('a short night is named as a shortfall, not a streak', () => {
+  const b = { lo: 600, hi: 700, mean: 650 };
+  const h = jweek.s._nurseryVerdict({ asleep: b,
+    nights: [{ asleep: 660 }, { asleep: 500 }] });
+  return /2h 30m short/.test(h) && /em class="w"/.test(h);
+});
+check('a long night is named too, and is not a warning', () => {
+  const b = { lo: 600, hi: 700, mean: 650 };
+  const h = jweek.s._nurseryVerdict({ asleep: b, nights: [{ asleep: 800 }] });
+  return /2h 30m longer/.test(h) && !/em class="w"/.test(h);
+});
+
+/* Three meters, not four. "Slept" is the strip already; a meter beside it would
+   be the chip restating the line next to it for the sixth time. */
+check('the expanded face carries exactly three meters', () =>
+  (jweek.html.match(/class="ps-hmk"/g) || []).length === 3);
+check('slept is the strip, never also a meter', () => !/ps-hmk">Slept/.test(jweek.html));
+/* Fewer wake-ups is BETTER, so an undisturbed night sits below his band and must
+   not draw amber — that would call the best night of the week a fault. */
+check('a lower-is-better value below its band is not a fault', () => {
+  const h = SH.helpers.healthMeter({ label: 'Went in', value: 0, band: { lo: 2, hi: 4 }, loOk: true });
+  return /ps-hmd high/.test(h) && !/ps-hmd out/.test(h);
+});
+check('without loOk, below the band is still a fault', () => {
+  const h = SH.helpers.healthMeter({ label: 'Slept', value: 1, band: { lo: 2, hi: 4 } });
+  return /ps-hmd out/.test(h);
+});
+
+/* The words. A stranger could not tell "Down" from "Settled", and the fix is
+   not a definition but the sequence — and "left him" rather than "fell asleep",
+   because settledAt is when the PARENT LEFT and nothing here may claim the card
+   knows the moment he dropped off. */
+check('the night is told in plain words', () => /Put down/.test(jweek.html)
+  && /left him/.test(jweek.html) && /woke/.test(jweek.html));
+check('the old labels are gone from the section', () =>
+  !/>Down \//.test(jweek.html) && !/ps-l">Settled</.test(jweek.html)
+  && !/Interventions/.test(jweek.html));
+check('the collapsed status line speaks the same dialect as the block below', () => {
+  const src = fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8');
+  return /statusL = live \? `Put down /.test(src) && /left him \$\{psClock\(live\.settledAt\)\}/.test(src);
+});
+check('the story is still a correction target', () =>
+  /ps-jstory"[^>]*data-napedit=/.test(jweek.html));
+
+/* The expected-bedtime ghost is placed on the axis it is drawn on. It was a
+   position on a midnight-to-midnight axis dropped onto a rail that runs 6am to
+   10pm, so it sat half an hour early every day with nothing to give it away. */
+check('the bedtime ghost lands on the rail it is drawn on', () => {
+  const h = jweek.s._nurseryDayRail([], '2026-08-07', 20 * 60);
+  const m = /stroke-dasharray[^>]*\/>/.test(h) && /<rect x="([\d.]+)" y="3\.5" width="6"/.exec(h);
+  if (!m) return false;
+  /* 8:00 PM on a 6am–10pm axis is 87.5%, and the marker is 6 wide, so its left
+     edge is 84.5. On the old midnight-to-midnight arithmetic it was 83.3. */
+  return Math.abs((Number(m[1]) + 3) - 87.5) < 0.1;
+});
+
 /* The measurements worth having whether or not this card shows them. */
-check('longest unbroken stretch is reported', /Longest stretch/.test(nurseryRendered.html));
+check('longest unbroken stretch is reported', /Longest run/.test(nurseryRendered.html));
 check('the longest stretch is the biggest gap, not the last one', (() => {
   const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 59), s: 'idle' }],
     [{ t: NT(20, 5), s: 'on' }, { t: NT(20, 6), s: 'off' },
@@ -5848,10 +6029,23 @@ check('the statistics call names no unit', () => {
   return !/units:/.test(wsrc);
 });
 
+/* The rule is about a READING collapsing to zero — a sensor that is not
+   reporting must never draw the same as one reporting nothing. A blanket ban on
+   `|| 0)` overshoots it and this check has never actually run: the two hits in
+   the weather source are an accumulator being seeded (`(rec.precip || 0) + mm`,
+   with mm already tested for null) and a missing `supported_features` meaning
+   "this provider offers no forecast types", which is the correct reading of an
+   absent attribute rather than a hidden zero. So the ban is on the shape that
+   hides a reading: a value pulled through the reading helpers and then
+   defaulted. */
 check('weather renders no figure through the zero-hiding shape', () => {
   const wsrc = fs.readFileSync(new URL('../src/78b-shell-weather.js', import.meta.url), 'utf8');
-  return !/\?\? 0\)/.test(wsrc) && !/\|\| 0\)/.test(wsrc);
+  return !/\?\? 0\)/.test(wsrc)
+    && !/(pcNumOf|pcNum|pcReading)\([^)]*\)\s*(\?\?|\|\|)\s*0/.test(wsrc);
 });
+/* And the guard is not vacuous: the banned shape is detected when present. */
+check('the zero-hiding guard would catch the shape it bans', () =>
+  /(pcNumOf|pcNum|pcReading)\([^)]*\)\s*(\?\?|\|\|)\s*0/.test('const t = pcNumOf(h, id) ?? 0;'));
 
 check('the weather classes it renders all exist in the stylesheet', (() => {
   const used = ['ps-wxhero', 'ps-wxbig', 'ps-wxdelta', 'ps-wxsrc', 'ps-wxtiles', 'ps-wxtile',
