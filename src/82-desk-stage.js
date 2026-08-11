@@ -432,8 +432,8 @@ Object.assign(PurdyDeskCard.prototype, {
     }
     if (live) {
       const settled = live.settledAt && live.settledAt <= now;
-      if (!settled) return `Down ${pdClock(live.from)} · settling ${psHM(Math.round((now - live.from) / 60000))}`;
-      return `Down ${pdClock(live.from)} · settled ${pdClock(live.settledAt)} · asleep ${
+      if (!settled) return `Put down ${pdClock(live.from)} · settling ${psHM(Math.round((now - live.from) / 60000))}`;
+      return `Put down ${pdClock(live.from)} · left him ${pdClock(live.settledAt)} · asleep ${
         psHM(Math.round((now - live.settledAt) / 60000))}`;
     }
     if (stats.wakeWindowMin == null) return "Nothing recorded yet.";
@@ -516,14 +516,19 @@ Object.assign(PurdyDeskCard.prototype, {
       n.edited
     )).join("");
 
+    /* The same words as the phone. "Down" and "Settled" are the pair a stranger
+       cannot tell apart, and the desk borrows the phone's DATA — letting the two
+       surfaces label one derivation with two vocabularies is how a house ends up
+       arguing with itself about what "settled" means. The desk's own layout
+       rework is a later batch; the nouns are not. */
     const nightRows = night ? [
-      row("Asleep", psDur(night.asleepMinutes),
+      row("Slept", psDur(night.asleepMinutes),
         stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", night.edited),
-      row("Down / up", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", night.edited),
-      row("Settled", pdClock(night.settledAt), `+${psHM(night.settleMinutes)} settling`),
-      row("Interventions", String(night.interventions),
+      row("Put down / woke", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", night.edited),
+      row("Left him", pdClock(night.settledAt), `${psHM(night.settleMinutes)} to settle`),
+      row("Went in", String(night.interventions),
         (night.events || []).map((t) => pdClock(t)).join(" · ")),
-      row("Longest stretch", psDur(night.longestStretch),
+      row("Longest run", psDur(night.longestStretch),
         stats.avgStretch ? `7d ${psDur(stats.avgStretch)}` : ""),
     ].join("") : "";
 
