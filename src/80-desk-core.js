@@ -187,6 +187,7 @@ class PurdyDeskCard extends PcBaseCard {
     this._wxTimer = null;
     this._events = [];
     this._goalOpt = null;      // optimistic setpoint, see _optGoal
+    this._disOpt = null;       // optimistic dismissal, see _dismissals
     this._goalSend = null;
     this._briOpt = {};         // optimistic light brightness
     this._briSend = {};

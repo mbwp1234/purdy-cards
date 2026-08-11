@@ -1666,9 +1666,121 @@ shp._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 1200), attribute
 check('a re-fire brings the row back', shp._faults().length === 1);
 shp._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 13 * 3600), attributes: {} };
 check('dismiss_hours caps how long a stale row hides', shp._faults().length === 1);
+/* --- affordances: a door is not an expand -------------------------------- */
+/* The named worst friction was "not tappable" — which is a complaint about not
+   knowing you MAY press, not about what happens when you do. A header that
+   entered a mode or opened a sheet drew nothing at all, on a card where nearly
+   everything else responds to a press, so the row read as a caption and the
+   page behind it was undiscoverable. The cue must not be the chevron: a
+   chevron promises the thing below unfolds in place, and these replace the
+   screen or slide a sheet over it. */
+check('a door header draws the door glyph and never the chevron', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [] });
+  const mode = s._head({ key: 'a', title: 'Body' }, '', { mode: 'health' });
+  const sheet = s._head({ key: 'b', title: 'Weather' }, '', { sheet: 'wx' });
+  return /ps-dv/.test(mode) && !/ps-cv/.test(mode) && /data-mode="health"/.test(mode)
+    && /ps-dv/.test(sheet) && !/ps-cv/.test(sheet) && /data-sheet="wx"/.test(sheet);
+})());
+
+check('an expanding header keeps the chevron and is not a door', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [] });
+  const h = s._head({ key: 'a', title: 'Joel' }, '');
+  return /ps-cv/.test(h) && !/ps-dv/.test(h) && /data-open="a"/.test(h);
+})());
+
+check('a fixed header promises nothing, because it does nothing', (() => {
+  /* expandable: false is the one header that legitimately has no cue — it is
+     not a button at all, so a glyph would be the false affordance. */
+  const s = new SH();
+  s.setConfig({ sections: [] });
+  const h = s._head({ key: 'a', title: 'Now playing', expandable: false }, '');
+  return !/ps-cv/.test(h) && !/ps-dv/.test(h) && !/<button/.test(h);
+})());
+
 check('malformed dismissal store is ignored, not fatal', (() => {
   shp._hass.states['input_text.dis'] = { state: 'unknown', attributes: {} };
   return Object.keys(shp._dismissals()).length === 0;
+})());
+
+/* --- dismissing is optimistic ------------------------------------------- */
+/* The write goes to an input_text and the re-render reads that same
+   input_text straight back, so the row stayed on screen until HA echoed —
+   reported as "kinda slow to remove notifs". Same shape as the setpoint, and
+   the shell had already solved that one with _optGoal. */
+const mkDis = () => {
+  const s = new SH();
+  s.setConfig({
+    dismiss_store: 'input_text.dis', dismiss_hours: 12,
+    attention: [{ key: 'lit', entity: 'vacuum.l', state: 'error',
+      severity: 'critical', title: 'Litter' }],
+    sections: [],
+  });
+  const calls = [];
+  s._hass = {
+    states: {
+      'vacuum.l': { state: 'error', attributes: {},
+        last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
+      'input_text.dis': { state: '', attributes: {} },
+    },
+    callService: (...a) => calls.push(a),
+  };
+  s._render = () => {};
+  return [s, calls];
+};
+
+check('the row goes on the tap, before HA has echoed the write', (() => {
+  const [s, calls] = mkDis();
+  if (s._faults().length !== 1) return false;
+  s._dismiss(s._raised()[0]);
+  /* The store still holds the OLD value — this is the exact state the card
+     was rendering from, and the row used to survive it. */
+  return s._hass.states['input_text.dis'].state === ''
+    && calls.length === 1 && s._faults().length === 0;
+})());
+
+check('the optimistic dismissal yields once the store agrees', (() => {
+  const [s, calls] = mkDis();
+  s._dismiss(s._raised()[0]);
+  /* Echo back exactly what was written, which is what HA does. */
+  s._hass.states['input_text.dis'] = { state: calls[0][2].value, attributes: {} };
+  s._dismissals();
+  /* Nothing held locally any more: the real state is now doing the work. */
+  return s._disOpt === null && s._faults().length === 0;
+})());
+
+check('an optimistic dismissal EXPIRES so a lost write shows the truth', (() => {
+  /* Without the expiry a call that never landed would hide a live fault for
+     as long as the page stayed open — the failure mode _optGoal's 12s exists
+     to prevent, and the reason this is a hold rather than a mute. */
+  const [s] = mkDis();
+  s._dismiss(s._raised()[0]);
+  if (s._faults().length !== 0) return false;
+  Object.keys(s._disOpt).forEach((k) => { s._disOpt[k].until = Date.now() - 1; });
+  return s._faults().length === 1 && s._disOpt === null;
+})());
+
+check('one optimistic dismissal does not hide a different rule', (() => {
+  const s = new SH();
+  s.setConfig({
+    dismiss_store: 'input_text.dis', dismiss_hours: 12,
+    attention: [
+      { key: 'lit', entity: 'vacuum.l', state: 'error', severity: 'critical', title: 'Litter' },
+      { key: 'wsh', entity: 'input_select.w', state: 'Finished', severity: 'warn', title: 'Washer' },
+    ],
+    sections: [],
+  });
+  s._hass = { states: {
+    'vacuum.l': { state: 'error', attributes: {}, last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
+    'input_select.w': { state: 'Finished', attributes: {}, last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
+    'input_text.dis': { state: '', attributes: {} },
+  }, callService: () => {} };
+  s._render = () => {};
+  const rows = s._raised();
+  s._dismiss(rows.find((r) => r.key === 'lit'));
+  const left = s._faults();
+  return left.length === 1 && left[0].key === 'wsh';
 })());
 
 /* A NUMERIC group rule — five consumables all below a threshold. _firedAt's
@@ -3014,6 +3126,10 @@ const mediaCfg = (states, pick) => {
     sections: [{ type: 'music', key: 'music', sheet_only: true,
       players: [{ entity: 'media_player.kit', name: 'Kitchen' }],
       default_player: 'media_player.kit' }],
+    /* _nowPlaying reads the TOP-LEVEL now_playing block, not the music
+       section's players. Without it "music is on" was never true here and the
+       old rule's Listen-by-default masked it in every one of these checks. */
+    now_playing: { players: [{ entity: 'media_player.kit', name: 'Kitchen' }] },
     sheets: { media: { title: 'Media', card: { type: 'custom:purdy-remote-card',
       tvs: [{ name: 'Living Room', remote: 'remote.lr', media_player: 'media_player.tv' }] } } },
   });
@@ -3034,10 +3150,24 @@ check('a television on and nothing playing opens Watch', () =>
   mediaCfg(TV_ON)._mediaFace() === 'watch');
 check('music playing and the televisions off opens Listen', () =>
   mediaCfg(MUSIC_ON)._mediaFace() === 'listen');
-check('nothing on opens Listen, the commoner cold start', () =>
-  mediaCfg(TV_OFF)._mediaFace() === 'listen');
-check('both on is ambiguous, so the tap wins', () =>
-  mediaCfg({ ...TV_ON, ...MUSIC_ON }, 'watch')._mediaFace() === 'watch');
+check('nothing on opens Watch — the cold start you actually wanted', () =>
+  mediaCfg(TV_OFF)._mediaFace() === 'watch');
+check('both on is ambiguous, so Watch takes it', () =>
+  mediaCfg({ ...TV_ON, ...MUSIC_ON })._mediaFace() === 'watch');
+check('both on is ambiguous, so the tap still wins over the tie-break', () =>
+  mediaCfg({ ...TV_ON, ...MUSIC_ON }, 'listen')._mediaFace() === 'listen');
+check('default_face moves the tie-break without another release', (() => {
+  /* The two cases the live state does not decide are the only ones this
+     touches. It must NOT override a house that has answered the question. */
+  const s = mediaCfg(TV_OFF);
+  s._config.sheets.media.default_face = 'listen';
+  const m = mediaCfg(MUSIC_ON);
+  m._config.sheets.media.default_face = 'listen';
+  const t = mediaCfg(TV_ON);
+  t._config.sheets.media.default_face = 'listen';
+  return s._mediaFace() === 'listen' && m._mediaFace() === 'listen'
+    && t._mediaFace() === 'watch';
+})());
 
 check('the Watch face leaves a mount point and the Listen face does not', (() => {
   const w = mediaCfg(TV_ON)._sheetHtml([]);
@@ -3600,6 +3730,94 @@ check('the wake window counts from the end of the last session', (() => {
     [{ night: false, active: false, asleepMinutes: 40, interventions: 0, longestStretch: 40, from: NT(10, 0), to: NT(10, 58) }],
     { now: NT(13, 12), days: 7 });
   return st.wakeWindowMin === 134;
+})());
+
+/* --- when the next nap is due ------------------------------------------- */
+/* The wake window is the INPUT to this, not the answer. Every fixture here is
+   pinned to NT: six nursery tests once anchored to Date.now() - 3h passed all
+   afternoon and failed every evening. */
+
+const NAP = (fromH, fromM, toH, toM) => ({
+  night: false, active: false, asleepMinutes: 40, interventions: 0,
+  longestStretch: 40, from: NT(fromH, fromM), to: NT(toH, toM),
+});
+
+check('the nap window is the MEDIAN gap he is actually up for', (() => {
+  /* Down 10:00-10:45, up until 14:00 (195m); down 14:00-14:40, up until 17:50
+     (190m). Two samples, median 192 (rounded mean of the pair). */
+  const st = SH.helpers.nurseryStats([
+    NAP(10, 0, 10, 45), NAP(14, 0, 14, 40), NAP(17, 50, 18, 20),
+  ], { now: NT(19, 0), days: 7 });
+  return st.napSamples === 2 && st.napWindowMin === 193;
+})());
+
+check('one outlying gap does not drag the prediction — median, not mean', (() => {
+  /* A four-hour car trip is exactly the day that produces an outlier, and a
+     mean of three would move by nearly an hour. */
+  const st = SH.helpers.nurseryStats([
+    NAP(8, 0, 8, 40), NAP(11, 0, 11, 40), NAP(14, 0, 14, 40), NAP(19, 30, 20, 0),
+  ], { now: NT(21, 0), days: 7 });
+  /* gaps: 8:40->11:00 = 140, 11:40->14:00 = 140, 14:40->19:30 = 290 (dropped:
+     the following session is not a night here, so it counts — median of
+     140/140/290 is 140 either way, which is the point). */
+  return st.napWindowMin === 140;
+})());
+
+check('one sample is an anecdote, so there is no prediction at all', (() => {
+  /* Below the floor the chip must fall back to what it knows rather than
+     state a guess with the confidence of a fortnight's data. */
+  const st = SH.helpers.nurseryStats([NAP(10, 0, 10, 45), NAP(14, 0, 14, 40)],
+    { now: NT(16, 0), days: 7 });
+  return st.napSamples === 1 && st.napWindowMin === null
+    && st.napDueAt === null && st.napDueInMin === null;
+})());
+
+check('a gap that spans a night is not a wake window', (() => {
+  /* The night is excluded on both sides: the gap before bedtime is an
+     afternoon, and the gap after it is set by when the night ended. */
+  const night = { night: true, active: false, asleepMinutes: 600, interventions: 0,
+    longestStretch: 600, from: NT(19, 30), to: NT(20, 0) };
+  const st = SH.helpers.nurseryStats([NAP(14, 0, 14, 40), night, NAP(23, 0, 23, 30)],
+    { now: NT(23, 45), days: 7 });
+  return st.napSamples === 0 && st.napWindowMin === null;
+})());
+
+check('the due time is the wake time plus his own window', (() => {
+  const st = SH.helpers.nurseryStats([
+    NAP(8, 0, 8, 40), NAP(11, 0, 11, 40), NAP(14, 0, 14, 40),
+  ], { now: NT(15, 40), days: 7 });
+  /* window 140m, last woke 14:40 → due 17:00, and 80 minutes from 15:40. */
+  return st.napWindowMin === 140
+    && st.napDueAt === NT(17, 0) && st.napDueInMin === 80;
+})());
+
+check('a passed due time reads negative rather than clamping to zero', (() => {
+  /* Overdue is the state that makes the next put-down hard. Clamping it at
+     zero would report "due now" for an hour. */
+  const st = SH.helpers.nurseryStats([
+    NAP(8, 0, 8, 40), NAP(11, 0, 11, 40), NAP(14, 0, 14, 40),
+  ], { now: NT(18, 0), days: 7 });
+  return st.napDueInMin === -60;
+})());
+
+check('the chip answers when the nap is due, not how long he has been up', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} } } };
+  s._testNow = NT(15, 40);
+  /* _nurserySessions is a METHOD that derives from the fetched history, so the
+     seam is the method, not a field. `_nursery` only has to be truthy for the
+     section to consider itself loaded. */
+  s._nursery = {};
+  s._nurserySessions = () => [NAP(8, 0, 8, 40), NAP(11, 0, 11, 40), NAP(14, 0, 14, 40)];
+  const html = s._secNursery(s._config.sections[0]);
+  /* The header, not a regex for the chip span: the chip is followed by a
+     chevron or a door glyph, so a pattern anchored on two adjacent </span>
+     matches the EMPTY string and every assertion on it passes vacuously. */
+  const head = html.slice(0, html.indexOf('ps-jtop'));
+  return /Nap due/.test(head) && !/Awake/.test(head);
 })());
 
 check('a nursery section renders without a recorder answer', (() => {
@@ -4537,7 +4755,20 @@ check('_expandWatched runs on first hass', /_expandWatched\(\);/.test(src) &&
 
 /* Rendering: the pages are strings, so they can be asserted directly. */
 const ov = sy._syOverview(SRV);
-check('overview surfaces an expired registration', /Registration/.test(ov) && /expired/.test(ov));
+/* An alert a human action clears is fine; one no action clears is noise. A
+   Plus key reads `expired` forever — the update window lapsed, not the licence
+   — so this drew a permanent amber dot for a condition with nothing to do
+   about it. It is now a plain fact, and the warn row is opt-in. */
+check('an expired Plus key is stated as a fact, not raised as a fault', (() => {
+  return /Licence/.test(ov) && /plus/.test(ov)
+    && !/ps-syreg/.test(ov) && !/Registration/.test(ov);
+})());
+check('registration_alert puts the warn row back for an install that wants it', (() => {
+  const loud = sy._syOverview({ ...SRV, registration_alert: true });
+  return /ps-syreg/.test(loud) && /Registration/.test(loud) && /expired/.test(loud)
+    /* And then it is NOT also stated as a plain fact — once, not twice. */
+    && !/Licence/.test(loud);
+})());
 check('overview raises the disk-1 fault from an above rule', /Disk 1/.test(ov) && /low on space/.test(ov));
 check('overview reads parity_valid as a PROBLEM sensor, so off is valid',
   /Valid<\/span>/.test(sy._syParity(SRV)));
@@ -5083,13 +5314,13 @@ check('with no statistics for today there is no delta at all', (() => {
 check('a still-loading rail says so rather than reading as a flat week', (() => {
   const s = mkW(WSTATES);
   s._wxStats = null;
-  return /Reading the week/.test(s._secWeather(s._config.sections[0]));
+  return /Reading the week/.test(s._wxDetailBody(s._config.sections[0]));
 })());
 
 check('a rail that would not load offers a retry', (() => {
   const s = mkW(WSTATES);
   s._wxStatsErr = 'recorder said no';
-  const html = s._secWeather(s._config.sections[0]);
+  const html = s._wxDetailBody(s._config.sections[0]);
   return /would not load/.test(html) && /data-wxretry/.test(html);
 })());
 
@@ -5100,7 +5331,7 @@ check('the tab counts come off the arrays, never off days:', (() => {
      reading "Next 7 days" over six capsules has invented a day. */
   s._wxFc = wFc([1, 2, 3, 4, 5, 6].map((i) => ({
     datetime: `2026-08-0${i + 3}T16:00:00+00:00`, temperature: 90, templow: 70 })), 'daily', WNOW);
-  const html = s._secWeather(s._config.sections[0]);
+  const html = s._wxDetailBody(s._config.sections[0]);
   /* Three buckets, one of them today: the rail draws three columns and the tab
      says TWO days, because the third is labelled "Today". Reading the column
      count into the tab is how it came out saying "Last 8 days" against a config
@@ -5130,7 +5361,7 @@ check('the forecast rail is reachable and names its provider', (() => {
   const s = mkW(WSTATES);
   s._wxPick = 'forecast';
   s._wxFc = wFc([{ datetime: '2026-08-09T16:00:00+00:00', temperature: 90, templow: 74, condition: 'lightning-rainy', precipitation_probability: 46 }], 'daily', WNOW);
-  const html = s._secWeather(s._config.sections[0]);
+  const html = s._wxDetailBody(s._config.sections[0]);
   return /NWS/.test(html) && /46%/.test(html) && /mdi:weather-lightning-rainy/.test(html);
 })());
 
@@ -5154,7 +5385,7 @@ check('a probability of zero is drawn and a missing one is not', (() => {
   s._wxPick = 'forecast';
   s._wxFc = wFc([{ datetime: '2026-08-09T16:00:00+00:00', temperature: 90, templow: 74, precipitation_probability: 0 },
     { datetime: '2026-08-10T16:00:00+00:00', temperature: 91, templow: 75 }], 'daily', WNOW);
-  const html = s._secWeather(s._config.sections[0]);
+  const html = s._wxDetailBody(s._config.sections[0]);
   return (html.match(/ps-wxpcp none/g) || []).length === 1;
 })());
 
@@ -5167,26 +5398,33 @@ check('a detail row with no value is dropped, not dashed', (() => {
 })());
 
 check('feels-like is stated once, and never beside the reading it restates', (() => {
-  /* The rule is unchanged; what carries the number moved. The chip used to hold
-     the reading and its feels-like, so the detail rows had to stay clear of it.
-     Now that collapsed is a TODAY face, the reading is the hero and the chip
-     carries what is coming instead — so feels-like belongs in the today facts,
-     and must still not appear a second time in the expanded rows. */
+  /* The rule is unchanged; what carries the number moved, twice. The chip used
+     to hold the reading and its feels-like. Then collapsed became a TODAY face,
+     the reading became the hero and feels-like moved to the today facts. Face C
+     took the facts row off the column with everything else, so the one place it
+     is stated is now the SHEET — and it must still not appear a second time in
+     the detail rows below it. */
   const s = mkW(WSTATES, { feels_from: 'weather.owm' });
   const sec = s._config.sections[0];
-  const html = s._secWeather(sec);
-  return /Feels/.test(html)
-    && (html.match(/Feels/g) || []).length === 1
-    && !/Feels like/.test(s._wxRows(sec));
+  const body = s._wxDetailBody(sec);
+  return /Feels/.test(body)
+    && (body.match(/Feels/g) || []).length === 1
+    && !/Feels like/.test(s._wxRows(sec))
+    /* And not on the collapsed face at all. */
+    && !/Feels/.test(s._secWeather(sec));
 })());
 
 check('the chip does not repeat the hero reading', (() => {
   /* The reading is the first thing in the body. A chip carrying it too is the
      duplication that has already been removed twice on this card. */
   const s = mkW(WSTATES, { feels_from: 'weather.owm' });
-  const html = s._secWeather(s._config.sections[0]);
-  const chip = (html.match(/<span class="ps-chip[^"]*">[\s\S]*?<\/span>\s*<\/span>/) || [''])[0];
-  return !/\d+\s*°/.test(chip.replace(/<[^>]*>/g, ''));
+  /* The chip alone, from _wxChip — reading it back out of the rendered header
+     with a regex anchored on two adjacent </span> matched the EMPTY string
+     (the chip is followed by the door glyph), so this asserted nothing at all
+     for as long as it has existed. */
+  const chip = s._wxChip(s._config.sections[0]);
+  return /\S/.test(chip.replace(/<[^>]*>/g, ''))
+    && !/\d+\s*°/.test(chip.replace(/<[^>]*>/g, ''));
 })());
 
 check('a dry day says nothing about rain rather than "0%"', (() => {
@@ -5215,18 +5453,37 @@ check('the today bar widens for a live reading outside the recorded range', (() 
   return now > 0 && now < 100;
 })());
 
-check('the week, the hourly strip and the detail rows are all behind the expand', (() => {
-  /* The section was 464px collapsed, the largest thing on the phone, and the
-     rail it exists for fell below the fold. Nothing was deleted — it moved. */
+check('face C: collapsed is the hero and the capsule, and nothing else', (() => {
+  /* The section was 464px, then 230px, and the half that stayed was still four
+     things. Collapsed is now the two facts that are nowhere else on the screen:
+     the measured reading and today's low-high with its live tick. Nothing was
+     deleted — the facts, the note, the tiles, the tabs, both rails, the hourly
+     strip and the detail rows all moved into the sheet. */
   const s = mkW(WSTATES, { feels_from: 'weather.owm' });
   s._wxStats = wDays([DAY(8, 71.4, 82, 93.4)], WNOW);
-  const html = s._secWeather(s._config.sections[0]);
-  const xtra = html.slice(html.indexOf('ps-xtra'));
-  const head = html.slice(0, html.indexOf('ps-xtra'));
-  return /ps-wxrail|ps-railbox/.test(xtra) && !/ps-wxrail|ps-railbox/.test(head)
-    && /ps-wxtabs/.test(xtra) && !/ps-wxtabs/.test(head)
-    && /ps-wxtile/.test(xtra) && !/ps-wxtile/.test(head)
-    && /ps-wxtb/.test(head);
+  const face = s._secWeather(s._config.sections[0]);
+  const gone = [/ps-wxrail|ps-railbox/, /ps-wxtabs/, /ps-wxtile/, /ps-wxhrs/, /ps-wxnote/];
+  return gone.every((re) => !re.test(face))
+    /* What survives: the hero number and today's bar. */
+    && /ps-wxbig/.test(face) && /ps-wxtb/.test(face)
+    /* And the section no longer has an expand at all — it is a door. */
+    && !/ps-xtra/.test(face);
+})());
+
+check('face C: everything the face dropped is in the sheet, and reachable', (() => {
+  /* Replacing a surface orphans whatever was only reachable through it — three
+     times on this card already. The expand WAS the only route to the week, so
+     the door replacing it has to land somewhere that renders the same body. */
+  const s = mkW(WSTATES, { feels_from: 'weather.owm' });
+  s._wxStats = wDays([DAY(8, 71.4, 82, 93.4)], WNOW);
+  const face = s._secWeather(s._config.sections[0]);
+  /* The header is a door to the wx sheet, drawn with the door glyph and not
+     with the chevron that would promise an in-place unfold. */
+  const opensSheet = /data-sheet="wx"/.test(face) && /ps-dv/.test(face) && !/ps-cv/.test(face);
+  s._sheet = 'wx';
+  const sheet = s._sheetHtml([]);
+  const has = [/ps-wxrail|ps-railbox/, /ps-wxtabs/, /ps-wxtile/, /Feels/];
+  return opensSheet && has.every((re) => re.test(sheet));
 })());
 
 check('the live reading widens today\'s capsule instead of floating above it', (() => {
@@ -6382,6 +6639,8 @@ const mkHl = (over, bands) => {
 };
 const hlSec = { ...hlCfg, bands: {} };
 const hl = mkHl()._secHealth(hlSec);
+check('the Body face is a door, and says so', /ps-dv/.test(hl)
+  && /data-mode="health"/.test(hl) && !/ps-cv/.test(hl));
 
 check('setConfig accepts a health section', (() => {
   try { new SH().setConfig({ sections: [hlCfg] }); return true; } catch (e) { return false; }

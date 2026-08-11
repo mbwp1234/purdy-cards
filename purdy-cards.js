@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.62.0";
+const PC_VERSION = "1.63.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -5469,6 +5469,9 @@ class PurdyShellCard extends PcBaseCard {
        round trip. See _optGoal. */
     this._goalOpt = null;
     this._goalSend = null;
+    /* The same contract for a dismissal, keyed per rule — the store is an
+       input_text and the re-render reads it straight back. See _dismissals. */
+    this._disOpt = null;
     this._events = [];
     this._sched = null;
     this._dragging = false;   // a volume drag must survive the state repaint
@@ -7308,6 +7311,23 @@ Object.assign(PurdyShellCard.prototype, {
     return `<span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>`;
   },
 
+  /* A DOOR's affordance, and deliberately not the chevron.
+   *
+   * A header that enters a mode or opens a sheet drew nothing at all, on a card
+   * where nearly everything else responds to a press — so the row read as a
+   * caption and the whole page behind it was undiscoverable. That is the named
+   * worst friction: "not tappable" is not a complaint about what happens when
+   * you press, it is a complaint about not knowing you may.
+   *
+   * It must not be the chevron. A chevron promises the thing below it is about
+   * to unfold in place, and these do the opposite — they replace the screen or
+   * slide a sheet over it. A diagonal arrow is the standard "this leaves here"
+   * glyph and reads as a different promise at a glance. */
+  _door() {
+    return `<span class="ps-dv"><svg viewBox="0 0 24 24" class="ps-ico"><path
+      d="M8 16L16 8M16 8H10M16 8v6"/></svg></span>`;
+  },
+
   /* snake_case out of an integration is not a label. `manual_override` was
      rendering verbatim as the only such string on the screen. */
   _humanize(s) {
@@ -7347,14 +7367,22 @@ Object.assign(PurdyShellCard.prototype, {
      Body is the second. The status chip is still drawn either way — dropping
      it was the v1.28.0 bug where the Systems summary was computed and never
      displayed. */
+  /* `opts.sheet` is the third kind of header: it slides a sheet over the
+     column. Same argument as `mode` — no chevron, because nothing unfolds
+     below — so it takes the door glyph too. */
   _head(sec, chipHtml, opts) {
     const mode = opts && opts.mode;
+    const sheet = opts && opts.sheet;
     const fixed = sec.expandable === false;
+    const door = mode || sheet;
     const inner = `<span class="ps-nm">${psEsc(sec.title || "")}</span>
         ${chipHtml || ""}
-        ${mode ? "" : (fixed ? "" : this._chev())}`;
+        ${door ? this._door() : (fixed ? "" : this._chev())}`;
     if (mode) {
       return `<button class="ps-sh" type="button" data-mode="${psEsc(mode)}">${inner}</button>`;
+    }
+    if (sheet) {
+      return `<button class="ps-sh" type="button" data-sheet="${psEsc(sheet)}">${inner}</button>`;
     }
     if (fixed) return `<div class="ps-sh">${inner}</div>`;
     return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">${inner}</button>`;
@@ -9057,12 +9085,35 @@ Object.assign(PurdyShellCard.prototype, {
   _dismissals() {
     const raw = pcState(this._hass, this._config.dismiss_store);
     const out = {};
-    if (!raw || raw === "unknown" || raw === "unavailable") return out;
-    raw.split("|").forEach((pair) => {
-      const bits = pair.split(":");
-      const at = parseInt(bits[1], 10);
-      if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
-    });
+    if (raw && raw !== "unknown" && raw !== "unavailable") {
+      raw.split("|").forEach((pair) => {
+        const bits = pair.split(":");
+        const at = parseInt(bits[1], 10);
+        if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
+      });
+    }
+
+    /* Dismissing has to be optimistic, or it looks broken.
+     *
+     * The write goes to an input_text and the re-render immediately reads that
+     * same input_text back — which still holds the OLD value until HA echoes,
+     * so the row you just dismissed stayed on screen for a beat and reported
+     * as "kinda slow to remove notifs". Exactly the setpoint problem, and the
+     * shell had already solved that one: `_optGoal` holds a value locally,
+     * yields the moment the real state agrees, and EXPIRES so a call that
+     * never lands shows the truth again rather than hiding a live fault
+     * forever. Same contract here, keyed per rule. */
+    const opt = this._disOpt;
+    if (opt) {
+      const now = Date.now();
+      Object.keys(opt).forEach((k) => {
+        if (now > opt[k].until) { delete opt[k]; return; }
+        /* The real store has caught up: stop overriding it. */
+        if (out[k] != null && out[k] >= opt[k].at) { delete opt[k]; return; }
+        out[k] = opt[k].at;
+      });
+      if (!Object.keys(opt).length) this._disOpt = null;
+    }
     return out;
   },
 
@@ -9081,7 +9132,13 @@ Object.assign(PurdyShellCard.prototype, {
 
   _dismiss(row) {
     const map = this._dismissals();
-    map[row.key] = Math.floor(Date.now() / 1000);
+    const at = Math.floor(Date.now() / 1000);
+    map[row.key] = at;
+    /* Hold it locally until the store agrees — see _dismissals. 12s is
+       _optGoal's window: long enough for a slow echo, short enough that a
+       write which never landed puts a live fault back on the screen. */
+    if (!this._disOpt) this._disOpt = {};
+    this._disOpt[row.key] = { at, until: Date.now() + 12000 };
     this._writeDismissals(map);
     if (this._config.log_to) this._closeLog(row);
     this._last = null;
@@ -9370,6 +9427,22 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }
 
+    /* The week, behind the collapsed rail. Same body the section's `.ps-xtra`
+       used to hold, rendered by the same `_wxDetailBody` — only the header
+       differs, and the sheet chrome names itself rather than printing
+       "Weather" twice. `tall`, because the hourly strip and the detail rows
+       make this the second-tallest thing the card draws after Media. */
+    if (this._sheet === "wx") {
+      const sec = this._weatherSection();
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || "Weather")}</span>
+            ${this._wxChip(sec)}${close}</div>
+          <div class="ps-wxsheet">${this._wxDetailBody(sec)}</div>
+        </div>`;
+    }
+
     if (this._sheet === "crew") {
       const sec = (this._config.sections || []).find((x) => x.type === "crew");
       if (!sec) return "";
@@ -9574,13 +9647,22 @@ Object.assign(PurdyShellCard.prototype, {
    * open (_mediaPick is cleared when the sheet closes, the same way _wxPick is
    * a session-scoped override of a config default).
    *
-   * Both on is the only genuinely ambiguous case, and there the tap wins;
-   * neither on opens Listen, because starting music from nothing is the
-   * commoner cold start — the televisions are usually turned on at the set. */
+   * What changed: the two cases the live state does NOT decide.
+   *
+   * Both on is genuinely ambiguous and neither on is a cold start, and both of
+   * them used to land on Listen — on the reasoning that starting music from
+   * nothing is the commoner cold start. Reported otherwise: "I do wish the TV
+   * screen opened first." So the rule is unchanged where the house answers the
+   * question, and Watch takes the two cases where it does not. Listen now opens
+   * only when music is genuinely playing and no television is on, which is
+   * exactly when it is the right answer.
+   *
+   * `default_face:` on the sheet is that tie-break, so changing your mind about
+   * it is config rather than another release. */
   _mediaFace() {
     if (this._mediaPick === "watch" || this._mediaPick === "listen") return this._mediaPick;
-    const tvOn = ((this._config.sheets || {}).media || {}).tvs
-      || (((this._config.sheets || {}).media || {}).card || {}).tvs
+    const media = (this._config.sheets || {}).media || {};
+    const tvOn = media.tvs || (media.card || {}).tvs
       || (((this._config.sheets || {}).tv || {}).card || {}).tvs || [];
     const anyTv = tvOn.some((t) => {
       const st = pcState(this._hass, t.media_player || t.remote);
@@ -9588,7 +9670,8 @@ Object.assign(PurdyShellCard.prototype, {
     });
     const anyMusic = !!this._nowPlaying();
     if (anyTv && !anyMusic) return "watch";
-    return "listen";
+    if (anyMusic && !anyTv) return "listen";
+    return media.default_face === "listen" ? "listen" : "watch";
   },
 
   /* The target room, for the sheet header. Named separately because the
@@ -10088,11 +10171,56 @@ function psNurseryStats(sessions, opts) {
   const wakeSince = live || !last ? null : last.to;
   const wakeWindowMin = wakeSince == null ? null : Math.max(0, Math.round((now - wakeSince) / 60000));
 
+  /* When the next nap is due — the question the wake window is the INPUT to.
+   *
+   * `wakeWindowMin` says how long he has been up, which is the number you then
+   * do arithmetic on; the chip was spending itself on that and leaving the
+   * answer to be worked out in your head. So: measure how long he is usually
+   * up before he goes down again, and add it to when he actually woke.
+   *
+   * The window is OBSERVED, never configured. Every threshold in this file is
+   * set from his own data for the same reason a fixed twelve-hour ring was
+   * wrong — a number typed into config is a claim about a baby who is still
+   * changing. Each ended session that is followed by another gives one sample:
+   * the gap between the two. Nights are excluded as the FOLLOWING session — the
+   * gap before bedtime is an afternoon, not a wake window — and as the leading
+   * one, because the morning gap is set by when the night ended rather than by
+   * how long he can stay up.
+   *
+   * The MEDIAN, not the mean. One 4h car-trip gap drags a mean of five samples
+   * by nearly an hour, and the days he skips a nap are exactly the days that
+   * produce the outliers. */
+  const gaps = [];
+  for (let i = 0; i < all.length - 1; i++) {
+    const a = all[i];
+    const b = all[i + 1];
+    if (a.active || a.night || b.night) continue;
+    const g = Math.round((b.from - a.to) / 60000);
+    /* A gap that spans a night is not a wake window; nor is a re-settle that
+       reads as two sessions minutes apart. */
+    if (g >= 30 && g <= 8 * 60) gaps.push(g);
+  }
+  const median = (xs) => {
+    const v = xs.slice().sort((x, y) => x - y);
+    const m = v.length >> 1;
+    return v.length % 2 ? v[m] : Math.round((v[m - 1] + v[m]) / 2);
+  };
+  /* Two samples is the floor. One gap is an anecdote, and a prediction drawn
+     from it would be stated with the same confidence as one drawn from a
+     fortnight — so below the floor there is NO prediction, and the chip falls
+     back to saying what it knows rather than inventing what it does not. */
+  const napWindowMin = gaps.length >= 2 ? median(gaps) : null;
+  const napDueAt = wakeSince != null && napWindowMin != null
+    ? wakeSince + napWindowMin * 60000 : null;
+  const napDueInMin = napDueAt == null ? null : Math.round((napDueAt - now) / 60000);
+
   return {
     nights: nights.length,
     avgNightMin, avgIns, avgStretch,
     bedMean, bedSpread,
     wakeSince, wakeWindowMin,
+    napWindowMin, napDueAt, napDueInMin,
+    napSamples: gaps.length,
   };
 }
 
@@ -10634,7 +10762,47 @@ Object.assign(PurdyShellCard.prototype, {
     } else if (playing) {
       chipCls = "deep"; chipTxt = "Asleep";
     } else if (stats.wakeWindowMin != null) {
-      chipTxt = `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`;
+      /* Awake: the chip answers WHEN THE NEXT NAP IS DUE.
+       *
+       * It used to read "Awake 2h 15m · since 3:15 PM" — both true, both
+       * already available (the expanded list has "Awake for", and the wake
+       * time is the end of the row above it), and neither of them the
+       * question. The question is whether the next nap is due, and the wake
+       * window is only the input to it.
+       *
+       * Three readings, because how you use this changes with how close it is.
+       * Far out you are planning around it and want the clock time; close to
+       * it, or past it, the clock time is noise and the urgency is the fact.
+       * Past due is worth saying plainly — an overshot window is the thing
+       * that makes the next put-down hard, so it is a warn.
+       *
+       * With too few samples to predict, this falls through to what it used to
+       * say. A chip that asks for a value and does not get one is DROPPED
+       * rather than filled with a placeholder — and here the honest fallback
+       * is the awake time, which is a fact rather than a guess. */
+      /* A prediction landing in the evening is not a nap, it is BEDTIME.
+       *
+       * After the last nap of the day the wake window runs into the night, and
+       * the median gap would cheerfully report "Nap due ~7:45 PM" for what is
+       * actually the put-down — inventing a fourth nap out of arithmetic, the
+       * same mistake as drawing a ring for a nap that has not happened. The
+       * night boundary is the one that decides it, exactly as it decides a
+       * session's kind. The status line beside this already carries
+       * "bedtime ~7:13 PM", so the chip must NOT say it a second time: past
+       * the boundary it falls back to the awake time. */
+      const nightAfter = sec.night_after_hour == null ? 18 : sec.night_after_hour;
+      const dueIsNight = stats.napDueAt != null
+        && new Date(stats.napDueAt).getHours() >= nightAfter;
+      const due = dueIsNight ? null : stats.napDueInMin;
+      if (due == null) {
+        chipTxt = `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`;
+      } else if (due <= -10) {
+        chipCls = "warn"; chipTxt = `Nap overdue ${psHM(-due)}`;
+      } else if (due <= 10) {
+        chipCls = "lt"; chipTxt = "Nap due now";
+      } else {
+        chipTxt = `Nap due ~${psClock(stats.napDueAt)}`;
+      }
     }
 
     /* The horseshoe is scaled to HIS OWN seven-day average, not a made-up
@@ -11833,7 +12001,20 @@ Object.assign(PurdyShellCard.prototype, {
        waiting, so the row becomes a link to the page that does it. */
     const osUpd = pcState(h, s.update_available) === "on";
     const reg = pcState(h, s.registration);
-    const regBad = reg && ["expired", "invalid", "eguard"].indexOf(String(reg).toLowerCase()) >= 0;
+    const regType = pcState(h, s.registration_type);
+    /* An alert a human action clears is fine; one no action clears is noise.
+     *
+     * `sensor.purdynas_registration_state` reads `expired` on this Plus key and
+     * always will — what has lapsed is the free-update window, not the licence,
+     * and the server is working exactly as bought. So it drew a permanent amber
+     * dot on Overview for a condition with nothing to do about it, which is the
+     * same mistake as the disk1-at-92% rule that lit the dock bell forever.
+     *
+     * It is not deleted: the state is still a fact about the server, so it
+     * takes a plain row beside Uptime and Version. `registration_alert: true`
+     * puts the warn row back for an install where an expiry IS actionable. */
+    const regBad = !!s.registration_alert && reg
+      && ["expired", "invalid", "eguard"].indexOf(String(reg).toLowerCase()) >= 0;
 
     /* Shared with the attention chip and the desk — this used to be a third
        copy of the predicate that knew about `above` and not `below`. */
@@ -11848,10 +12029,14 @@ Object.assign(PurdyShellCard.prototype, {
           ${plugins ? `<div${updates ? ` data-syurl="${psEsc(s.plugins_url || s.url || "")}"` : ` data-info="${psEsc(s.plugins)}"`}>
             <span class="ps-syk">Plugins</span><b>${psEsc(plugins)}${
             updates ? ` <em>·${updates} update${updates > 1 ? "s" : ""} ↗</em>` : ""}</b></div>` : ""}
+          ${/* The licence as a FACT. Drawn only when it is not already being
+                shouted about below, or the same string would appear twice. */""}
+          ${reg && !regBad ? `<div data-info="${psEsc(s.registration)}">
+            <span class="ps-syk">Licence</span><b>${psEsc(regType || reg)}</b></div>` : ""}
         </div>
         ${regBad ? `<div class="ps-syreg" data-info="${psEsc(s.registration)}">
           <span class="ps-dotc warn"></span>Registration <b>${psEsc(reg)}</b>${
-            pcState(h, s.registration_type) ? ` — ${psEsc(pcState(h, s.registration_type))} key` : ""}</div>` : ""}
+            regType ? ` — ${psEsc(regType)} key` : ""}</div>` : ""}
       </div>`;
 
     const faultBlock = faults.length ? `<div class="ps-sycard">
@@ -14092,46 +14277,45 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* --------------------------------------------------------------- section --*/
 
-  _secWeather(sec) {
-    const h = this._hass;
-    const live = this._wxLive(sec);
-    const reading = pcReading(h, sec.sensor);
-    const st = psWeatherStats(this._wxStats || []);
-    const rail = this._wxRail(sec);
-    const fcSt = sec.forecast && h.states[sec.forecast];
-
-    /* The chip no longer carries the reading.
-     *
-     * It used to, because the collapsed face was a week rail and the number was
-     * nowhere else on the section. The reading is now the first thing in the
-     * body, three centimetres below — which is exactly the duplication this
-     * card has had to remove twice already ("Up 2h 0m" beside "Awake 2h 0m",
-     * "Feels like 100°" above its own chip). So the chip carries what the body
-     * does not: what is coming. The first wet day if there is one, the
-     * condition otherwise. */
+  /* The chip carries what is COMING, never the reading.
+   *
+   * It used to carry the reading, because the collapsed face was a week rail
+   * and the number was nowhere else on the section. The reading is now the
+   * first thing in the body — which is exactly the duplication this card has
+   * had to remove twice already ("Up 2h 0m" beside "Awake 2h 0m", "Feels like
+   * 100°" above its own chip). Lifted out of _secWeather so the sheet's header
+   * can carry the same chip rather than computing a second one. */
+  _wxChip(sec) {
+    const fcSt = sec.forecast && this._hass.states[sec.forecast];
     const wet = (this._wxFc || []).find((d) => !d.today &&
       (/rain|pour|lightning|snow|hail|sleet/.test(String(d.condition || "")) ||
         (d.pop != null && d.pop >= 50)));
     const chipTxt = wet
       ? `${pcWxText(wet.condition) || "Rain"} ${this._wxDow(wet.ts, false)}`
       : (fcSt ? pcWxText(fcSt.state) : "");
-    const chip = `<span class="ps-chip ${wet ? "warn" : "cool"}"><span class="ps-dot"></span>${
+    return `<span class="ps-chip ${wet ? "warn" : "cool"}"><span class="ps-dot"></span>${
       psEsc(chipTxt) || "—"}</span>`;
+  },
 
-    /* Today's low is the honest anchor for the delta. "Since this morning" is
-       what the reference card said, but it is only true if nothing colder
-       happened later, and the daily minimum is the fact underneath it. */
-    const today = (this._wxStats || []).find((d) => d.partial);
-    const fromLow = today && today.min != null && live != null ? live - today.min : null;
-    const delta = fromLow == null ? "" :
-      `<div class="ps-wxdelta${fromLow < 0 ? " cool" : ""}">${fromLow >= 0 ? "↑" : "↓"} ${
-        Math.abs(fromLow).toFixed(1)}° from today's low</div>`;
-
-    /* A sensor that is not reporting must not print its last number as if it
-       were current, and must not print a zero either. */
-    const heroTxt = reading.ok && live != null ? `${live.toFixed(1)}<sup>°</sup>` : "—";
-    const srcName = reading.ok ? this._wxSrcName(sec)
-      : (reading.why === "missing" ? "Sensor not found" : "Sensor unavailable");
+  /* Everything that is not today.
+   *
+   * Lifted whole out of the section's `.ps-xtra` so the column and the sheet
+   * render the SAME markup and the same handlers — the light rows' split into
+   * `_lightsBody`, for the same reason: two copies of a rail would be two
+   * places to fix a domain bug.
+   *
+   * The facts row and the note came with it. They are today's, so on the face
+   * of it they belong upstairs — but they are three chips and a sentence
+   * restating what the capsule above them already draws, which is the chip
+   * rule ("a chip must not repeat the line beside it") applied to a whole row.
+   * Down here they are evidence for the week rather than clutter on the glance. */
+  _wxDetailBody(sec) {
+    const h = this._hass;
+    const live = this._wxLive(sec);
+    const st = psWeatherStats(this._wxStats || []);
+    const rail = this._wxRail(sec);
+    const fcSt = sec.forecast && h.states[sec.forecast];
+    const todayR = this._wxTodayRange();
 
     const nHist = (this._wxStats || []).length;
     const nFc = (this._wxFc || []).slice(0, sec.forecast_days || 7).length;
@@ -14157,21 +14341,66 @@ Object.assign(PurdyShellCard.prototype, {
       : `<span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
         psEsc(nHist > st.days ? "min–max, plus today so far" : "min–max range")}</span>`;
 
-    /* Collapsed is TODAY; expanded is the week.
+    return `${this._wxTodayFacts(sec, todayR)}
+      ${this._wxNote(sec)}
+      ${/* The window is named ONCE, here, rather than three times as "MIN 7D
+            / AVG 7D / MAX 7D" — which is what it was, and each of the three
+            wrapped to two lines. */""}
+      <div class="ps-wxrh"><span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
+        psEsc(`last ${st.days || sec.days || 7} days`)}</span></div>
+      <div class="ps-wxtiles wide">
+        ${this._wxTile("Min", st.min, "lo")}
+        ${this._wxTile("Avg", st.mean, "")}
+        ${this._wxTile("Max", st.max, "hi")}
+      </div>
+      ${tabs}
+      <div class="ps-wxrh">${railLabel}</div>
+      ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
+      ${this._wxHourly(sec)}
+      ${this._wxRows(sec)}`;
+  },
+
+  _secWeather(sec) {
+    const h = this._hass;
+    const live = this._wxLive(sec);
+    const reading = pcReading(h, sec.sensor);
+
+    /* Today's low is the honest anchor for the delta. "Since this morning" is
+       what the reference card said, but it is only true if nothing colder
+       happened later, and the daily minimum is the fact underneath it. */
+    const today = (this._wxStats || []).find((d) => d.partial);
+    const fromLow = today && today.min != null && live != null ? live - today.min : null;
+    const delta = fromLow == null ? "" :
+      `<div class="ps-wxdelta${fromLow < 0 ? " cool" : ""}">${fromLow >= 0 ? "↑" : "↓"} ${
+        Math.abs(fromLow).toFixed(1)}° from today's low</div>`;
+
+    /* A sensor that is not reporting must not print its last number as if it
+       were current, and must not print a zero either. */
+    const heroTxt = reading.ok && live != null ? `${live.toFixed(1)}<sup>°</sup>` : "—";
+    const srcName = reading.ok ? this._wxSrcName(sec)
+      : (reading.why === "missing" ? "Sensor not found" : "Sensor unavailable");
+
+    /* Face C — the rail, and nothing else.
      *
-     * The section was 464px — the largest thing on the phone — and it spent
-     * that height in the wrong order. Measured: the rail is 217px of it and the
-     * furniture around it the rest, and on a 390x844 phone the first screen
-     * ended part-way down, so the seven-day rail the section exists for was
-     * always below the fold while the part you DID see was a reading.
+     * Splitting by tense took the section from 464px to 230px and was right as
+     * far as it went, but the half that stayed was still four things: the
+     * reading, the capsule, a row of three chips and a sentence. Beside a
+     * collapsed Climate that is 301px of its own, "climate and weather feel
+     * like a lot next to each other" — and the pairing is the complaint, not
+     * either section alone.
      *
-     * Splitting by tense fixes both halves at once. Today is what you glance
-     * at; the week is what you go looking for, and going looking is what the
-     * chevron is for. Nothing is deleted — the tabs, both rails, the hourly
-     * strip, the min/avg/max tiles and the detail rows are all one tap away. */
+     * So collapsed is now exactly the two things you cannot get anywhere else
+     * on the screen: the MEASURED reading, and today's low→high with a live
+     * tick showing where in its own day this hour sits. The facts, the note,
+     * the tiles, the tabs, both rails, the hourly strip and the detail rows are
+     * all still here — one tap away, in the sheet, rendered by the same code.
+     *
+     * It gains a tap on the way. The header was an expand; it is now a door,
+     * with the door glyph — which is the point, because this section was the
+     * named instance of "looks like it should do something and doesn't". */
     const todayR = this._wxTodayRange();
 
-    return `${this._head(sec, chip)}
+    return `${this._head(sec, this._wxChip(sec), { sheet: "wx" })}
       <div class="ps-wxhero">
         <div class="ps-wxheronum">
           <div class="ps-wxbig${reading.ok ? "" : " off"}">${heroTxt}</div>
@@ -14182,31 +14411,12 @@ Object.assign(PurdyShellCard.prototype, {
               lands, and on a provider that has published neither half of today,
               there is no range to draw — and a labelled box with nothing in it
               claims the section is broken rather than that today is not known
-              yet. The reading and the facts still stand on their own. */""}
+              yet. The reading still stands on its own. */""}
         ${todayR.lo == null && todayR.hi == null ? "" : `<div class="ps-wxtodaybox">
           <div class="ps-wxrh"><span class="ps-wxlb">Today</span><span class="ps-wxrb">${
             psEsc(todayR.condition ? pcWxText(todayR.condition) : "range")}</span></div>
           ${this._wxTodayBar(todayR, live)}
         </div>`}
-      </div>
-      ${this._wxTodayFacts(sec, todayR)}
-      ${this._wxNote(sec)}
-      <div class="ps-xtra">
-        ${/* The window is named ONCE, here, rather than three times as "MIN 7D
-              / AVG 7D / MAX 7D" — which is what it was, and each of the three
-              wrapped to two lines. */""}
-        <div class="ps-wxrh"><span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
-          psEsc(`last ${st.days || sec.days || 7} days`)}</span></div>
-        <div class="ps-wxtiles wide">
-          ${this._wxTile("Min", st.min, "lo")}
-          ${this._wxTile("Avg", st.mean, "")}
-          ${this._wxTile("Max", st.max, "hi")}
-        </div>
-        ${tabs}
-        <div class="ps-wxrh">${railLabel}</div>
-        ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
-        ${this._wxHourly(sec)}
-        ${this._wxRows(sec)}
       </div>`;
   },
 });
@@ -15229,6 +15439,11 @@ const PS_STYLES = `
       .ps-cv { color: var(--ps-dim); transition: transform .3s; display: flex; }
       .ps-cv .ps-ico { width: 15px; height: 15px; }
       .ps-sect.open .ps-cv { transform: rotate(90deg); color: var(--ps-cool); }
+      /* A door, not an expand. It never rotates, because nothing about it
+         unfolds — and it sits a step brighter than the chevron since it is the
+         only cue that the row leads anywhere at all. */
+      .ps-dv { color: var(--ps-cool); display: flex; }
+      .ps-dv .ps-ico { width: 15px; height: 15px; }
       .ps-xtra { display: none; flex-direction: column; gap: 10px; margin-top: 11px;
                  padding-top: 11px; border-top: 1px solid var(--ps-hair-soft); }
       .ps-sect.open .ps-xtra { display: flex; }
@@ -15941,6 +16156,11 @@ const PS_STYLES = `
       .ps-sheet.tall { max-height: min(80vh, calc(var(--ps-sheettop) - 24px)); }
       .ps-sheeth { display: flex; align-items: center; margin-bottom: 6px; }
       .ps-sheeth .ps-lbl { flex: 1; }
+      /* The weather detail carried .ps-xtra's column gap when it lived in the
+         section. In the sheet there is no .ps-xtra above it, so without this
+         every rail, tile row and strip sits flush against its neighbour. Same
+         gap, so the body reads identically in both places. */
+      .ps-wxsheet { display: flex; flex-direction: column; gap: 10px; }
       .ps-x { width: 28px; height: 28px; border-radius: 50%; background: var(--pc-fill-2);
               display: grid; place-items: center; color: var(--ps-muted); }
       .ps-x .ps-ico { width: 14px; height: 14px; }
@@ -16810,6 +17030,7 @@ class PurdyDeskCard extends PcBaseCard {
     this._wxTimer = null;
     this._events = [];
     this._goalOpt = null;      // optimistic setpoint, see _optGoal
+    this._disOpt = null;       // optimistic dismissal, see _dismissals
     this._goalSend = null;
     this._briOpt = {};         // optimistic light brightness
     this._briSend = {};

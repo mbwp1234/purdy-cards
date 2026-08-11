@@ -130,6 +130,9 @@ class PurdyShellCard extends PcBaseCard {
        round trip. See _optGoal. */
     this._goalOpt = null;
     this._goalSend = null;
+    /* The same contract for a dismissal, keyed per rule — the store is an
+       input_text and the re-render reads it straight back. See _dismissals. */
+    this._disOpt = null;
     this._events = [];
     this._sched = null;
     this._dragging = false;   // a volume drag must survive the state repaint

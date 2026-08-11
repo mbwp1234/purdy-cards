@@ -486,11 +486,56 @@ function psNurseryStats(sessions, opts) {
   const wakeSince = live || !last ? null : last.to;
   const wakeWindowMin = wakeSince == null ? null : Math.max(0, Math.round((now - wakeSince) / 60000));
 
+  /* When the next nap is due — the question the wake window is the INPUT to.
+   *
+   * `wakeWindowMin` says how long he has been up, which is the number you then
+   * do arithmetic on; the chip was spending itself on that and leaving the
+   * answer to be worked out in your head. So: measure how long he is usually
+   * up before he goes down again, and add it to when he actually woke.
+   *
+   * The window is OBSERVED, never configured. Every threshold in this file is
+   * set from his own data for the same reason a fixed twelve-hour ring was
+   * wrong — a number typed into config is a claim about a baby who is still
+   * changing. Each ended session that is followed by another gives one sample:
+   * the gap between the two. Nights are excluded as the FOLLOWING session — the
+   * gap before bedtime is an afternoon, not a wake window — and as the leading
+   * one, because the morning gap is set by when the night ended rather than by
+   * how long he can stay up.
+   *
+   * The MEDIAN, not the mean. One 4h car-trip gap drags a mean of five samples
+   * by nearly an hour, and the days he skips a nap are exactly the days that
+   * produce the outliers. */
+  const gaps = [];
+  for (let i = 0; i < all.length - 1; i++) {
+    const a = all[i];
+    const b = all[i + 1];
+    if (a.active || a.night || b.night) continue;
+    const g = Math.round((b.from - a.to) / 60000);
+    /* A gap that spans a night is not a wake window; nor is a re-settle that
+       reads as two sessions minutes apart. */
+    if (g >= 30 && g <= 8 * 60) gaps.push(g);
+  }
+  const median = (xs) => {
+    const v = xs.slice().sort((x, y) => x - y);
+    const m = v.length >> 1;
+    return v.length % 2 ? v[m] : Math.round((v[m - 1] + v[m]) / 2);
+  };
+  /* Two samples is the floor. One gap is an anecdote, and a prediction drawn
+     from it would be stated with the same confidence as one drawn from a
+     fortnight — so below the floor there is NO prediction, and the chip falls
+     back to saying what it knows rather than inventing what it does not. */
+  const napWindowMin = gaps.length >= 2 ? median(gaps) : null;
+  const napDueAt = wakeSince != null && napWindowMin != null
+    ? wakeSince + napWindowMin * 60000 : null;
+  const napDueInMin = napDueAt == null ? null : Math.round((napDueAt - now) / 60000);
+
   return {
     nights: nights.length,
     avgNightMin, avgIns, avgStretch,
     bedMean, bedSpread,
     wakeSince, wakeWindowMin,
+    napWindowMin, napDueAt, napDueInMin,
+    napSamples: gaps.length,
   };
 }
 
@@ -1032,7 +1077,47 @@ Object.assign(PurdyShellCard.prototype, {
     } else if (playing) {
       chipCls = "deep"; chipTxt = "Asleep";
     } else if (stats.wakeWindowMin != null) {
-      chipTxt = `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`;
+      /* Awake: the chip answers WHEN THE NEXT NAP IS DUE.
+       *
+       * It used to read "Awake 2h 15m · since 3:15 PM" — both true, both
+       * already available (the expanded list has "Awake for", and the wake
+       * time is the end of the row above it), and neither of them the
+       * question. The question is whether the next nap is due, and the wake
+       * window is only the input to it.
+       *
+       * Three readings, because how you use this changes with how close it is.
+       * Far out you are planning around it and want the clock time; close to
+       * it, or past it, the clock time is noise and the urgency is the fact.
+       * Past due is worth saying plainly — an overshot window is the thing
+       * that makes the next put-down hard, so it is a warn.
+       *
+       * With too few samples to predict, this falls through to what it used to
+       * say. A chip that asks for a value and does not get one is DROPPED
+       * rather than filled with a placeholder — and here the honest fallback
+       * is the awake time, which is a fact rather than a guess. */
+      /* A prediction landing in the evening is not a nap, it is BEDTIME.
+       *
+       * After the last nap of the day the wake window runs into the night, and
+       * the median gap would cheerfully report "Nap due ~7:45 PM" for what is
+       * actually the put-down — inventing a fourth nap out of arithmetic, the
+       * same mistake as drawing a ring for a nap that has not happened. The
+       * night boundary is the one that decides it, exactly as it decides a
+       * session's kind. The status line beside this already carries
+       * "bedtime ~7:13 PM", so the chip must NOT say it a second time: past
+       * the boundary it falls back to the awake time. */
+      const nightAfter = sec.night_after_hour == null ? 18 : sec.night_after_hour;
+      const dueIsNight = stats.napDueAt != null
+        && new Date(stats.napDueAt).getHours() >= nightAfter;
+      const due = dueIsNight ? null : stats.napDueInMin;
+      if (due == null) {
+        chipTxt = `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`;
+      } else if (due <= -10) {
+        chipCls = "warn"; chipTxt = `Nap overdue ${psHM(-due)}`;
+      } else if (due <= 10) {
+        chipCls = "lt"; chipTxt = "Nap due now";
+      } else {
+        chipTxt = `Nap due ~${psClock(stats.napDueAt)}`;
+      }
     }
 
     /* The horseshoe is scaled to HIS OWN seven-day average, not a made-up
