@@ -3732,6 +3732,18 @@ check('the wake window counts from the end of the last session', (() => {
   return st.wakeWindowMin === 134;
 })());
 
+/* The Hatch usually runs on past the moment he woke, and a correction says so
+   explicitly. Measuring the wake window from the Hatch throws that away — and
+   the wake window is what decides when the next nap is due, so it is the
+   loudest surface a correction has. */
+check('the wake window counts from when he WOKE, not when the Hatch stopped', (() => {
+  const st = SH.helpers.nurseryStats(
+    [{ night: false, active: false, asleepMinutes: 15, interventions: 0, longestStretch: 15,
+      from: NT(10, 0), to: NT(10, 58), wokeAt: NT(10, 33), edited: true }],
+    { now: NT(13, 12), days: 7 });
+  return st.wakeSince === NT(10, 33) && st.wakeWindowMin === 159;
+})());
+
 /* --- when the next nap is due ------------------------------------------- */
 /* The wake window is the INPUT to this, not the answer. Every fixture here is
    pinned to NT: six nursery tests once anchored to Date.now() - 3h passed all
@@ -3982,6 +3994,56 @@ check('a corrected session is marked wherever it is drawn', (() => {
 
 check('the mark exists on the desk too, which reads the same store',
   /\.ps-edd \{/.test(defined['purdy-desk-card'].styles));
+
+/* The bug this session actually hit: correcting a wake time moved the rail
+   scrubber (which already read `wokeAt`) and nothing else — the "Down / up"
+   row, the day rail and the wake-window chip all kept reading the raw Hatch
+   span. Build a fixture where the Hatch runs on to 10:33 but the correction
+   puts the wake at 9:22, so a render that still shows the Hatch time is
+   unambiguously wrong rather than off by a minute that rounding could hide. */
+const lateWokeCard = (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
+    edits: { store: 'input_text.napedits' } }] });
+  s._testNow = NT(12, 0);
+  const start = Math.round(NT(8, 52, 23) / 60000);
+  s._hass = { states: {
+    'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'input_text.napedits': { state: `${start}~20~30`, attributes: {} } } };
+  s._nursery = {
+    'media_player.h': [{ t: NT(8, 52, 23), s: 'playing' }, { t: NT(10, 33, 41), s: 'idle' }],
+    'binary_sensor.d': [{ t: NT(8, 51, 0), s: 'on' }, { t: NT(8, 52, 38), s: 'off' }] };
+  return s;
+})();
+
+check('the corrected wake time reaches the Down / up row, not just the rail', (() => {
+  const html = lateWokeCard._secNursery(lateWokeCard._config.sections[0]);
+  return /9:22/.test(html) && !/10:33/.test(html);
+})());
+
+check('the corrected wake time reaches the desk\'s Down / up row too', (() => {
+  const dk = new (defined['purdy-desk-card'])();
+  dk.setConfig(lateWokeCard._config);
+  dk._testNow = NT(12, 0);
+  dk._hass = lateWokeCard._hass;
+  dk._nursery = lateWokeCard._nursery;
+  const html = dk._pnlNursery(dk._config.sections[0]);
+  return /9:22/.test(html) && !/10:33/.test(html);
+})());
+
+check('the corrected wake window (not the raw Hatch span) drives "Awake for"', (() => {
+  const s = new SH();
+  s.setConfig(lateWokeCard._config);
+  s._testNow = NT(9, 45);
+  s._hass = lateWokeCard._hass;
+  s._nursery = lateWokeCard._nursery;
+  const html = s._secNursery(s._config.sections[0]);
+  /* Awake since 9:22 to now (9:45) is 23m; since the Hatch's 10:33 it would
+     be negative and the chip would have to fall back to something else. */
+  return /Awake 23m/.test(html) && /since 9:22/.test(html);
+})());
 
 check('the rows are long-press targets only where there is somewhere to write', (() => {
   const withStore = editedCard._secNursery(editedCard._config.sections[0]);
