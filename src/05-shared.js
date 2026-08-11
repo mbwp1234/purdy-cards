@@ -266,3 +266,81 @@ function pcDayKey(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+
+/* ============================================================================
+ * Haptics — the companion app's Taptic bridge.
+ *
+ * The iOS and Android companion apps listen on `window` for an event of type
+ * "haptic" whose `detail` is one of seven names, and re-interpret it as
+ * physical feedback. Nothing in Home Assistant's own frontend fires it except
+ * <ha-switch>, so a card that wants a control to FEEL like a control has to
+ * fire it itself.
+ *
+ * TWO THINGS THAT LOOK WRONG AND ARE NOT:
+ *
+ *   1. `new Event(...)` with `.detail` assigned AFTERWARDS — not
+ *      `new CustomEvent(type, { detail })`, which reads better, is what every
+ *      instinct reaches for, and does not work. This is HA's own fireEvent
+ *      shape and the app is matched to it. Do not modernise it.
+ *   2. The detail is a bare STRING, not `{ hapticType }` or any object.
+ *
+ * Outside the companion app nothing is listening: a desktop browser, a wall
+ * tablet and `dev/shoot` all run this and feel nothing, silently. That is why
+ * the smoke test has to carry this feature by itself — a screenshot cannot see
+ * a buzz, and a haptic that never fires looks exactly like a phone that does
+ * not do haptics. There is no visible gap for anyone to notice.
+ *
+ * THE RATE FLOOR IS NOT A NICETY. iOS maps the seven types onto the Taptic
+ * Engine distinctly; Android maps them onto whatever motor the handset has,
+ * which is coarser and slower. A drag that outruns the motor does not drop the
+ * extras, it QUEUES them — so the buzzing carries on after the finger has
+ * stopped, which reads as the card being stuck rather than as feedback.
+ * ========================================================================== */
+
+const PC_HAPTIC_TYPES = ["success", "warning", "failure", "light", "medium", "heavy", "selection"];
+const PC_HAPTIC_FLOOR_MS = 40;
+let pcHapticOn = true;
+let pcHapticLast = 0;
+
+/* Config's opt-out, held at module scope because the firing sites are plain
+   handlers rather than render code with `this` to hand — and because a haptic
+   fired from a borrowed method must not depend on which card borrowed it. */
+function pcHapticEnable(on) {
+  pcHapticOn = on !== false;
+}
+
+function pcHaptic(type) {
+  if (!pcHapticOn) return false;
+  if (PC_HAPTIC_TYPES.indexOf(type) < 0) return false;
+  /* Node, and any host without a real window: nothing to dispatch to and
+     nothing to feel. */
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return false;
+  const now = Date.now();
+  if (now - pcHapticLast < PC_HAPTIC_FLOOR_MS) return false;
+  pcHapticLast = now;
+  const ev = new Event("haptic", { bubbles: true, cancelable: false, composed: true });
+  ev.detail = type;
+  window.dispatchEvent(ev);
+  return true;
+}
+
+/* Fire once per STEP CROSSED, never once per pointer event.
+ *
+ * A dial with thirty stops can tick per stop. A brightness drag across 300px
+ * of row cannot: at one tick per percent that is a hundred buzzes in a second,
+ * which the motor cannot deliver and the thumb cannot read as anything but
+ * noise. So a continuous control quantises first and remembers the value it
+ * last ticked at — `holder[prop]` — rather than leaning on the rate floor,
+ * which is a backstop against a queue and not a way of choosing what to say.
+ *
+ * The first sample of a gesture sets the baseline and stays silent: until
+ * something has been crossed there is no step to announce. Callers reset the
+ * holder to null on gesture start.
+ */
+function pcHapticStep(holder, prop, value, type) {
+  const had = holder[prop];
+  if (had === value) return false;
+  holder[prop] = value;
+  if (had == null || value == null) return false;
+  return pcHaptic(type || "selection");
+}

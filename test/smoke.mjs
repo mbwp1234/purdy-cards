@@ -6685,15 +6685,200 @@ check('the health stylesheet has no loose font-size',
   !/font-size:\s*\d/.test(shs.split('health / Body')[1] || ''));
 
 
-// double-define guard: a second load must warn, not throw
+/* ===========================================================================
+ * Haptics
+ *
+ * This block carries the whole feature on its own. `dev/shoot` runs headless
+ * Chrome with no companion app and no motor, so a screenshot cannot tell a
+ * working haptic from one that never fires — and neither can looking at the
+ * phone, because a haptic that does not fire is indistinguishable from a phone
+ * that does not do haptics. There is no visible gap and no error. So the event
+ * SHAPE is asserted against the companion app's contract, and every firing
+ * site is asserted to exist, per the rule that a method can be complete and
+ * never called.
+ * ======================================================================== */
+const HAP = SH.helpers;
+const coreSrcH = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+const litSrcH = fs.readFileSync(new URL('../src/76-shell-lights.js', import.meta.url), 'utf8');
+const nurSrcH = fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8');
+const shrSrcH = fs.readFileSync(new URL('../src/05-shared.js', import.meta.url), 'utf8');
+
+/* The stub window has no dispatchEvent, which is exactly the "no host to feel
+   it" case pcHaptic refuses. Give it one and record what it is handed. */
+let hFired = [];
+const savedWin = globalThis.window;
+globalThis.window = Object.assign({}, savedWin, {
+  dispatchEvent(ev) { hFired.push(ev); return true; },
+});
+/* A real-enough Event: the stub above drops its options, and bubbles/composed
+   are part of the contract being asserted. */
+const savedEventH = globalThis.Event;
+globalThis.Event = class { constructor(t, o) { this.type = t; Object.assign(this, o || {}); } };
+
+/* The floor is 40ms and these fire back to back, so every assertion below
+   either steps the clock or expects the suppression it is testing. */
+const savedNowH = Date.now;
+let hClock = 1000000;
+Date.now = () => hClock;
+const hReset = () => { hFired = []; hClock += 1000; };
+
+hReset();
+const hRc = HAP.haptic('selection');
+check('a haptic dispatches on window', hRc === true && hFired.length === 1);
+check('the event type is "haptic"', hFired[0] && hFired[0].type === 'haptic');
+/* Not { hapticType: ... }, not { detail: { ... } }. A bare string. */
+check('the detail is a bare string, not an object',
+  hFired[0] && hFired[0].detail === 'selection');
+check('the event bubbles and is composed',
+  hFired[0] && hFired[0].bubbles === true && hFired[0].composed === true);
+
+/* The trap the reference implementation flags: CustomEvent reads better, is
+   what every instinct reaches for, and the companion app does not hear it. */
+/* The comment warning about CustomEvent names it, so the ban is on CODE:
+   every mention in the bundle must sit on a comment line. */
+check('the event is built with Event, not CustomEvent',
+  /new Event\("haptic"/.test(shrSrcH)
+  && src.split('\n').filter((l) => l.includes('new CustomEvent'))
+    .every((l) => /^\s*(\*|\/\/|\/\*)/.test(l)));
+check('detail is assigned after construction, not passed in',
+  /ev\.detail = type;/.test(shrSrcH));
+
+hReset();
+check('an unknown haptic type is refused', HAP.haptic('buzz') === false && !hFired.length);
+check('all seven companion types are accepted',
+  HAP.hapticTypes.length === 7
+  && ['success','warning','failure','light','medium','heavy','selection']
+    .every((t) => HAP.hapticTypes.includes(t)));
+
+/* The floor is a queue guard, not a nicety: Android does not drop the extras a
+   fast drag produces, it queues them, and the buzzing outlives the gesture. */
+hReset();
+HAP.haptic('light');
+const hSecond = HAP.haptic('light');
+check('a hSecond haptic inside the rate floor is suppressed',
+  hSecond === false && hFired.length === 1);
+hClock += 50;
+check('past the floor it fires again', HAP.haptic('light') === true && hFired.length === 2);
+
+hReset();
+HAP.hapticEnable(false);
+check('haptics: false silences the card', HAP.haptic('heavy') === false && !hFired.length);
+HAP.hapticEnable(true);
+hReset();
+check('re-enabling restores it', HAP.haptic('heavy') === true && hFired.length === 1);
+check('setConfig wires the opt-out', /pcHapticEnable\(config\.haptics\)/.test(coreSrcH));
+
+/* --- quantising: a continuous control hTicks per STEP, never per event --- */
+hReset();
+const hHolder = { at: null };
+check('the first sample of a gesture is silent',
+  HAP.hapticStep(hHolder, 'at', 5, 'selection') === false && !hFired.length);
+check('the same step does not re-fire',
+  HAP.hapticStep(hHolder, 'at', 5, 'selection') === false && !hFired.length);
+hClock += 100;
+check('crossing a step fires once',
+  HAP.hapticStep(hHolder, 'at', 6, 'selection') === true && hFired.length === 1);
+hClock += 100;
+hHolder.at = null;
+check('resetting the hHolder re-baselines rather than firing',
+  HAP.hapticStep(hHolder, 'at', 20, 'selection') === false && hFired.length === 1);
+
+/* A hundred pointer moves across one row must not be a hundred buzzes. */
+hReset();
+hHolder.at = null;
+let hTicks = 0;
+for (let p = 1; p <= 100; p++) {
+  hClock += 100;                        // well past the floor, so only the
+  if (HAP.hapticStep(hHolder, 'at', Math.round(p / 5), 'selection')) hTicks++;
+}
+check('a full-width brightness sweep hTicks ~20 times, not ~100',
+  hTicks > 15 && hTicks < 25);
+
+/* --- the firing sites. A bridge nothing calls feels exactly like no bridge --- */
+check('the light row hold fires medium',
+  /pcHaptic\("medium"\)[\s\S]{0,200}?_lightOpen/.test(litSrcH));
+check('the scrub hold fires medium',
+  /scrubbing = true;[\s\S]{0,300}?pcHaptic\("medium"\)/.test(coreSrcH));
+check('the nap row hold fires medium',
+  /pcHaptic\("medium"\)[\s\S]{0,200}?_openNapEdit/.test(nurSrcH));
+
+check('arming a destructive control fires warning',
+  /if \(this\._armed !== k\) \{[\s\S]{0,400}?pcHaptic\("warning"\)/.test(coreSrcH));
+check('committing a destructive control fires heavy',
+  /pcHaptic\("heavy"\)[\s\S]{0,120}?if \(k === "hold"\)/.test(coreSrcH));
+
+check('the light drag hTicks quantised, not per percent',
+  /pcHapticStep\(tick, "at", Math\.round\(v \/ 5\)/.test(litSrcH));
+check('the drag resets its tick between gestures',
+  /tick\.at = null;/.test(litSrcH));
+
+/* Off the optimistic value: GTTC takes seconds to acknowledge, so a tick
+   waiting on the echo lands after the thumb has gone and reads as random. */
+check('the climate stepper fires before the service call',
+  /pcHaptic\("light"\)[\s\S]{0,200}?this\._goalOpt = \{/.test(coreSrcH));
+
+check('a guard interposing fires warning, not light',
+  /if \(guard\) \{ pcHaptic\("warning"\)/.test(litSrcH));
+/* Cancelling restores what was really there. Buzzing to confirm that nothing
+   happened is how this turns into noise. */
+const hLaskBody = (/data-lask[\s\S]{0,700}?this\._render\(\);/.exec(litSrcH) || [''])[0];
+check('answering the guard buzzes only on the branch that commits',
+  /el\.dataset\.lask === "yes"/.test(hLaskBody)
+  && (hLaskBody.match(/pcHaptic\(/g) || []).length === 1);
+
+check('saving a nap correction fires success',
+  /pcHaptic\("success"\)[\s\S]{0,200}?_napEditWrite\(\{ start: e\.start, from:/.test(nurSrcH));
+/* Both fields clamp to the session, so pressing on at an end changes nothing
+   and must say nothing. */
+check('a clamped nap step does not buzz',
+  /if \(next\.from !== e\.from \|\| next\.to !== e\.to\) pcHaptic\("selection"\)/.test(nurSrcH));
+check('the scrub hTicks only once the gesture is owned',
+  /if \(scrubbing\) pcHapticStep\(tick, "at"/.test(coreSrcH));
+
+/* THE RULE THIS FEATURE LIVES OR DIES BY. The shell patches on every state
+   arrival, so a haptic anywhere in the render path would buzz when the HOUSE
+   changes rather than when he touches something — a phone going off in his
+   pocket because a light turned on downstairs. Haptics fire in handlers only.
+   Walk the render methods by brace matching rather than trusting a regex. */
+const bodyOfH = (s, sig) => {
+  const i = s.indexOf(sig);
+  if (i < 0) return null;
+  let d = 0, j = s.indexOf('{', i);
+  if (j < 0) return null;
+  for (let k = j; k < s.length; k++) {
+    if (s[k] === '{') d++;
+    else if (s[k] === '}' && --d === 0) return s.slice(j, k + 1);
+  }
+  return null;
+};
+const hRenderFns = ['_render()', '_patch(', '_patchSections(', '_renderSystems(', '_renderHealth('];
+const hRendersClean = hRenderFns.every((sig) => {
+  const b = bodyOfH(coreSrcH, sig);
+  return b === null || !/pcHaptic/.test(b);
+});
+check('no haptic fires from the render path', hRendersClean);
+check('the render-path rule is found, not vacuous',
+  hRenderFns.filter((sig) => bodyOfH(coreSrcH, sig) !== null).length >= 3);
+
+/* Markup is rendered on every patch; a haptic inside a template literal would
+   be the render-path bug wearing a different hat. */
+check('no haptic is fired from inside markup',
+  ![litSrcH, nurSrcH, coreSrcH].some((s) =>
+    /\$\{[^}]*pcHaptic/.test(s)));
+
+Date.now = savedNowH;
+globalThis.window = savedWin;
+globalThis.Event = savedEventH;
+
+// double-define guard: a hSecond load must warn, not throw
 let warned = '';
 const realWarn = console.warn;
 console.warn = (m) => { warned += m; };
 let threw = false;
 try { eval(src); } catch (e) { threw = true; }
 console.warn = realWarn;
-check('second load does not throw', !threw);
-check('second load warns about duplicate', /already defined by another resource/.test(warned));
+check('hSecond load does not throw', !threw);
+check('hSecond load warns about duplicate', /already defined by another resource/.test(warned));
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);

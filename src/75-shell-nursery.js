@@ -633,6 +633,10 @@ Object.assign(PurdyShellCard.prototype, {
        answering the thumb. */
     if (field === "from" && next.from > next.to) next.to = next.from;
     if (field === "to" && next.to < next.from) next.from = next.to;
+    /* Only a step that MOVED gets a tick. Both fields clamp to the session, so
+       pressing on at either end is a control that has run out of room — and a
+       buzz there would say the value changed when it did not. */
+    if (next.from !== e.from || next.to !== e.to) pcHaptic("selection");
     this._napEdit = next;
     this._last = null;
     this._render();
@@ -661,6 +665,11 @@ Object.assign(PurdyShellCard.prototype, {
   _napEditSave() {
     const e = this._napEdit;
     if (!e) return;
+    /* `success` — the one place on the card that earns it. The correction has
+       landed in the helper and every number downstream is about to be
+       recomputed from it, which is a thing completing rather than a control
+       being pressed. */
+    pcHaptic("success");
     this._napEditWrite({ start: e.start, from: e.from, to: e.to });
   },
 
@@ -783,6 +792,10 @@ Object.assign(PurdyShellCard.prototype, {
         cancel();
         hold = setTimeout(() => {
           hold = null;
+          /* The third of the three holds, and the one most in need of a tick:
+             rows are read far more often than they are corrected, so nothing
+             about a nap row suggests it can be held at all. */
+          pcHaptic("medium");
           this._openNapEdit(+el.dataset.napedit);
         }, 380);
       });

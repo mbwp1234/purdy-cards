@@ -445,6 +445,10 @@ Object.assign(PurdyShellCard.prototype, {
   _bindLights() {
     this._each("[data-light]", (el) => {
       let hold = null, moved = false, x0 = 0, id = null;
+      /* The brightness step this drag last ticked at. Null between gestures,
+         so the first sample of a new drag sets a baseline instead of firing
+         for the distance between two unrelated touches. */
+      const tick = { at: null };
 
       const pct = (clientX) => {
         const r = el.getBoundingClientRect();
@@ -476,6 +480,10 @@ Object.assign(PurdyShellCard.prototype, {
         /* Paint first, always — the row has to answer the finger even when the
            value is only a preview. */
         this._paintLight(el, id, v);
+        /* Quantised to 5%: the row is about 300px wide, so one tick per
+           percent would be a hundred buzzes across a single sweep. Twenty
+           detents down the row is a dial you can feel your way along. */
+        pcHapticStep(tick, "at", Math.round(v / 5), "selection");
         if (el.dataset.guard === "1") {
           el.dataset.preview = v;   /* nothing is sent until the question is answered */
           return;
@@ -491,6 +499,7 @@ Object.assign(PurdyShellCard.prototype, {
 
       const finish = () => {
         if (hold) { clearTimeout(hold); hold = null; }
+        tick.at = null;
         el.classList.remove("dragging");
         this._dragging = false;
         this.shadowRoot.removeEventListener("pointermove", onMove);
@@ -504,9 +513,14 @@ Object.assign(PurdyShellCard.prototype, {
         finish(); id = null; moved = false;
         if (!was) return;
         if (!wasMoved) {
-          if (guard) this._lightAsk = { id: was, kind: "toggle" };
-          else { this._mood = null; this._lightToggle(was); }
+          /* A guard interposing is a REFUSAL to act, and it must not feel like
+             acting. `warning` where the plain tap gets `light`: the difference
+             is the whole message, since the thing you asked for has not
+             happened and the room has not changed. */
+          if (guard) { pcHaptic("warning"); this._lightAsk = { id: was, kind: "toggle" }; }
+          else { pcHaptic("light"); this._mood = null; this._lightToggle(was); }
         } else if (guard && preview) {
+          pcHaptic("warning");
           this._lightAsk = { id: was, kind: "level", value: +preview };
           delete el.dataset.preview;
         }
@@ -522,12 +536,17 @@ Object.assign(PurdyShellCard.prototype, {
            "I tapped one lamp and they all went off" happened. Missing a
            control should never be the same as pressing a bigger one. */
         if (e.target.closest("[data-lkid],[data-lask],[data-lwarm],.pl-more")) return;
-        id = el.dataset.light; moved = false; x0 = e.clientX;
+        id = el.dataset.light; moved = false; x0 = e.clientX; tick.at = null;
         this.shadowRoot.addEventListener("pointermove", onMove);
         this.shadowRoot.addEventListener("pointerup", onUp);
         this.shadowRoot.addEventListener("pointercancel", onCancel);
         hold = setTimeout(() => {
           hold = null; moved = true;            /* consumed — no toggle on release */
+          /* The hold has no feedback of any kind until it fires, so the only
+             way to learn it took is to be watching the screen. `medium` is the
+             tick that tells the thumb, and it is the same tick on all three
+             holds — light row, scrub, nap row — because they are one gesture. */
+          pcHaptic("medium");
           this._lightOpen = this._lightOpen === id ? null : id;
           this._render();
         }, 380);
@@ -553,6 +572,10 @@ Object.assign(PurdyShellCard.prototype, {
       const a = this._lightAsk;
       this._lightAsk = null;
       if (a && el.dataset.lask === "yes") {
+        /* Only the answer that COMMITS gets a haptic. Cancelling restores what
+           was really there, and buzzing to confirm that nothing happened is
+           how a haptic layer turns into noise. */
+        pcHaptic("light");
         if (a.kind === "level") { this._mood = null; this._lightSetBri(a.id, a.value); }
         else this._lightToggle(a.id);
       }
