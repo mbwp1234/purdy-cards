@@ -54,9 +54,11 @@ function psClock(t) {
  *  - door_min_sec    Mounting the sensor produced ten transitions in 34
  *                    seconds, five of them under 300ms. A magnet settling is
  *                    not a person; a person holds a door open for seconds.
- *  - door_merge_sec  A bounce guard: two opens within a minute are one physical
- *                    event. It is NOT what stops the in-and-out double count —
- *                    it was given that job and could not do it (see below).
+ *  - door_merge_sec  A re-entry guard: an open this soon after the one that
+ *                    closed a visit is them stepping back in, so it RESUMES
+ *                    that visit rather than opening a new one. It does not
+ *                    discard the open — discarding one flips the entry/exit
+ *                    parity of every open after it (see below).
  *  - visit_max_min   Going in and coming out is one visit, and a visit lasts as
  *                    long as you stay. The open that follows a counted entry
  *                    inside this window is that visit's exit, not a new
@@ -264,18 +266,58 @@ function psNurserySessions(hatch, door, opts) {
      * The failure mode is now an UNDERCOUNT — a genuine second wake-up inside
      * the window reads as the first visit's exit. That is the better error:
      * visits longer than a minute are the norm, two wake-ups inside half an
-     * hour are not. `door_merge_sec` stays as the bounce guard it always was.
-     */
+     * hour are not.
+     *
+     * DROPPING an open breaks the pairing for everything after it, and that is
+     * what `door_merge_sec` used to do. Observed 2026-08-10: in at 22:48:01,
+     * out at 22:49:44, straight back in at 22:50:13, finally out at 23:05:15.
+     * The bounce guard threw the 22:50:13 re-entry away as chatter — it fell 29
+     * seconds after the previous open — which left 23:05:15 with nothing to
+     * pair against, so it was read as a fresh entry and ONE wake-up was
+     * reported as two, seventeen minutes apart. Parity is the whole mechanism
+     * here: an odd number of discarded opens turns every later exit into an
+     * entry, so the error does not stay local to the burst that caused it.
+     *
+     * So a bounce is no longer discarded — it RESUMES the visit it interrupted.
+     * An open within `door_merge_sec` of the one that just closed a visit is
+     * them stepping back in, and `visit_max_min` keeps running from the
+     * original entry so the resumed visit is still bounded. Chatter nets out to
+     * the same count either way (an even burst pairs off; an odd one leaves the
+     * visit open, which counts once), which is what keeps the mounting burst at
+     * two. */
     const visitMax = rule(s.from, "visit_max_min");
     const events = [];
     let lastOp = hadExit ? inside[i - 1].from : -Infinity;
     let entryAt = null;   /* set while someone is in the room */
+    let exitAt = null;    /* the open that closed the last visit, if any */
     inside.slice(i).forEach((op) => {
-      if (op.from - lastOp < doorMerge) return;
-      if (!s.active && s.to - op.from <= retrieval) return;   /* picking him up */
+      const sinceLast = op.from - lastOp;
+      /* Picking him up. `retrieval_window_min` catches the usual shape — the
+       * door opens seconds before the Hatch stops — but the surer signal is a
+       * door that is never shut again: opened at 06:15:03 on 2026-08-10 and
+       * still open when the Hatch stopped 21 minutes later, far outside any
+       * window, so the morning get-up was counted as a fourth wake-up. Nobody
+       * closes the door on their way out of a room they are carrying him from.
+       * If they were already in the room when it happened, the entry that put
+       * them there was part of the same get-up and comes back off the list. */
+      if (!s.active && (s.to - op.from <= retrieval || op.to >= s.to)) {
+        if (entryAt != null && op.from - entryAt <= visitMax
+            && events[events.length - 1] === entryAt) events.pop();
+        entryAt = null;
+        return;
+      }
       lastOp = op.from;
-      if (entryAt != null && op.from - entryAt <= visitMax) { entryAt = null; return; }
+      if (entryAt != null) {
+        /* in the room: this open is them coming out again */
+        if (op.from - entryAt <= visitMax) { exitAt = op.from; entryAt = null; return; }
+      } else if (exitAt != null && sinceLast < doorMerge && events.length) {
+        /* straight back in — the same visit resuming, not a second one */
+        entryAt = events[events.length - 1];
+        exitAt = null;
+        return;
+      }
       entryAt = op.from;
+      exitAt = null;
       events.push(op.from);
     });
 
