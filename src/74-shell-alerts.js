@@ -16,12 +16,35 @@ Object.assign(PurdyShellCard.prototype, {
   _dismissals() {
     const raw = pcState(this._hass, this._config.dismiss_store);
     const out = {};
-    if (!raw || raw === "unknown" || raw === "unavailable") return out;
-    raw.split("|").forEach((pair) => {
-      const bits = pair.split(":");
-      const at = parseInt(bits[1], 10);
-      if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
-    });
+    if (raw && raw !== "unknown" && raw !== "unavailable") {
+      raw.split("|").forEach((pair) => {
+        const bits = pair.split(":");
+        const at = parseInt(bits[1], 10);
+        if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
+      });
+    }
+
+    /* Dismissing has to be optimistic, or it looks broken.
+     *
+     * The write goes to an input_text and the re-render immediately reads that
+     * same input_text back — which still holds the OLD value until HA echoes,
+     * so the row you just dismissed stayed on screen for a beat and reported
+     * as "kinda slow to remove notifs". Exactly the setpoint problem, and the
+     * shell had already solved that one: `_optGoal` holds a value locally,
+     * yields the moment the real state agrees, and EXPIRES so a call that
+     * never lands shows the truth again rather than hiding a live fault
+     * forever. Same contract here, keyed per rule. */
+    const opt = this._disOpt;
+    if (opt) {
+      const now = Date.now();
+      Object.keys(opt).forEach((k) => {
+        if (now > opt[k].until) { delete opt[k]; return; }
+        /* The real store has caught up: stop overriding it. */
+        if (out[k] != null && out[k] >= opt[k].at) { delete opt[k]; return; }
+        out[k] = opt[k].at;
+      });
+      if (!Object.keys(opt).length) this._disOpt = null;
+    }
     return out;
   },
 
@@ -40,7 +63,13 @@ Object.assign(PurdyShellCard.prototype, {
 
   _dismiss(row) {
     const map = this._dismissals();
-    map[row.key] = Math.floor(Date.now() / 1000);
+    const at = Math.floor(Date.now() / 1000);
+    map[row.key] = at;
+    /* Hold it locally until the store agrees — see _dismissals. 12s is
+       _optGoal's window: long enough for a slow echo, short enough that a
+       write which never landed puts a live fault back on the screen. */
+    if (!this._disOpt) this._disOpt = {};
+    this._disOpt[row.key] = { at, until: Date.now() + 12000 };
     this._writeDismissals(map);
     if (this._config.log_to) this._closeLog(row);
     this._last = null;
@@ -329,6 +358,22 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }
 
+    /* The week, behind the collapsed rail. Same body the section's `.ps-xtra`
+       used to hold, rendered by the same `_wxDetailBody` — only the header
+       differs, and the sheet chrome names itself rather than printing
+       "Weather" twice. `tall`, because the hourly strip and the detail rows
+       make this the second-tallest thing the card draws after Media. */
+    if (this._sheet === "wx") {
+      const sec = this._weatherSection();
+      if (!sec) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || "Weather")}</span>
+            ${this._wxChip(sec)}${close}</div>
+          <div class="ps-wxsheet">${this._wxDetailBody(sec)}</div>
+        </div>`;
+    }
+
     if (this._sheet === "crew") {
       const sec = (this._config.sections || []).find((x) => x.type === "crew");
       if (!sec) return "";
@@ -533,13 +578,22 @@ Object.assign(PurdyShellCard.prototype, {
    * open (_mediaPick is cleared when the sheet closes, the same way _wxPick is
    * a session-scoped override of a config default).
    *
-   * Both on is the only genuinely ambiguous case, and there the tap wins;
-   * neither on opens Listen, because starting music from nothing is the
-   * commoner cold start — the televisions are usually turned on at the set. */
+   * What changed: the two cases the live state does NOT decide.
+   *
+   * Both on is genuinely ambiguous and neither on is a cold start, and both of
+   * them used to land on Listen — on the reasoning that starting music from
+   * nothing is the commoner cold start. Reported otherwise: "I do wish the TV
+   * screen opened first." So the rule is unchanged where the house answers the
+   * question, and Watch takes the two cases where it does not. Listen now opens
+   * only when music is genuinely playing and no television is on, which is
+   * exactly when it is the right answer.
+   *
+   * `default_face:` on the sheet is that tie-break, so changing your mind about
+   * it is config rather than another release. */
   _mediaFace() {
     if (this._mediaPick === "watch" || this._mediaPick === "listen") return this._mediaPick;
-    const tvOn = ((this._config.sheets || {}).media || {}).tvs
-      || (((this._config.sheets || {}).media || {}).card || {}).tvs
+    const media = (this._config.sheets || {}).media || {};
+    const tvOn = media.tvs || (media.card || {}).tvs
       || (((this._config.sheets || {}).tv || {}).card || {}).tvs || [];
     const anyTv = tvOn.some((t) => {
       const st = pcState(this._hass, t.media_player || t.remote);
@@ -547,7 +601,8 @@ Object.assign(PurdyShellCard.prototype, {
     });
     const anyMusic = !!this._nowPlaying();
     if (anyTv && !anyMusic) return "watch";
-    return "listen";
+    if (anyMusic && !anyTv) return "listen";
+    return media.default_face === "listen" ? "listen" : "watch";
   },
 
   /* The target room, for the sheet header. Named separately because the

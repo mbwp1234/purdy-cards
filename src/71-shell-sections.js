@@ -264,6 +264,23 @@ Object.assign(PurdyShellCard.prototype, {
     return `<span class="ps-cv"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5l7 7-7 7"/></svg></span>`;
   },
 
+  /* A DOOR's affordance, and deliberately not the chevron.
+   *
+   * A header that enters a mode or opens a sheet drew nothing at all, on a card
+   * where nearly everything else responds to a press — so the row read as a
+   * caption and the whole page behind it was undiscoverable. That is the named
+   * worst friction: "not tappable" is not a complaint about what happens when
+   * you press, it is a complaint about not knowing you may.
+   *
+   * It must not be the chevron. A chevron promises the thing below it is about
+   * to unfold in place, and these do the opposite — they replace the screen or
+   * slide a sheet over it. A diagonal arrow is the standard "this leaves here"
+   * glyph and reads as a different promise at a glance. */
+  _door() {
+    return `<span class="ps-dv"><svg viewBox="0 0 24 24" class="ps-ico"><path
+      d="M8 16L16 8M16 8H10M16 8v6"/></svg></span>`;
+  },
+
   /* snake_case out of an integration is not a label. `manual_override` was
      rendering verbatim as the only such string on the screen. */
   _humanize(s) {
@@ -303,14 +320,22 @@ Object.assign(PurdyShellCard.prototype, {
      Body is the second. The status chip is still drawn either way — dropping
      it was the v1.28.0 bug where the Systems summary was computed and never
      displayed. */
+  /* `opts.sheet` is the third kind of header: it slides a sheet over the
+     column. Same argument as `mode` — no chevron, because nothing unfolds
+     below — so it takes the door glyph too. */
   _head(sec, chipHtml, opts) {
     const mode = opts && opts.mode;
+    const sheet = opts && opts.sheet;
     const fixed = sec.expandable === false;
+    const door = mode || sheet;
     const inner = `<span class="ps-nm">${psEsc(sec.title || "")}</span>
         ${chipHtml || ""}
-        ${mode ? "" : (fixed ? "" : this._chev())}`;
+        ${door ? this._door() : (fixed ? "" : this._chev())}`;
     if (mode) {
       return `<button class="ps-sh" type="button" data-mode="${psEsc(mode)}">${inner}</button>`;
+    }
+    if (sheet) {
+      return `<button class="ps-sh" type="button" data-sheet="${psEsc(sheet)}">${inner}</button>`;
     }
     if (fixed) return `<div class="ps-sh">${inner}</div>`;
     return `<button class="ps-sh" type="button" data-open="${psEsc(sec.key)}">${inner}</button>`;

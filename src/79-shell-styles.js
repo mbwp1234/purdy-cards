@@ -157,6 +157,11 @@ const PS_STYLES = `
       .ps-cv { color: var(--ps-dim); transition: transform .3s; display: flex; }
       .ps-cv .ps-ico { width: 15px; height: 15px; }
       .ps-sect.open .ps-cv { transform: rotate(90deg); color: var(--ps-cool); }
+      /* A door, not an expand. It never rotates, because nothing about it
+         unfolds — and it sits a step brighter than the chevron since it is the
+         only cue that the row leads anywhere at all. */
+      .ps-dv { color: var(--ps-cool); display: flex; }
+      .ps-dv .ps-ico { width: 15px; height: 15px; }
       .ps-xtra { display: none; flex-direction: column; gap: 10px; margin-top: 11px;
                  padding-top: 11px; border-top: 1px solid var(--ps-hair-soft); }
       .ps-sect.open .ps-xtra { display: flex; }
@@ -869,6 +874,11 @@ const PS_STYLES = `
       .ps-sheet.tall { max-height: min(80vh, calc(var(--ps-sheettop) - 24px)); }
       .ps-sheeth { display: flex; align-items: center; margin-bottom: 6px; }
       .ps-sheeth .ps-lbl { flex: 1; }
+      /* The weather detail carried .ps-xtra's column gap when it lived in the
+         section. In the sheet there is no .ps-xtra above it, so without this
+         every rail, tile row and strip sits flush against its neighbour. Same
+         gap, so the body reads identically in both places. */
+      .ps-wxsheet { display: flex; flex-direction: column; gap: 10px; }
       .ps-x { width: 28px; height: 28px; border-radius: 50%; background: var(--pc-fill-2);
               display: grid; place-items: center; color: var(--ps-muted); }
       .ps-x .ps-ico { width: 14px; height: 14px; }

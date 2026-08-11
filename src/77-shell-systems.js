@@ -430,7 +430,20 @@ Object.assign(PurdyShellCard.prototype, {
        waiting, so the row becomes a link to the page that does it. */
     const osUpd = pcState(h, s.update_available) === "on";
     const reg = pcState(h, s.registration);
-    const regBad = reg && ["expired", "invalid", "eguard"].indexOf(String(reg).toLowerCase()) >= 0;
+    const regType = pcState(h, s.registration_type);
+    /* An alert a human action clears is fine; one no action clears is noise.
+     *
+     * `sensor.purdynas_registration_state` reads `expired` on this Plus key and
+     * always will — what has lapsed is the free-update window, not the licence,
+     * and the server is working exactly as bought. So it drew a permanent amber
+     * dot on Overview for a condition with nothing to do about it, which is the
+     * same mistake as the disk1-at-92% rule that lit the dock bell forever.
+     *
+     * It is not deleted: the state is still a fact about the server, so it
+     * takes a plain row beside Uptime and Version. `registration_alert: true`
+     * puts the warn row back for an install where an expiry IS actionable. */
+    const regBad = !!s.registration_alert && reg
+      && ["expired", "invalid", "eguard"].indexOf(String(reg).toLowerCase()) >= 0;
 
     /* Shared with the attention chip and the desk — this used to be a third
        copy of the predicate that knew about `above` and not `below`. */
@@ -445,10 +458,14 @@ Object.assign(PurdyShellCard.prototype, {
           ${plugins ? `<div${updates ? ` data-syurl="${psEsc(s.plugins_url || s.url || "")}"` : ` data-info="${psEsc(s.plugins)}"`}>
             <span class="ps-syk">Plugins</span><b>${psEsc(plugins)}${
             updates ? ` <em>·${updates} update${updates > 1 ? "s" : ""} ↗</em>` : ""}</b></div>` : ""}
+          ${/* The licence as a FACT. Drawn only when it is not already being
+                shouted about below, or the same string would appear twice. */""}
+          ${reg && !regBad ? `<div data-info="${psEsc(s.registration)}">
+            <span class="ps-syk">Licence</span><b>${psEsc(regType || reg)}</b></div>` : ""}
         </div>
         ${regBad ? `<div class="ps-syreg" data-info="${psEsc(s.registration)}">
           <span class="ps-dotc warn"></span>Registration <b>${psEsc(reg)}</b>${
-            pcState(h, s.registration_type) ? ` — ${psEsc(pcState(h, s.registration_type))} key` : ""}</div>` : ""}
+            regType ? ` — ${psEsc(regType)} key` : ""}</div>` : ""}
       </div>`;
 
     const faultBlock = faults.length ? `<div class="ps-sycard">

@@ -895,46 +895,45 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* --------------------------------------------------------------- section --*/
 
-  _secWeather(sec) {
-    const h = this._hass;
-    const live = this._wxLive(sec);
-    const reading = pcReading(h, sec.sensor);
-    const st = psWeatherStats(this._wxStats || []);
-    const rail = this._wxRail(sec);
-    const fcSt = sec.forecast && h.states[sec.forecast];
-
-    /* The chip no longer carries the reading.
-     *
-     * It used to, because the collapsed face was a week rail and the number was
-     * nowhere else on the section. The reading is now the first thing in the
-     * body, three centimetres below — which is exactly the duplication this
-     * card has had to remove twice already ("Up 2h 0m" beside "Awake 2h 0m",
-     * "Feels like 100°" above its own chip). So the chip carries what the body
-     * does not: what is coming. The first wet day if there is one, the
-     * condition otherwise. */
+  /* The chip carries what is COMING, never the reading.
+   *
+   * It used to carry the reading, because the collapsed face was a week rail
+   * and the number was nowhere else on the section. The reading is now the
+   * first thing in the body — which is exactly the duplication this card has
+   * had to remove twice already ("Up 2h 0m" beside "Awake 2h 0m", "Feels like
+   * 100°" above its own chip). Lifted out of _secWeather so the sheet's header
+   * can carry the same chip rather than computing a second one. */
+  _wxChip(sec) {
+    const fcSt = sec.forecast && this._hass.states[sec.forecast];
     const wet = (this._wxFc || []).find((d) => !d.today &&
       (/rain|pour|lightning|snow|hail|sleet/.test(String(d.condition || "")) ||
         (d.pop != null && d.pop >= 50)));
     const chipTxt = wet
       ? `${pcWxText(wet.condition) || "Rain"} ${this._wxDow(wet.ts, false)}`
       : (fcSt ? pcWxText(fcSt.state) : "");
-    const chip = `<span class="ps-chip ${wet ? "warn" : "cool"}"><span class="ps-dot"></span>${
+    return `<span class="ps-chip ${wet ? "warn" : "cool"}"><span class="ps-dot"></span>${
       psEsc(chipTxt) || "—"}</span>`;
+  },
 
-    /* Today's low is the honest anchor for the delta. "Since this morning" is
-       what the reference card said, but it is only true if nothing colder
-       happened later, and the daily minimum is the fact underneath it. */
-    const today = (this._wxStats || []).find((d) => d.partial);
-    const fromLow = today && today.min != null && live != null ? live - today.min : null;
-    const delta = fromLow == null ? "" :
-      `<div class="ps-wxdelta${fromLow < 0 ? " cool" : ""}">${fromLow >= 0 ? "↑" : "↓"} ${
-        Math.abs(fromLow).toFixed(1)}° from today's low</div>`;
-
-    /* A sensor that is not reporting must not print its last number as if it
-       were current, and must not print a zero either. */
-    const heroTxt = reading.ok && live != null ? `${live.toFixed(1)}<sup>°</sup>` : "—";
-    const srcName = reading.ok ? this._wxSrcName(sec)
-      : (reading.why === "missing" ? "Sensor not found" : "Sensor unavailable");
+  /* Everything that is not today.
+   *
+   * Lifted whole out of the section's `.ps-xtra` so the column and the sheet
+   * render the SAME markup and the same handlers — the light rows' split into
+   * `_lightsBody`, for the same reason: two copies of a rail would be two
+   * places to fix a domain bug.
+   *
+   * The facts row and the note came with it. They are today's, so on the face
+   * of it they belong upstairs — but they are three chips and a sentence
+   * restating what the capsule above them already draws, which is the chip
+   * rule ("a chip must not repeat the line beside it") applied to a whole row.
+   * Down here they are evidence for the week rather than clutter on the glance. */
+  _wxDetailBody(sec) {
+    const h = this._hass;
+    const live = this._wxLive(sec);
+    const st = psWeatherStats(this._wxStats || []);
+    const rail = this._wxRail(sec);
+    const fcSt = sec.forecast && h.states[sec.forecast];
+    const todayR = this._wxTodayRange();
 
     const nHist = (this._wxStats || []).length;
     const nFc = (this._wxFc || []).slice(0, sec.forecast_days || 7).length;
@@ -960,21 +959,66 @@ Object.assign(PurdyShellCard.prototype, {
       : `<span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
         psEsc(nHist > st.days ? "min–max, plus today so far" : "min–max range")}</span>`;
 
-    /* Collapsed is TODAY; expanded is the week.
+    return `${this._wxTodayFacts(sec, todayR)}
+      ${this._wxNote(sec)}
+      ${/* The window is named ONCE, here, rather than three times as "MIN 7D
+            / AVG 7D / MAX 7D" — which is what it was, and each of the three
+            wrapped to two lines. */""}
+      <div class="ps-wxrh"><span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
+        psEsc(`last ${st.days || sec.days || 7} days`)}</span></div>
+      <div class="ps-wxtiles wide">
+        ${this._wxTile("Min", st.min, "lo")}
+        ${this._wxTile("Avg", st.mean, "")}
+        ${this._wxTile("Max", st.max, "hi")}
+      </div>
+      ${tabs}
+      <div class="ps-wxrh">${railLabel}</div>
+      ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
+      ${this._wxHourly(sec)}
+      ${this._wxRows(sec)}`;
+  },
+
+  _secWeather(sec) {
+    const h = this._hass;
+    const live = this._wxLive(sec);
+    const reading = pcReading(h, sec.sensor);
+
+    /* Today's low is the honest anchor for the delta. "Since this morning" is
+       what the reference card said, but it is only true if nothing colder
+       happened later, and the daily minimum is the fact underneath it. */
+    const today = (this._wxStats || []).find((d) => d.partial);
+    const fromLow = today && today.min != null && live != null ? live - today.min : null;
+    const delta = fromLow == null ? "" :
+      `<div class="ps-wxdelta${fromLow < 0 ? " cool" : ""}">${fromLow >= 0 ? "↑" : "↓"} ${
+        Math.abs(fromLow).toFixed(1)}° from today's low</div>`;
+
+    /* A sensor that is not reporting must not print its last number as if it
+       were current, and must not print a zero either. */
+    const heroTxt = reading.ok && live != null ? `${live.toFixed(1)}<sup>°</sup>` : "—";
+    const srcName = reading.ok ? this._wxSrcName(sec)
+      : (reading.why === "missing" ? "Sensor not found" : "Sensor unavailable");
+
+    /* Face C — the rail, and nothing else.
      *
-     * The section was 464px — the largest thing on the phone — and it spent
-     * that height in the wrong order. Measured: the rail is 217px of it and the
-     * furniture around it the rest, and on a 390x844 phone the first screen
-     * ended part-way down, so the seven-day rail the section exists for was
-     * always below the fold while the part you DID see was a reading.
+     * Splitting by tense took the section from 464px to 230px and was right as
+     * far as it went, but the half that stayed was still four things: the
+     * reading, the capsule, a row of three chips and a sentence. Beside a
+     * collapsed Climate that is 301px of its own, "climate and weather feel
+     * like a lot next to each other" — and the pairing is the complaint, not
+     * either section alone.
      *
-     * Splitting by tense fixes both halves at once. Today is what you glance
-     * at; the week is what you go looking for, and going looking is what the
-     * chevron is for. Nothing is deleted — the tabs, both rails, the hourly
-     * strip, the min/avg/max tiles and the detail rows are all one tap away. */
+     * So collapsed is now exactly the two things you cannot get anywhere else
+     * on the screen: the MEASURED reading, and today's low→high with a live
+     * tick showing where in its own day this hour sits. The facts, the note,
+     * the tiles, the tabs, both rails, the hourly strip and the detail rows are
+     * all still here — one tap away, in the sheet, rendered by the same code.
+     *
+     * It gains a tap on the way. The header was an expand; it is now a door,
+     * with the door glyph — which is the point, because this section was the
+     * named instance of "looks like it should do something and doesn't". */
     const todayR = this._wxTodayRange();
 
-    return `${this._head(sec, chip)}
+    return `${this._head(sec, this._wxChip(sec), { sheet: "wx" })}
       <div class="ps-wxhero">
         <div class="ps-wxheronum">
           <div class="ps-wxbig${reading.ok ? "" : " off"}">${heroTxt}</div>
@@ -985,31 +1029,12 @@ Object.assign(PurdyShellCard.prototype, {
               lands, and on a provider that has published neither half of today,
               there is no range to draw — and a labelled box with nothing in it
               claims the section is broken rather than that today is not known
-              yet. The reading and the facts still stand on their own. */""}
+              yet. The reading still stands on its own. */""}
         ${todayR.lo == null && todayR.hi == null ? "" : `<div class="ps-wxtodaybox">
           <div class="ps-wxrh"><span class="ps-wxlb">Today</span><span class="ps-wxrb">${
             psEsc(todayR.condition ? pcWxText(todayR.condition) : "range")}</span></div>
           ${this._wxTodayBar(todayR, live)}
         </div>`}
-      </div>
-      ${this._wxTodayFacts(sec, todayR)}
-      ${this._wxNote(sec)}
-      <div class="ps-xtra">
-        ${/* The window is named ONCE, here, rather than three times as "MIN 7D
-              / AVG 7D / MAX 7D" — which is what it was, and each of the three
-              wrapped to two lines. */""}
-        <div class="ps-wxrh"><span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
-          psEsc(`last ${st.days || sec.days || 7} days`)}</span></div>
-        <div class="ps-wxtiles wide">
-          ${this._wxTile("Min", st.min, "lo")}
-          ${this._wxTile("Avg", st.mean, "")}
-          ${this._wxTile("Max", st.max, "hi")}
-        </div>
-        ${tabs}
-        <div class="ps-wxrh">${railLabel}</div>
-        ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
-        ${this._wxHourly(sec)}
-        ${this._wxRows(sec)}
       </div>`;
   },
 });

@@ -63,9 +63,13 @@ const PRESETS = {
   "phone-health-hidden":  [PHONE, SHELL + "&patch=health-hidden"],
   /* The weather rail, both faces and both sources. `patch=` previews the
      section against LIVE data before it is deployed — the whole point of
-     shooting rather than releasing to find out. */
-  "phone-weather":     [PHONE, SHELL + "&patch=weather&open=wx"],
-  "phone-weather-fc":  [PHONE, SHELL + "&patch=weather&open=wx&wxrail=forecast"],
+     shooting rather than releasing to find out.
+     Face C moved the week behind a SHEET rather than an expand, so these are
+     `sheet=wx`, not `open=wx`. An `open=` against a section that no longer
+     expands is not an error — it photographs the collapsed face and looks
+     exactly like the sheet failing to render. */
+  "phone-weather":     [PHONE, SHELL + "&patch=weather&sheet=wx"],
+  "phone-weather-fc":  [PHONE, SHELL + "&patch=weather&sheet=wx&wxrail=forecast"],
   "phone-weather-cold":[PHONE, SHELL + "&patch=weather"],
   /* The ground's precipitation layer. force: in the patch previews rain on a
      cloudy day — the effect is deliberately quiet in the common conditions, so
