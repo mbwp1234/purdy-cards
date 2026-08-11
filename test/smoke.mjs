@@ -3018,6 +3018,38 @@ check('clamping judges the door by its real duration, not the clamped one', (() 
   return s.hadExit === true && s.settledAt === NT(14, 0, 1);
 })());
 
+/* The real 2026-08-10 night: door opens at 22:48:01, 22:49:44, 22:50:13 and
+   23:05:15 — the parent going in, stepping out, ducking straight back in
+   (29s later), and finally leaving for good. `door_merge_sec` (60s) used to
+   DISCARD that 22:50:13 re-entry as chatter, which left the 23:05:15 close
+   with nothing to pair against — so it read as a fresh entry and reported
+   one wake-up as two, seventeen minutes apart. */
+check('a bounce back in resumes the visit rather than starting a second one', (() => {
+  const s = nsess([{ t: NT(20, 0), s: 'playing' }, { t: NT(23, 59), s: 'idle' }],
+    [{ t: NT(22, 48, 1), s: 'on' }, { t: NT(22, 48, 7), s: 'off' },
+     { t: NT(22, 49, 44), s: 'on' }, { t: NT(22, 49, 49), s: 'off' },
+     { t: NT(22, 50, 13), s: 'on' }, { t: NT(22, 50, 17), s: 'off' },
+     { t: NT(23, 5, 15), s: 'on' }, { t: NT(23, 5, 24), s: 'off' }],
+    { now: NT(23, 59) })[0];
+  return s.interventions === 1;
+})());
+
+/* Same night, the morning get-up: door opened 06:15:03, closed 7s later,
+   reopened 06:15:11 and stayed open (he was carried out and nobody shut it
+   behind them) until long after the Hatch had already gone idle. That is
+   outside `retrieval_window_min` by a wide margin, but a door held open past
+   the session's own end is unambiguous — it must not read as a fourth
+   wake-up, and the entry that led into it comes off the list too. */
+check('a door held open past the session end is the get-up, not a wake-up', (() => {
+  const s = nsess([{ t: NT(5, 0), s: 'playing' }, { t: NT(6, 36, 49), s: 'idle' }],
+    [{ t: NT(5, 53, 17), s: 'on' }, { t: NT(5, 53, 23), s: 'off' },
+     { t: NT(5, 53, 24), s: 'on' }, { t: NT(5, 54, 47), s: 'off' },
+     { t: NT(6, 15, 3), s: 'on' }, { t: NT(6, 15, 10), s: 'off' },
+     { t: NT(6, 15, 11), s: 'on' }, { t: NT(9, 16, 55), s: 'off' }],
+    { now: NT(10, 0) })[0];
+  return s.interventions === 1;
+})());
+
 check('no history at all yields no sessions rather than throwing',
   nsess(undefined, undefined, { now: NT(12, 0) }).length === 0);
 
