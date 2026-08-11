@@ -22,6 +22,12 @@ const PS_SECTIONS = [
   "nowplaying", "nursery", "lights", "crew", "weather", "health",
 ];
 
+/* How many detents a scrub gesture crosses from one edge of a plot to the
+   other. 24 is one per hour on the 24h graphs and one per ~40 minutes on the
+   night rail — close enough to the gridlines that the ticks line up with what
+   is drawn, which is the point: the buzz should agree with the picture. */
+const PS_SCRUB_STOPS = 24;
+
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
    anything showing them has to convert rather than print the raw number. */
 function psMinsToClock(mins) {
@@ -161,6 +167,10 @@ class PurdyShellCard extends PcBaseCard {
       }
     });
     this._config = { dock: [], ...config };
+    /* `haptics: false` silences the whole card. One switch rather than a flag
+       per control: the reason to turn these off is "not in the mood for a
+       phone that buzzes", which is never about one gesture. */
+    pcHapticEnable(config.haptics);
     this._watched = this._collectWatched();
     this._last = null;
     if (this._clock) clearInterval(this._clock);
@@ -908,6 +918,10 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const k = el.dataset.arm;
         if (this._armed !== k) {
+          /* Arming is a colour change you may not be looking at — and it is
+             the moment the control stops being safe. `warning` says "this is
+             now live" without claiming anything has been done yet. */
+          pcHaptic("warning");
           this._armed = k;
           this._render();
           clearTimeout(this._armTimer);
@@ -916,6 +930,12 @@ class PurdyShellCard extends PcBaseCard {
         }
         this._armed = null;
         clearTimeout(this._armTimer);
+        /* The commit. `heavy` is reserved for exactly this set — cancelling a
+           hold, deleting a schedule window, stopping the Hatch, rebooting the
+           array — so a jolt on this card always means something irreversible
+           just happened. Fired before the call, not after: the service is
+           asynchronous and the confirmation is for the tap. */
+        pcHaptic("heavy");
         if (k === "hold") {
           const sec = this._config.sections.find((x) => x.type === "climate");
           const svc = sec && sec.hold && sec.hold.cancel_service;
@@ -1206,6 +1226,12 @@ class PurdyShellCard extends PcBaseCard {
         const base = this._optGoal(id, st.attributes.temperature);
         const step = parseInt(el.dataset.step, 10) * (sec.step || 1);
         const next = Math.round((base + step) * 10) / 10;
+        /* Fired off the OPTIMISTIC value, never off the state coming back.
+           GTTC takes several seconds to acknowledge a setpoint, so a haptic
+           waiting on the echo would land long after the thumb had moved on and
+           read as the card buzzing at random. This is the same reason the
+           number on screen is optimistic; the tick just follows it. */
+        pcHaptic("light");
         this._goalOpt = { id, value: next, until: Date.now() + 12000 };
         this._last = null;
         this._render();
@@ -1481,6 +1507,12 @@ class PurdyShellCard extends PcBaseCard {
       let holdTimer = null;
       let startX = 0;
       let startY = 0;
+      /* The gridline the readout last ticked at. A wave carries hundreds of
+         samples across ~350px, so ticking per sample would be a solid buzz
+         from end to end; the plot is divided into GRIDLINE_STOPS detents
+         instead, which is roughly one per hour on a 24h axis and is the
+         resolution the eye is reading anyway. Null between gestures. */
+      const tick = { at: null };
 
       const hide = () => {
         cross.hidden = true;
@@ -1492,6 +1524,7 @@ class PurdyShellCard extends PcBaseCard {
         clearTimeout(holdTimer);
         holdTimer = null;
         scrubbing = false;
+        tick.at = null;
         box.classList.remove("scrubbing");
         hide();
       };
@@ -1501,6 +1534,10 @@ class PurdyShellCard extends PcBaseCard {
         if (!r.width) return;
         const x = Math.max(0, Math.min(r.width, clientX - r.left));
         const f = x / r.width;
+        /* Touch only. The mouse path calls this on every hover move, and a
+           desk has no motor to buzz — but the guard is here rather than at the
+           call site so a future pointer path cannot reintroduce it. */
+        if (scrubbing) pcHapticStep(tick, "at", Math.round(f * PS_SCRUB_STOPS), "selection");
 
         let html = null;
         if (kind === "wave") {
@@ -1584,6 +1621,11 @@ class PurdyShellCard extends PcBaseCard {
         clearTimeout(holdTimer);
         holdTimer = setTimeout(() => {
           scrubbing = true;
+          /* Same `medium` as the light row and the nap row: the hold has just
+             taken, the page has stopped being scrollable under the finger, and
+             nothing else says so until the readout paints. */
+          pcHaptic("medium");
+          tick.at = null;
           box.classList.add("scrubbing");
           readout(startX);
         }, HOLD);
@@ -1647,6 +1689,12 @@ class PurdyShellCard extends PcBaseCard {
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
       healthMeter: psHealthMeter, hmDur: psHmDur, hmDomain: psHmDomain, hmPos: psHmPos,
+      /* Haptics come out here because `dev/shoot` cannot see them: a shot has
+         no motor and no companion app, so the smoke test is the ONLY thing
+         standing between a wrong event shape and a phone that silently never
+         buzzes. */
+      haptic: pcHaptic, hapticStep: pcHapticStep, hapticEnable: pcHapticEnable,
+      hapticTypes: PC_HAPTIC_TYPES,
     };
   }
 

@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.61.0";
+const PC_VERSION = "1.62.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -368,6 +368,84 @@ function pcWxText(cond) {
 function pcDayKey(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/* ============================================================================
+ * Haptics — the companion app's Taptic bridge.
+ *
+ * The iOS and Android companion apps listen on `window` for an event of type
+ * "haptic" whose `detail` is one of seven names, and re-interpret it as
+ * physical feedback. Nothing in Home Assistant's own frontend fires it except
+ * <ha-switch>, so a card that wants a control to FEEL like a control has to
+ * fire it itself.
+ *
+ * TWO THINGS THAT LOOK WRONG AND ARE NOT:
+ *
+ *   1. `new Event(...)` with `.detail` assigned AFTERWARDS — not
+ *      `new CustomEvent(type, { detail })`, which reads better, is what every
+ *      instinct reaches for, and does not work. This is HA's own fireEvent
+ *      shape and the app is matched to it. Do not modernise it.
+ *   2. The detail is a bare STRING, not `{ hapticType }` or any object.
+ *
+ * Outside the companion app nothing is listening: a desktop browser, a wall
+ * tablet and `dev/shoot` all run this and feel nothing, silently. That is why
+ * the smoke test has to carry this feature by itself — a screenshot cannot see
+ * a buzz, and a haptic that never fires looks exactly like a phone that does
+ * not do haptics. There is no visible gap for anyone to notice.
+ *
+ * THE RATE FLOOR IS NOT A NICETY. iOS maps the seven types onto the Taptic
+ * Engine distinctly; Android maps them onto whatever motor the handset has,
+ * which is coarser and slower. A drag that outruns the motor does not drop the
+ * extras, it QUEUES them — so the buzzing carries on after the finger has
+ * stopped, which reads as the card being stuck rather than as feedback.
+ * ========================================================================== */
+
+const PC_HAPTIC_TYPES = ["success", "warning", "failure", "light", "medium", "heavy", "selection"];
+const PC_HAPTIC_FLOOR_MS = 40;
+let pcHapticOn = true;
+let pcHapticLast = 0;
+
+/* Config's opt-out, held at module scope because the firing sites are plain
+   handlers rather than render code with `this` to hand — and because a haptic
+   fired from a borrowed method must not depend on which card borrowed it. */
+function pcHapticEnable(on) {
+  pcHapticOn = on !== false;
+}
+
+function pcHaptic(type) {
+  if (!pcHapticOn) return false;
+  if (PC_HAPTIC_TYPES.indexOf(type) < 0) return false;
+  /* Node, and any host without a real window: nothing to dispatch to and
+     nothing to feel. */
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return false;
+  const now = Date.now();
+  if (now - pcHapticLast < PC_HAPTIC_FLOOR_MS) return false;
+  pcHapticLast = now;
+  const ev = new Event("haptic", { bubbles: true, cancelable: false, composed: true });
+  ev.detail = type;
+  window.dispatchEvent(ev);
+  return true;
+}
+
+/* Fire once per STEP CROSSED, never once per pointer event.
+ *
+ * A dial with thirty stops can tick per stop. A brightness drag across 300px
+ * of row cannot: at one tick per percent that is a hundred buzzes in a second,
+ * which the motor cannot deliver and the thumb cannot read as anything but
+ * noise. So a continuous control quantises first and remembers the value it
+ * last ticked at — `holder[prop]` — rather than leaning on the rate floor,
+ * which is a backstop against a queue and not a way of choosing what to say.
+ *
+ * The first sample of a gesture sets the baseline and stays silent: until
+ * something has been crossed there is no step to announce. Callers reset the
+ * holder to null on gesture start.
+ */
+function pcHapticStep(holder, prop, value, type) {
+  const had = holder[prop];
+  if (had === value) return false;
+  holder[prop] = value;
+  if (had == null || value == null) return false;
+  return pcHaptic(type || "selection");
 }
 const CPC_VERSION = "1.1.4";
 
@@ -5283,6 +5361,12 @@ const PS_SECTIONS = [
   "nowplaying", "nursery", "lights", "crew", "weather", "health",
 ];
 
+/* How many detents a scrub gesture crosses from one edge of a plot to the
+   other. 24 is one per hour on the 24h graphs and one per ~40 minutes on the
+   night rail — close enough to the gridlines that the ticks line up with what
+   is drawn, which is the point: the buzz should agree with the picture. */
+const PS_SCRUB_STOPS = 24;
+
 /* Minutes-past-midnight → "7:25 PM". The bedtime helpers store minutes, so
    anything showing them has to convert rather than print the raw number. */
 function psMinsToClock(mins) {
@@ -5422,6 +5506,10 @@ class PurdyShellCard extends PcBaseCard {
       }
     });
     this._config = { dock: [], ...config };
+    /* `haptics: false` silences the whole card. One switch rather than a flag
+       per control: the reason to turn these off is "not in the mood for a
+       phone that buzzes", which is never about one gesture. */
+    pcHapticEnable(config.haptics);
     this._watched = this._collectWatched();
     this._last = null;
     if (this._clock) clearInterval(this._clock);
@@ -6169,6 +6257,10 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const k = el.dataset.arm;
         if (this._armed !== k) {
+          /* Arming is a colour change you may not be looking at — and it is
+             the moment the control stops being safe. `warning` says "this is
+             now live" without claiming anything has been done yet. */
+          pcHaptic("warning");
           this._armed = k;
           this._render();
           clearTimeout(this._armTimer);
@@ -6177,6 +6269,12 @@ class PurdyShellCard extends PcBaseCard {
         }
         this._armed = null;
         clearTimeout(this._armTimer);
+        /* The commit. `heavy` is reserved for exactly this set — cancelling a
+           hold, deleting a schedule window, stopping the Hatch, rebooting the
+           array — so a jolt on this card always means something irreversible
+           just happened. Fired before the call, not after: the service is
+           asynchronous and the confirmation is for the tap. */
+        pcHaptic("heavy");
         if (k === "hold") {
           const sec = this._config.sections.find((x) => x.type === "climate");
           const svc = sec && sec.hold && sec.hold.cancel_service;
@@ -6467,6 +6565,12 @@ class PurdyShellCard extends PcBaseCard {
         const base = this._optGoal(id, st.attributes.temperature);
         const step = parseInt(el.dataset.step, 10) * (sec.step || 1);
         const next = Math.round((base + step) * 10) / 10;
+        /* Fired off the OPTIMISTIC value, never off the state coming back.
+           GTTC takes several seconds to acknowledge a setpoint, so a haptic
+           waiting on the echo would land long after the thumb had moved on and
+           read as the card buzzing at random. This is the same reason the
+           number on screen is optimistic; the tick just follows it. */
+        pcHaptic("light");
         this._goalOpt = { id, value: next, until: Date.now() + 12000 };
         this._last = null;
         this._render();
@@ -6742,6 +6846,12 @@ class PurdyShellCard extends PcBaseCard {
       let holdTimer = null;
       let startX = 0;
       let startY = 0;
+      /* The gridline the readout last ticked at. A wave carries hundreds of
+         samples across ~350px, so ticking per sample would be a solid buzz
+         from end to end; the plot is divided into GRIDLINE_STOPS detents
+         instead, which is roughly one per hour on a 24h axis and is the
+         resolution the eye is reading anyway. Null between gestures. */
+      const tick = { at: null };
 
       const hide = () => {
         cross.hidden = true;
@@ -6753,6 +6863,7 @@ class PurdyShellCard extends PcBaseCard {
         clearTimeout(holdTimer);
         holdTimer = null;
         scrubbing = false;
+        tick.at = null;
         box.classList.remove("scrubbing");
         hide();
       };
@@ -6762,6 +6873,10 @@ class PurdyShellCard extends PcBaseCard {
         if (!r.width) return;
         const x = Math.max(0, Math.min(r.width, clientX - r.left));
         const f = x / r.width;
+        /* Touch only. The mouse path calls this on every hover move, and a
+           desk has no motor to buzz — but the guard is here rather than at the
+           call site so a future pointer path cannot reintroduce it. */
+        if (scrubbing) pcHapticStep(tick, "at", Math.round(f * PS_SCRUB_STOPS), "selection");
 
         let html = null;
         if (kind === "wave") {
@@ -6845,6 +6960,11 @@ class PurdyShellCard extends PcBaseCard {
         clearTimeout(holdTimer);
         holdTimer = setTimeout(() => {
           scrubbing = true;
+          /* Same `medium` as the light row and the nap row: the hold has just
+             taken, the page has stopped being scrollable under the finger, and
+             nothing else says so until the readout paints. */
+          pcHaptic("medium");
+          tick.at = null;
           box.classList.add("scrubbing");
           readout(startX);
         }, HOLD);
@@ -6908,6 +7028,12 @@ class PurdyShellCard extends PcBaseCard {
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
       healthMeter: psHealthMeter, hmDur: psHmDur, hmDomain: psHmDomain, hmPos: psHmPos,
+      /* Haptics come out here because `dev/shoot` cannot see them: a shot has
+         no motor and no companion app, so the smoke test is the ONLY thing
+         standing between a wrong event shape and a phone that silently never
+         buzzes. */
+      haptic: pcHaptic, hapticStep: pcHapticStep, hapticEnable: pcHapticEnable,
+      hapticTypes: PC_HAPTIC_TYPES,
     };
   }
 
@@ -10109,6 +10235,10 @@ Object.assign(PurdyShellCard.prototype, {
        answering the thumb. */
     if (field === "from" && next.from > next.to) next.to = next.from;
     if (field === "to" && next.to < next.from) next.from = next.to;
+    /* Only a step that MOVED gets a tick. Both fields clamp to the session, so
+       pressing on at either end is a control that has run out of room — and a
+       buzz there would say the value changed when it did not. */
+    if (next.from !== e.from || next.to !== e.to) pcHaptic("selection");
     this._napEdit = next;
     this._last = null;
     this._render();
@@ -10137,6 +10267,11 @@ Object.assign(PurdyShellCard.prototype, {
   _napEditSave() {
     const e = this._napEdit;
     if (!e) return;
+    /* `success` — the one place on the card that earns it. The correction has
+       landed in the helper and every number downstream is about to be
+       recomputed from it, which is a thing completing rather than a control
+       being pressed. */
+    pcHaptic("success");
     this._napEditWrite({ start: e.start, from: e.from, to: e.to });
   },
 
@@ -10259,6 +10394,10 @@ Object.assign(PurdyShellCard.prototype, {
         cancel();
         hold = setTimeout(() => {
           hold = null;
+          /* The third of the three holds, and the one most in need of a tick:
+             rows are read far more often than they are corrected, so nothing
+             about a nap row suggests it can be held at all. */
+          pcHaptic("medium");
           this._openNapEdit(+el.dataset.napedit);
         }, 380);
       });
@@ -11079,6 +11218,10 @@ Object.assign(PurdyShellCard.prototype, {
   _bindLights() {
     this._each("[data-light]", (el) => {
       let hold = null, moved = false, x0 = 0, id = null;
+      /* The brightness step this drag last ticked at. Null between gestures,
+         so the first sample of a new drag sets a baseline instead of firing
+         for the distance between two unrelated touches. */
+      const tick = { at: null };
 
       const pct = (clientX) => {
         const r = el.getBoundingClientRect();
@@ -11110,6 +11253,10 @@ Object.assign(PurdyShellCard.prototype, {
         /* Paint first, always — the row has to answer the finger even when the
            value is only a preview. */
         this._paintLight(el, id, v);
+        /* Quantised to 5%: the row is about 300px wide, so one tick per
+           percent would be a hundred buzzes across a single sweep. Twenty
+           detents down the row is a dial you can feel your way along. */
+        pcHapticStep(tick, "at", Math.round(v / 5), "selection");
         if (el.dataset.guard === "1") {
           el.dataset.preview = v;   /* nothing is sent until the question is answered */
           return;
@@ -11125,6 +11272,7 @@ Object.assign(PurdyShellCard.prototype, {
 
       const finish = () => {
         if (hold) { clearTimeout(hold); hold = null; }
+        tick.at = null;
         el.classList.remove("dragging");
         this._dragging = false;
         this.shadowRoot.removeEventListener("pointermove", onMove);
@@ -11138,9 +11286,14 @@ Object.assign(PurdyShellCard.prototype, {
         finish(); id = null; moved = false;
         if (!was) return;
         if (!wasMoved) {
-          if (guard) this._lightAsk = { id: was, kind: "toggle" };
-          else { this._mood = null; this._lightToggle(was); }
+          /* A guard interposing is a REFUSAL to act, and it must not feel like
+             acting. `warning` where the plain tap gets `light`: the difference
+             is the whole message, since the thing you asked for has not
+             happened and the room has not changed. */
+          if (guard) { pcHaptic("warning"); this._lightAsk = { id: was, kind: "toggle" }; }
+          else { pcHaptic("light"); this._mood = null; this._lightToggle(was); }
         } else if (guard && preview) {
+          pcHaptic("warning");
           this._lightAsk = { id: was, kind: "level", value: +preview };
           delete el.dataset.preview;
         }
@@ -11156,12 +11309,17 @@ Object.assign(PurdyShellCard.prototype, {
            "I tapped one lamp and they all went off" happened. Missing a
            control should never be the same as pressing a bigger one. */
         if (e.target.closest("[data-lkid],[data-lask],[data-lwarm],.pl-more")) return;
-        id = el.dataset.light; moved = false; x0 = e.clientX;
+        id = el.dataset.light; moved = false; x0 = e.clientX; tick.at = null;
         this.shadowRoot.addEventListener("pointermove", onMove);
         this.shadowRoot.addEventListener("pointerup", onUp);
         this.shadowRoot.addEventListener("pointercancel", onCancel);
         hold = setTimeout(() => {
           hold = null; moved = true;            /* consumed — no toggle on release */
+          /* The hold has no feedback of any kind until it fires, so the only
+             way to learn it took is to be watching the screen. `medium` is the
+             tick that tells the thumb, and it is the same tick on all three
+             holds — light row, scrub, nap row — because they are one gesture. */
+          pcHaptic("medium");
           this._lightOpen = this._lightOpen === id ? null : id;
           this._render();
         }, 380);
@@ -11187,6 +11345,10 @@ Object.assign(PurdyShellCard.prototype, {
       const a = this._lightAsk;
       this._lightAsk = null;
       if (a && el.dataset.lask === "yes") {
+        /* Only the answer that COMMITS gets a haptic. Cancelling restores what
+           was really there, and buzzing to confirm that nothing happened is
+           how a haptic layer turns into noise. */
+        pcHaptic("light");
         if (a.kind === "level") { this._mood = null; this._lightSetBri(a.id, a.value); }
         else this._lightToggle(a.id);
       }

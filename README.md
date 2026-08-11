@@ -149,6 +149,34 @@ Form fields are the one deliberate exception at `16px` — anything smaller make
 
 Per-card overrides still work (`--cpc-heat-override`, `--spc-deep-override`, and so on) and take precedence over the shared value.
 
+## Haptics
+
+The iOS and Android companion apps listen on `window` for an event of type `haptic` and turn it into physical feedback. Nothing in Home Assistant's own frontend fires it except `<ha-switch>`, so a card that wants a control to *feel* like a control has to fire it itself.
+
+```js
+const ev = new Event("haptic", { bubbles: true, cancelable: false, composed: true });
+ev.detail = "selection";
+window.dispatchEvent(ev);
+```
+
+Two things look wrong and are not: it is built with `new Event(...)` and `.detail` is assigned **afterwards** — `new CustomEvent(type, { detail })` reads better and is not heard — and the detail is a bare string, not an object.
+
+`purdy-shell-card` fires on seven gestures:
+
+| Gesture | Type |
+|---|---|
+| A 380ms press-and-hold taking — light row, graph scrub, nap row | `medium` |
+| Dragging a light's brightness, quantised to 5% | `selection` |
+| Scrubbing a graph, one detent per gridline | `selection` |
+| A climate ± step, or a plain light tap | `light` |
+| Arming a destructive control, or a `protect:` guard interposing | `warning` |
+| Committing an armed destructive control | `heavy` |
+| Saving a nap correction | `success` |
+
+Three rules hold the set together. A haptic marks an action that **committed** — cancelling a guard restores what was really there and says nothing. Continuous controls quantise and tick once per step crossed, never once per pointer event, because a motor cannot deliver a hundred buzzes a second and queues the ones it cannot. And nothing fires from the render path: the shell patches on every state arrival, so a haptic there would buzz when the *house* changed rather than when you touched something.
+
+`haptics: false` at the top level of the card config silences all of it. Outside the companion app — a desktop browser, a wall tablet — the card renders and works normally, silently.
+
 ## Home-screen cards
 
 Five small cards that make a phone dashboard readable at a glance. They share `PC_TOKENS` with the two panels, so the whole screen reads as one surface rather than a stack of unrelated widgets.
