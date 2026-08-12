@@ -54,11 +54,20 @@ function psClock(t) {
  *  - door_min_sec    Mounting the sensor produced ten transitions in 34
  *                    seconds, five of them under 300ms. A magnet settling is
  *                    not a person; a person holds a door open for seconds.
- *  - door_merge_sec  A re-entry guard: an open this soon after the one that
- *                    closed a visit is them stepping back in, so it RESUMES
- *                    that visit rather than opening a new one. It does not
- *                    discard the open — discarding one flips the entry/exit
- *                    parity of every open after it (see below).
+ *  - door_merge_sec  A bounce guard for while someone is IN the room: an open
+ *                    this soon after the door shut is the same door movement —
+ *                    swung, bumped, or pulled back open to be propped — not
+ *                    them leaving. It does not discard the open — discarding
+ *                    one flips the entry/exit parity of every open after it
+ *                    (see below).
+ *  - reentry_sec     The same idea from outside: an open this soon after the
+ *                    one that closed a visit is them stepping back in, so it
+ *                    RESUMES that visit rather than opening a new one. Longer
+ *                    than `door_merge_sec` because walking out, fetching
+ *                    something and returning takes longer than a door swinging
+ *                    — and they cannot be one number: 60 leaves a real 79s
+ *                    return reading as a second wake-up, while 120 applied to a
+ *                    bounce would swallow a genuine 97s step-out as one.
  *  - visit_max_min   Going in and coming out is one visit, and a visit lasts as
  *                    long as you stay. The open that follows a counted entry
  *                    inside this window is that visit's exit, not a new
@@ -81,6 +90,7 @@ function psNurserySessions(hatch, door, opts) {
   const o = opts || {};
   const doorMin = (o.door_min_sec == null ? 2 : o.door_min_sec) * 1000;
   const doorMerge = (o.door_merge_sec == null ? 60 : o.door_merge_sec) * 1000;
+  const reentry = (o.reentry_sec == null ? 120 : o.reentry_sec) * 1000;
   /* Going in to GET HIM is not an intervention. The door opens moments before
      the sound machine stops — six seconds, on the 10:58 nap — so an event this
      close to the end is the retrieval: the far more precise cousin of the
@@ -279,19 +289,36 @@ function psNurserySessions(hatch, door, opts) {
      * entry, so the error does not stay local to the burst that caused it.
      *
      * So a bounce is no longer discarded — it RESUMES the visit it interrupted.
-     * An open within `door_merge_sec` of the one that just closed a visit is
-     * them stepping back in, and `visit_max_min` keeps running from the
-     * original entry so the resumed visit is still bounded. Chatter nets out to
-     * the same count either way (an even burst pairs off; an odd one leaves the
-     * visit open, which counts once), which is what keeps the mounting burst at
-     * two. */
+     * An open within `reentry_sec` of the one that just closed a visit is them
+     * stepping back in, and `visit_max_min` keeps running from the original
+     * entry so the resumed visit is still bounded.
+     *
+     * The mirror of that, from INSIDE the room, is the second half of the same
+     * rule and was missing. An open within `door_merge_sec` of the moment the
+     * door shut is the same door movement, not the exit — and it must be tested
+     * BEFORE the exit branch, or it takes the exit's place and leaves the real
+     * exit to be read as a fresh entry. Observed 2026-08-11: in at 00:19:30,
+     * door shut at 00:19:35, pulled open again 1.3 seconds later and PROPPED
+     * for eleven minutes, finally out at 00:34:33 — one wake-up reported as
+     * two. There was already a test covering this shape and it passed, because
+     * that night's stray second entry happened to be popped by the retrieval
+     * rule; the bug only surfaces when the real exit is nowhere near the end of
+     * the session.
+     *
+     * A bounce is measured from the previous open's CLOSE, so a chain of them
+     * keeps extending the visit — `visit_max_min` from the original entry is
+     * the brake, the same asymmetry every other rule here needed. Chatter now
+     * nets out to ONE visit rather than two: the mounting burst is a single
+     * continuous episode of the door being handled, which is what it was. */
     const visitMax = rule(s.from, "visit_max_min");
     const events = [];
     let lastOp = hadExit ? inside[i - 1].from : -Infinity;
+    let lastTo = hadExit ? inside[i - 1].to : -Infinity;
     let entryAt = null;   /* set while someone is in the room */
     let exitAt = null;    /* the open that closed the last visit, if any */
     inside.slice(i).forEach((op) => {
       const sinceLast = op.from - lastOp;
+      const sinceShut = op.from - lastTo;
       /* Picking him up. `retrieval_window_min` catches the usual shape — the
        * door opens seconds before the Hatch stops — but the surer signal is a
        * door that is never shut again: opened at 06:15:03 on 2026-08-10 and
@@ -307,10 +334,14 @@ function psNurserySessions(hatch, door, opts) {
         return;
       }
       lastOp = op.from;
+      lastTo = op.to;
       if (entryAt != null) {
+        /* still in the room: the door swinging straight back open is the same
+           movement, not them coming out */
+        if (sinceShut < doorMerge && op.from - entryAt <= visitMax) return;
         /* in the room: this open is them coming out again */
         if (op.from - entryAt <= visitMax) { exitAt = op.from; entryAt = null; return; }
-      } else if (exitAt != null && sinceLast < doorMerge && events.length) {
+      } else if (exitAt != null && sinceLast < reentry && events.length) {
         /* straight back in — the same visit resuming, not a second one */
         entryAt = events[events.length - 1];
         exitAt = null;
