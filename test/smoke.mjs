@@ -2711,10 +2711,14 @@ check('mounting chatter does not become ten interventions', (() => {
   /* The real recorded burst, against the real session it fell inside: the
      Hatch ran 08:30:08 to 09:10:36, so these land 35 minutes in — past the
      nap exit window, so they are read as visits rather than a put-down.
-     Ten raw opens. Two visits, not three: the 9:06:59 open is the exit of the
-     9:05:37 entry now that a visit is a PAIR of opens rather than anything
-     inside 60 seconds. The guarantee this test exists for — ten opens must not
-     become ten interventions — is unchanged. */
+     Ten raw opens, ONE visit. It read as three when a visit was anything inside
+     60 seconds, then two once a visit became a PAIR of opens, and now one:
+     every open in the burst falls within `door_merge_sec` of the moment the
+     door last shut, which is what the burst was — a single continuous episode
+     of the door being handled while the sensor was mounted. The guarantee this
+     test exists for — ten opens must not become ten interventions — only gets
+     stronger, and `visit_max_min` from the first entry is still the brake on a
+     bounce chain. */
   const door = [
     { t: NT(9, 5, 37), s: 'on' }, { t: NT(9, 5, 41), s: 'off' },
     { t: NT(9, 5, 42), s: 'on' }, { t: NT(9, 5, 43), s: 'off' },
@@ -2732,7 +2736,7 @@ check('mounting chatter does not become ten interventions', (() => {
   const s = nsess(
     [{ t: NT(8, 30, 8), s: 'playing' }, { t: NT(10, 30), s: 'idle' }],
     door, { now: NT(11, 0) });
-  return s.length === 1 && s[0].interventions === 2;
+  return s.length === 1 && s[0].interventions === 1;
 })());
 
 check('a sub-second flicker alone is never an intervention', (() => {
@@ -3023,6 +3027,47 @@ check('a third open is a new visit, not a second exit', (() => {
      { t: NT(22, 52), s: 'on' }, { t: NT(22, 52, 8), s: 'off' }],
     { now: NT(23, 30) })[0];
   return s.interventions === 2;
+})());
+
+/* The real 2026-08-11 night, both halves of it. The put-down is the same in
+   each: in at 19:00:32, out at 19:01:18. */
+const N0811 = [{ t: NT(19, 0, 32), s: 'on' }, { t: NT(19, 0, 35), s: 'off' },
+  { t: NT(19, 1, 18), s: 'on' }, { t: NT(19, 1, 22), s: 'off' }];
+
+/* In at 00:19:30, the door shut behind them at 00:19:35 and was pulled open
+   again 1.3 SECONDS later and propped for eleven minutes, then out at 00:34:33.
+   That propping open was read as the exit, which left the real exit to be read
+   as a fresh entry: one wake-up, reported as two. The shape had a test already
+   ('a door held open past the session end') and it passed — there the stray
+   second entry happened to be popped by the retrieval rule. */
+check('the door pulled straight back open is not them leaving', (() => {
+  const s = nsess(
+    [{ t: NT(18, 51, 20), s: 'playing' }, { t: NT(23, 59), s: 'idle' }],
+    N0811.concat([
+      { t: NT(22, 19, 30), s: 'on' }, { t: NT(22, 19, 35), s: 'off' },
+      { t: NT(22, 19, 36), s: 'on' }, { t: NT(22, 30, 37), s: 'off' },
+      { t: NT(22, 34, 33), s: 'on' }, { t: NT(22, 34, 45), s: 'off' }]),
+    { now: NT(23, 59) })[0];
+  return s.interventions === 1 && s.events[0] === NT(22, 19, 30);
+})());
+
+/* Same night, earlier: in at 19:46:54, out at 19:56:03, back in at 19:57:28 —
+   79 seconds after the door shut — and finally out at 20:08:35. `door_merge_sec`
+   at 60s missed the return by nineteen seconds and started a second visit, so
+   one trip reported as two. `reentry_sec` is the wider window that catches it,
+   and it has to be a separate knob: 120 applied to a bounce would swallow the
+   2026-08-10 night's genuine 97-second step-out. */
+check('stepping back in eighty seconds later is the same visit', (() => {
+  const s = nsess(
+    [{ t: NT(18, 51, 20), s: 'playing' }, { t: NT(23, 59), s: 'idle' }],
+    N0811.concat([
+      { t: NT(19, 46, 54), s: 'on' }, { t: NT(19, 46, 58), s: 'off' },
+      { t: NT(19, 56, 3), s: 'on' }, { t: NT(19, 56, 9), s: 'off' },
+      { t: NT(19, 56, 11), s: 'on' }, { t: NT(19, 56, 12), s: 'off' },
+      { t: NT(19, 57, 28), s: 'on' }, { t: NT(19, 57, 32), s: 'off' },
+      { t: NT(20, 8, 35), s: 'on' }, { t: NT(20, 8, 43), s: 'off' }]),
+    { now: NT(23, 59) })[0];
+  return s.interventions === 1 && s.events[0] === NT(19, 46, 54);
 })());
 
 /* The brake. Chaining alone would let a visit every twenty minutes swallow a
