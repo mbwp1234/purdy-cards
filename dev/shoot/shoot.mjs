@@ -37,6 +37,13 @@ const PRESETS = {
    * ahead, plus the sheet_only music and lights. Systems is a MODE here, not a
    * section, so it is reached with mode= rather than open=. */
   phone:          [PHONE, SHELL],
+  /* The living sky. The band comes off the wall clock, so three of the four
+     are unphotographable at any one moment; `sky=` pins it in the harness so
+     the palette can be reviewed without waiting twelve hours for dawn. */
+  "phone-sky-dawn":  [PHONE, SHELL + "&sky=dawn"],
+  "phone-sky-day":   [PHONE, SHELL + "&sky=day"],
+  "phone-sky-dusk":  [PHONE, SHELL + "&sky=dusk"],
+  "phone-sky-night": [PHONE, SHELL + "&sky=night"],
   "phone-joel":   [PHONE, SHELL + "&open=joel"],
   /* Correcting a session. The list with its long-press targets, then the sheet
      itself — which is opened by a press-and-hold, the one entry point a URL

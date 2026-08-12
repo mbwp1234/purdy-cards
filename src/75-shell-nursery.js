@@ -1388,7 +1388,7 @@ Object.assign(PurdyShellCard.prototype, {
     const nightNoData = !loaded || !nightSession;
     const noData = !loaded || (!nightSession && !todayNaps.length);
     const ring = this._ringSvg(120, 9,
-      [[nightMins / maxMins, "var(--ps-deep)"]],
+      [[nightMins / maxMins, "url(#ps-aur)"]],
       avg ? Math.min(1, avg / maxMins) : null);
 
     /* Nap rings. No slot is drawn for a nap that has not happened — two short

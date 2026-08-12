@@ -10,11 +10,23 @@
  * ========================================================================== */
 
 Object.assign(PurdyShellCard.prototype, {
+  /* The key word carries the aurora gradient (styled on h2 b), so this returns
+     markup, not plain text — it is inserted unescaped by both render paths.
+   *
+   * The night branch exists because the greeting and the sky are two readings
+   * of the same clock, and they were contradicting each other: at 11 PM the
+   * ground went near-black while the header still said "Good evening". The
+   * cutoff is 22, the SAME boundary as the night sky band, so the two cannot
+   * drift apart — the other three thresholds are left alone, because a
+   * greeting is about the part of the day and a sky is about the light, and
+   * "Good afternoon" at 9:30 in the morning would be the worse error. */
   _greeting() {
     const h = new Date().getHours();
-    if (h < 12) return "Good morning";
-    if (h < 17) return "Good afternoon";
-    return "Good evening";
+    if (h < 5) return "Good <b>night</b>";
+    if (h < 12) return "Good <b>morning</b>";
+    if (h < 17) return "Good <b>afternoon</b>";
+    if (h < 22) return "Good <b>evening</b>";
+    return "Good <b>night</b>";
   },
 
   _who() {
@@ -73,7 +85,14 @@ Object.assign(PurdyShellCard.prototype, {
     const arc = pcRingArc(r);
     const cx = size / 2;
     let off = 0;
+    /* Every ring carries the aurora gradient in its defs; a caller opts in by
+       passing "url(#ps-aur)" as a segment colour. Duplicate ids across
+       sibling SVGs are fine — url() resolves to the first match and every
+       def is identical. */
     let out = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+      <defs><linearGradient id="ps-aur" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="var(--ps-aur-a, #56D4E4)"/>
+        <stop offset="1" stop-color="var(--ps-aur-b, #8B7CFF)"/></linearGradient></defs>
       <circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
         stroke-width="${stroke}" stroke-linecap="round"
         stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;

@@ -818,6 +818,123 @@ check('shell aliases ps->pc for cool', shs.includes('--ps-cool: var(--pc-cool)')
 check('shell has the gradient ground', shs.includes('.ps-ground'));
 check('shell column is one glass pane', shs.includes('.ps-col') && shs.includes('backdrop-filter'));
 check('shell sections divided by hairline not gap', shs.includes('.ps-sect + .ps-sect { border-top'));
+
+/* --- Skyline: the living sky ------------------------------------------- *
+ *
+ * Four palettes keyed off the hour, on the clock the shell already ticks. The
+ * bare .ps-ground rule carries the day sky, so a ground that has not been
+ * classed yet is never an empty rectangle.
+ */
+['sky-dawn', 'sky-dusk', 'sky-night'].forEach((b) => {
+  check(`the ${b} palette is declared`, new RegExp('\\.ps-ground\\.' + b + ' \\{').test(shs));
+});
+check('the bare ground carries the day sky as its default',
+  /\.ps-ground \{[^}]*linear-gradient\(178deg, #0A101C/.test(shs.replace(/\n/g, ' ')));
+/* Stars belong to the two dark bands only — dawn and day would read as dirt
+   on the glass rather than as sky. */
+check('stars ride dusk and night, and only those two',
+  /\.ps-ground\.sky-dusk::after, \.ps-ground\.sky-night::after/.test(shs) &&
+  !/\.ps-ground\.sky-(dawn|day)::after/.test(shs));
+/* A band function is nothing until something calls it. The defined-and-never-
+   invoked shape has cost three releases on this card already. */
+check('_render paints the sky, it does not merely define the band',
+  /this\._paintSky\(/.test(shellSrc) && /_skyBand\(h\)/.test(shellSrc));
+check('the sky rides the existing clock rather than a timer of its own',
+  (shellSrc.match(/setInterval\(\(\) => this\._render\(\), 30000\)/g) || []).length === 2 &&
+  !/_skyTimer|setInterval[^)]*_paintSky/.test(shellSrc));
+/* Every hour lands in exactly one band, and every band is reachable. */
+check('the four bands tile the clock with no gap and no overlap', (() => {
+  const el = new SH();
+  const seen = {};
+  for (let h = 0; h < 24; h++) {
+    const b = el._skyBand(h);
+    if (!/^sky-(dawn|day|dusk|night)$/.test(b)) return false;
+    seen[b] = (seen[b] || 0) + 1;
+  }
+  return Object.keys(seen).length === 4 &&
+    seen['sky-dawn'] === 4 && seen['sky-day'] === 8 &&
+    seen['sky-dusk'] === 5 && seen['sky-night'] === 7;
+})());
+/* The writer lands the class on the real node, and skips the write when the
+   band has not changed — the ground is a surviving element, not a patched
+   slot, so an unconditional write would touch the DOM on every 30s tick. */
+check('_paintSky writes the band onto the ground node, and only when it moves', (() => {
+  const el = new SH();
+  const node = { className: 'ps-ground', writes: 0 };
+  Object.defineProperty(node, 'cls', {
+    get() { return node.className; },
+  });
+  const shadow = { getElementById: (id) => (id === 'ps-ground' ? node : null), querySelectorAll: () => [] };
+  el.shadowRoot = shadow;
+  el._paintSky('sky-dusk');
+  if (node.className !== 'ps-ground sky-dusk') return false;
+  const before = node.className;
+  el._paintSky('sky-dusk');
+  if (node.className !== before) return false;
+  el._paintSky('sky-night');
+  return node.className === 'ps-ground sky-night';
+})());
+/* The horizon lives at the bottom of every palette, which is the strip the
+   dock's fade covers — so the dock glow carries the band, and a band with no
+   glow would render dawn and dusk as the same indigo with nothing to say so. */
+check('every sky band names its own horizon glow', (() => {
+  const el = new SH();
+  const glow = SH.skyGlow;
+  const bands = [...new Set(Array.from({ length: 24 }, (_, h) => el._skyBand(h)))];
+  return bands.length === 4 && bands.every((b) => /^rgba\(/.test(glow[b] || '')) &&
+    new Set(bands.map((b) => glow[b])).size === 4 &&
+    /--ps-sky-glow/.test(shs) &&
+    /radial-gradient\(120% 90% at 50% 118%, var\(--ps-sky-glow\)/.test(shs);
+})());
+
+/* Modes are an instrument panel, not a window: they take the day sky whatever
+   the hour is, which is a branch in _render rather than a rule in the sheet. */
+check('a mode takes the day sky rather than the hour',
+  /this\._paintSky\(this\._mode \? "sky-day" : this\._skyBand\(now\.getHours\(\)\)\)/.test(shellSrc));
+/* Nothing about the palette switch may animate — a crossfade on the ground is
+   the same class of bug as the max-height transition that made a tap on one
+   light toggle the whole group. */
+check('the sky switches instantly, with no transition on the ground', (() => {
+  /* Anchored at a line start: .ps-ground is also NAMED in the weather-FX
+     comment block, and a loose match ran from that prose into an unrelated
+     rule and reported a transition that is not on the ground at all. */
+  const rules = [...shs.matchAll(/^ *\.ps-ground[^{\n]*\{([^}]*)\}/gm)].map((m) => m[1]);
+  return rules.length === 5 && rules.every((r) => !/transition|animation/.test(r));
+})());
+
+/* --- Skyline: one aurora accent ---------------------------------------- */
+check('the aurora pair is a token, not a loose hex in the sheet',
+  /--pc-aur-a: #56D4E4/.test(src) && /--pc-aur-b: #8B7CFF/.test(src) &&
+  /--ps-aur-a: var\(--pc-aur-a\)/.test(shs));
+check('the rings carry the aurora gradient in their defs',
+  /linearGradient id="ps-aur"/.test(shellSrc));
+check('the dock active slot is an aurora underline, not a filled pill',
+  /\.ps-db\.on::after/.test(shs) &&
+  /\.ps-db\.on \{ color: var\(--ps-text\); \}/.test(shs));
+/* The glow layer must not change what _reserve measures, or every sheet's
+   lower edge moves with it. */
+check('the dock horizon glow cannot be measured or tapped', (() => {
+  const m = shs.replace(/\n/g, ' ').match(/\.ps-dockwrap::before \{[^}]*\}/);
+  return !!m && /position: absolute/.test(m[0]) && /pointer-events: none/.test(m[0]) &&
+    /radial-gradient\(120% 90% at 50% 118%/.test(m[0]);
+})());
+/* Lever 06: nothing the Skyline pass introduced may animate. A blanket ban on
+   the whole sheet would be wrong — the chevron's rotate predates this and is
+   on a node the patch leaves alone — so the ban is scoped to the chrome this
+   identity added, which is where an entry/exit transition would land under a
+   thumb. */
+check('no Skyline chrome animates', (() => {
+  const want = ['.ps-ground', '.ps-col', '.ps-col::before', '.ps-dock',
+    '.ps-db', '.ps-db.on', '.ps-db.on::after', '.ps-dockwrap::before'];
+  const hit = [...shs.matchAll(/^ *(\.[a-z0-9.:-]+(?:, *\.[a-z0-9.:-]+)*) *\{([^}]*)\}/gm)]
+    .filter((m) => m[1].split(',').some((s) => want.includes(s.trim())));
+  return hit.length >= want.length - 1 && hit.every((m) => !/transition|animation/.test(m[2]));
+})());
+
+/* The greeting's key word is markup now, so neither render path may escape it. */
+check('the greeting word is emitted as markup on both surfaces',
+  /Good <b>morning<\/b>/.test(shellSrc) &&
+  !/psEsc\(this\._greeting\(\)\)/.test(shellSrc));
 /* Sticky, NOT fixed. Two fixed layers landing at the same wrong offset meant
    an HA ancestor was capturing the fixed containing block; sticky resolves
    against the scrollport and cannot be captured. Assert the negative too — a
@@ -902,7 +1019,9 @@ check('ring draws a track plus both segments', (ring.match(/<circle/g) || []).le
 check('ring offsets the second segment past the first', /stroke-dashoffset="-\d/.test(ring));
 check('ring draws the goal tick when a goal is given', ring.includes('<line'));
 const ringNoGoal = shell._ringSvg(92, 7.5, [[0.5, '#4dd0e1']], null);
-check('ring omits the tick with no goal', !ringNoGoal.includes('<line'));
+/* "<line" alone would also match the aurora <linearGradient> def every ring
+   now carries; the tick is the only bare <line > element. */
+check('ring omits the tick with no goal', !ringNoGoal.includes('<line '));
 
 // the sleep span stops at the session break rather than gluing two nights
 shell._hass = { states: {} };
@@ -1574,7 +1693,10 @@ check('the dimmest text colour clears the contrast floor', (() => {
   const lin = (c) => { const s = parseInt(c, 16) / 255;
     return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
   const L = 0.2126 * lin(hex.slice(0, 2)) + 0.7152 * lin(hex.slice(2, 4)) + 0.0722 * lin(hex.slice(4, 6));
-  return (L + 0.05) / (0.00417 + 0.05) >= 4.5;      // 0.00417 = the #0B0D16 ground
+  /* 0.00666 = the LIGHTEST base stop across the four sky palettes (#171017,
+     the dawn horizon) — the floor must hold on the ground least in its
+     favour, and the darker skies only raise the ratio. */
+  return (L + 0.05) / (0.00666 + 0.05) >= 4.5;
 })());
 
 /* Every round control drew at 19–36px. The target grows behind the paint so
@@ -6116,7 +6238,8 @@ check('desk --ps-dim clears the 4.5:1 floor on the ground', (() => {
     const r = lin(parseInt(h.slice(1, 3), 16)), g = lin(parseInt(h.slice(3, 5), 16)), b = lin(parseInt(h.slice(5, 7), 16));
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   };
-  const ratio = (L(hex) + 0.05) / (L('#080a12') + 0.05);
+  /* #0a111c is the lightest base stop of the desk's permanent day sky. */
+  const ratio = (L(hex) + 0.05) / (L('#0a111c') + 0.05);
   return ratio >= 4.5;
 })());
 

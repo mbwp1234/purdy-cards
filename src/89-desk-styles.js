@@ -33,13 +33,15 @@ const PD_STYLES = `
            3.6:1 on this ground — under the 4.5:1 floor — and it would colour
            every uppercase micro label on the screen. This is ~4.9:1. */
         --ps-dim: #7c8797;
-        --ps-cool: #4dd0e1;
-        --ps-heat: #ff9557;
-        --ps-good: #81c995;
-        --ps-warn: #f2c14e;
-        --ps-bad: #ef6a6a;
+        --ps-cool: var(--pc-cool);
+        --ps-heat: var(--pc-heat);
+        --ps-good: var(--pc-good);
+        --ps-warn: var(--pc-warn);
+        --ps-bad: var(--pc-bad);
         --ps-deep: #aa78ff;
         --ps-light: #50a0ff;
+        --ps-aur-a: var(--pc-aur-a);
+        --ps-aur-b: var(--pc-aur-b);
         --ps-track: rgba(255, 255, 255, 0.12);
         --ps-hair: rgba(255, 255, 255, 0.075);
         --ps-hair-soft: rgba(255, 255, 255, 0.045);
@@ -80,14 +82,16 @@ const PD_STYLES = `
       /* One gradient under everything. The melded look depends on there being
          no per-panel backgrounds — twelve cards with a margin read as a list of
          boxes however they are styled, because the boxes ARE the gaps. */
+      /* The Skyline day sky, permanently — a desk is an instrument panel, not
+         a window that keeps the hour. No per-hour keying here. */
       .pd-ground {
         position: absolute; inset: 0; pointer-events: none;
         border-radius: inherit;
         background:
-          radial-gradient(95% 78% at 88% -14%, rgba(122, 86, 255, .40), transparent 62%),
-          radial-gradient(80% 70% at 4% 108%, rgba(26, 128, 142, .42), transparent 60%),
-          radial-gradient(60% 50% at 46% 46%, rgba(60, 44, 120, .30), transparent 70%),
-          linear-gradient(168deg, #0B0D16 0%, #080A12 55%, #06070E 100%);
+          radial-gradient(130% 52% at 78% -10%, rgba(94, 168, 216, .30), transparent 64%),
+          radial-gradient(110% 40% at 8% -4%, rgba(86, 212, 228, .18), transparent 60%),
+          radial-gradient(140% 26% at 50% 106%, rgba(62, 127, 184, .22), transparent 70%),
+          linear-gradient(168deg, #0A101C 0%, #080C15 52%, #0A111C 100%);
       }
 
       /* One continuous glass sheet, subdivided by hairlines. */
@@ -167,8 +171,14 @@ const PD_STYLES = `
 
       .pd-z-id { flex: 0 0 clamp(200px, 17%, 290px); }
       .pd-z-id h2 {
-        margin: 0; font-size: var(--pc-fs-xl); font-weight: 640;
+        margin: 0; font-size: var(--pc-fs-xl); font-weight: 300;
         letter-spacing: -.024em; line-height: 1.15;
+      }
+      /* _greeting returns markup: the key word wears the aurora here too. */
+      .pd-z-id h2 b {
+        font-weight: 650;
+        background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
       }
       .pd-sub { font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 2px; }
 

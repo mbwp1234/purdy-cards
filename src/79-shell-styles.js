@@ -28,6 +28,16 @@ const PS_STYLES = `
         --ps-deep: #AA78FF;
         --ps-light: #50A0FF;
         --ps-awake: #FFA74E;
+        --ps-aur-a: var(--pc-aur-a);
+        --ps-aur-b: var(--pc-aur-b);
+        /* The horizon the dock rests on. Each sky palette puts its warmest
+           colour at the BOTTOM — dawn's amber, dusk's ember — and that band is
+           exactly where the dock's legibility fade sits, so the ground alone
+           renders dawn and dusk as the same indigo (measured: 3/255 apart
+           below the dock, against 40 in the strip above the column). The dock
+           glow is therefore the horizon: _paintSky writes this per band, the
+           same way _reserve writes --ps-dockh. Default is dusk's violet. */
+        --ps-sky-glow: rgba(139,124,255,.20);
         --ps-hair: rgba(255,255,255,.075);
         --ps-hair-soft: rgba(255,255,255,.05);
         --ps-fill: var(--pc-fill-1);
@@ -73,7 +83,7 @@ const PS_STYLES = `
       .ps-grow { flex: 1; min-width: 0; }
       .ps-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
       .ps-row { display: flex; align-items: center; gap: 9px; }
-      .ps-lbl { font-size: var(--pc-fs-micro); letter-spacing: .13em; text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
+      .ps-lbl { font-size: var(--pc-fs-micro); letter-spacing: .14em; text-transform: uppercase; color: var(--ps-dim); font-weight: 700; }
 
       /* Hit expansion. Every round control on this screen drew at 19–36px, well
          under the 44px a thumb needs; the fix must not change what is drawn, so
@@ -85,19 +95,61 @@ const PS_STYLES = `
       .ps-vbtn::after, .ps-tvoff::after, .ps-mb::after, .ps-npb::after, .ps-pin::after,
       .ps-tb::after, .ps-sclear::after { content: ""; position: absolute; inset: -11px -4px; }
 
-      /* the ground — one gradient behind everything */
+      /* the ground — a living sky, keyed off the same clock as the greeting.
+         Four palettes; the render path writes one sky-* class on the node.
+         The base rule carries the day sky so a ground with no band class yet
+         never renders empty. No crossfade: palette switches happen at render,
+         because nothing on this card animates (the patching-renderer rule). */
       .ps-ground {
         position: fixed; inset: 0; z-index: -1; pointer-events: none;
         background:
-          radial-gradient(120% 58% at 92% -8%, rgba(122,86,255,.46), transparent 62%),
-          radial-gradient(110% 52% at 4% 104%, rgba(26,128,142,.44), transparent 60%),
-          radial-gradient(90% 40% at 50% 44%, rgba(60,44,120,.28), transparent 72%),
-          linear-gradient(170deg, #0B0D16 0%, #080A12 55%, #06070E 100%);
+          radial-gradient(130% 52% at 78% -10%, rgba(94,168,216,.30), transparent 64%),
+          radial-gradient(110% 40% at 8% -4%, rgba(86,212,228,.18), transparent 60%),
+          radial-gradient(140% 26% at 50% 106%, rgba(62,127,184,.22), transparent 70%),
+          linear-gradient(178deg, #0A101C 0%, #080C15 52%, #0A111C 100%);
+      }
+      .ps-ground.sky-dawn {
+        background:
+          radial-gradient(120% 44% at 70% -8%, rgba(122,100,255,.22), transparent 62%),
+          radial-gradient(150% 40% at 50% 108%, rgba(247,178,103,.30), transparent 68%),
+          radial-gradient(110% 20% at 50% 104%, rgba(255,214,150,.20), transparent 72%),
+          linear-gradient(178deg, #090B16 0%, #0A0C14 44%, #171017 100%);
+      }
+      .ps-ground.sky-dusk {
+        background:
+          radial-gradient(120% 46% at 78% -6%, rgba(139,124,255,.34), transparent 62%),
+          radial-gradient(100% 38% at 12% -2%, rgba(86,212,228,.16), transparent 60%),
+          radial-gradient(140% 34% at 50% 106%, rgba(255,120,80,.20), transparent 66%),
+          radial-gradient(120% 22% at 50% 103%, rgba(255,158,94,.22), transparent 70%),
+          linear-gradient(178deg, #0A0C18 0%, #07080F 46%, #0B0812 78%, #120A10 100%);
+      }
+      .ps-ground.sky-night {
+        background:
+          radial-gradient(120% 40% at 80% -8%, rgba(96,84,200,.20), transparent 60%),
+          radial-gradient(120% 22% at 50% 105%, rgba(70,110,140,.14), transparent 72%),
+          linear-gradient(178deg, #05060E 0%, #04050B 55%, #060810 100%);
+      }
+      /* A faint grain of stars, dusk and night only — top 60% of the screen,
+         drawn as a pseudo so the ground stays one node the renderer keys. */
+      .ps-ground.sky-dusk::after, .ps-ground.sky-night::after {
+        content: ""; position: absolute; inset: 0 0 40% 0; opacity: .55;
+        background-image:
+          radial-gradient(1px 1px at 22% 18%, rgba(255,255,255,.5), transparent 100%),
+          radial-gradient(1px 1px at 64% 8%, rgba(255,255,255,.35), transparent 100%),
+          radial-gradient(1.5px 1.5px at 82% 26%, rgba(255,255,255,.4), transparent 100%),
+          radial-gradient(1px 1px at 40% 30%, rgba(255,255,255,.28), transparent 100%),
+          radial-gradient(1px 1px at 12% 40%, rgba(255,255,255,.22), transparent 100%),
+          radial-gradient(1px 1px at 90% 48%, rgba(255,255,255,.2), transparent 100%);
       }
 
       /* status strip — no box, floats on the ground */
       .ps-stat { display: flex; align-items: flex-start; gap: 10px; padding: 2px 8px 14px; }
-      .ps-stat h2 { font-size: var(--pc-fs-xl); font-weight: 640; letter-spacing: -.028em; margin: 0; line-height: 1.15; }
+      /* Weight-flip: the greeting goes light and its key word carries the
+         aurora — the one gradient this identity allows chrome to wear. */
+      .ps-stat h2 { font-size: var(--pc-fs-xl); font-weight: 300; letter-spacing: -.028em; margin: 0; line-height: 1.15; }
+      .ps-stat h2 b { font-weight: 650;
+                      background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b));
+                      -webkit-background-clip: text; background-clip: text; color: transparent; }
       .ps-d { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; margin-top: 3px;
               display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
@@ -122,7 +174,7 @@ const PS_STYLES = `
       .ps-pv::before { content: ""; position: absolute; inset: -7px -3px; }
       .ps-rt { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .ps-wx { display: flex; align-items: center; gap: 7px; color: var(--ps-cool); font-size: var(--pc-fs-xl);
-               font-weight: 640; font-variant-numeric: tabular-nums; letter-spacing: -.02em; cursor: pointer; }
+               font-weight: 250; font-variant-numeric: tabular-nums; letter-spacing: -.03em; cursor: pointer; }
       .ps-wx ha-icon { --mdc-icon-size: 22px; }
 
       .ps-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: var(--pc-r-pill);
@@ -135,25 +187,45 @@ const PS_STYLES = `
       .ps-chip.deep { background: rgba(170,120,255,.18); color: var(--ps-deep); }
       .ps-chip.lt   { background: rgba(80,160,255,.18); color: var(--ps-light); }
       .ps-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+      /* Semantic dots glow softly — the semantic colours keep their own hues
+         and gain light instead of borrowing the aurora. */
+      .ps-chip.good .ps-dot { box-shadow: 0 0 0 2.5px rgba(127,216,164,.25), 0 0 10px rgba(127,216,164,.6); }
+      .ps-chip.warn .ps-dot { box-shadow: 0 0 0 2.5px rgba(242,193,78,.25), 0 0 10px rgba(242,193,78,.6); }
+      .ps-chip.bad .ps-dot  { box-shadow: 0 0 0 2.5px rgba(242,122,131,.25), 0 0 10px rgba(242,122,131,.6); }
+      .ps-chip.cool .ps-dot { box-shadow: 0 0 0 2.5px rgba(86,212,228,.25), 0 0 10px rgba(86,212,228,.6); }
       .ps-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
-      /* one glass column */
+      /* one glass column — smoked, not milky: the sky shows through it and the
+         content sits ON it rather than the column sitting on the ground. */
       .ps-col {
+        position: relative;
         border-radius: var(--pc-r-2xl); overflow: clip;
-        background: linear-gradient(180deg, rgba(255,255,255,.062), rgba(255,255,255,.026));
-        border: 1px solid rgba(255,255,255,.085);
-        box-shadow: 0 24px 60px -18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.075);
+        background: linear-gradient(180deg, rgba(16,20,34,.62), rgba(10,12,22,.55));
+        border: 1px solid rgba(255,255,255,.09);
+        box-shadow: 0 24px 60px -18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.09);
         backdrop-filter: blur(26px) saturate(1.25);
         -webkit-backdrop-filter: blur(26px) saturate(1.25);
       }
+      /* the sky reflecting on the top of the glass */
+      .ps-col::before {
+        content: ""; position: absolute; inset: 0 0 auto 0; height: 90px; pointer-events: none;
+        background: linear-gradient(180deg, rgba(139,124,255,.07), transparent 85%);
+      }
       .ps-sect { padding: 13px 15px 15px; overflow-x: clip; }
-      .ps-sect + .ps-sect { border-top: 1px solid var(--ps-hair); }
+      /* Hairlines fade at both ends rather than running wall to wall — a lit
+         edge, not a drawn rule. border-image, so nothing needs new positioning. */
+      .ps-sect + .ps-sect { border-top: 1px solid transparent;
+        border-image: linear-gradient(90deg, transparent, rgba(255,255,255,.11) 18%, rgba(255,255,255,.11) 82%, transparent) 1; }
       /* One header treatment for every section. A fixed section differs only by
          having no chevron — it used to be rendered as a 9px uppercase caption,
          so two sections looked like titles and five looked like labels of the
          thing above them. */
       .ps-sh { display: flex; align-items: center; gap: 8px; width: 100%; padding: 0 0 11px; }
-      .ps-nm { font-size: var(--pc-fs-sm); font-weight: 680; letter-spacing: -.004em; flex: 1; min-width: 0; }
+      .ps-nm { font-size: var(--pc-fs-sm); font-weight: 680; letter-spacing: -.004em; flex: 1; min-width: 0;
+               display: flex; align-items: center; gap: 7px; }
+      /* the aurora tick before every section label */
+      .ps-nm::before { content: ""; width: 10px; height: 2px; border-radius: var(--pc-r-hair); flex: 0 0 auto;
+                       background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b)); opacity: .9; }
       .ps-cv { color: var(--ps-dim); transition: transform .3s; display: flex; }
       .ps-cv .ps-ico { width: 15px; height: 15px; }
       .ps-sect.open .ps-cv { transform: rotate(90deg); color: var(--ps-cool); }
@@ -171,20 +243,20 @@ const PS_STYLES = `
       .ps-ring svg { display: block; }
       .ps-rv { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
                justify-content: center; font-variant-numeric: tabular-nums; }
-      .ps-rv b { font-size: var(--pc-fs-2xl); font-weight: 640; letter-spacing: -.028em; line-height: 1; }
+      .ps-rv b { font-size: var(--pc-fs-2xl); font-weight: 200; letter-spacing: -.03em; line-height: 1; }
       /* A ring caption is centred over a filled arc, so anything wider than the
          ring's inner box does not merely look tight — it is clipped by the
          stroke, and a clipped label is a MISSING label ("THERMOSTAT" read
          "HERMOSTAT"). Capped and centred so a long caption wraps inside the
          ring instead of running out of it. */
       .ps-rv small { font-size: var(--pc-fs-micro); color: var(--ps-dim); margin-top: 3px; letter-spacing: .09em;
-                     text-transform: uppercase; font-weight: 650;
+                     text-transform: uppercase; font-weight: 700;
                      max-width: 78%; text-align: center; line-height: 1.15; }
 
       /* climate */
       .ps-chero { display: flex; align-items: center; gap: 14px; }
       .ps-goal { display: flex; align-items: baseline; gap: 6px; }
-      .ps-goal b { font-size: var(--pc-fs-2xl); font-weight: 660; font-variant-numeric: tabular-nums; }
+      .ps-goal b { font-size: var(--pc-fs-2xl); font-weight: 250; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
       .ps-goal span { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
       .ps-step { width: 34px; height: 34px; border-radius: 50%; background: var(--pc-fill-2);
                  display: grid; place-items: center; flex: 0 0 auto; }
@@ -234,8 +306,8 @@ const PS_STYLES = `
       .ps-vits { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 12px; }
       .ps-vit { background: var(--ps-fill); border-radius: var(--pc-r-md); padding: 9px 10px; display: flex;
                 flex-direction: column; gap: 2px; min-width: 0; cursor: pointer; }
-      .ps-vk { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
-      .ps-vv { font-size: var(--pc-fs-xl); font-weight: 640; font-variant-numeric: tabular-nums; letter-spacing: -.022em; line-height: 1.1; }
+      .ps-vk { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase; color: var(--ps-dim); font-weight: 700; }
+      .ps-vv { font-size: var(--pc-fs-xl); font-weight: 250; font-variant-numeric: tabular-nums; letter-spacing: -.03em; line-height: 1.1; }
       .ps-vv small { font-size: var(--pc-fs-micro); font-weight: 500; color: var(--ps-muted); margin-left: 1px; }
       .ps-vd { font-size: var(--pc-fs-micro); font-variant-numeric: tabular-nums; }
       .ps-good { color: var(--ps-good); }
@@ -576,7 +648,7 @@ const PS_STYLES = `
          temperature mean one thing here and another everywhere else. */
       .ps-wxhero { display: flex; align-items: flex-start; gap: 10px; }
       .ps-wxheronum { min-width: 0; }
-      .ps-wxbig { font-size: var(--pc-fs-3xl); font-weight: 640; letter-spacing: -.045em;
+      .ps-wxbig { font-size: var(--pc-fs-3xl); font-weight: 200; letter-spacing: -.03em;
                   line-height: .94; font-variant-numeric: tabular-nums; }
       .ps-wxbig sup { font-size: .42em; font-weight: 600; letter-spacing: 0;
                       vertical-align: top; position: relative; top: .25em; }
@@ -905,8 +977,9 @@ const PS_STYLES = `
            12px ABOVE the top of the screen and the status bar ate the rest.
            Whichever of the two is smaller wins. */
         --ps-sheettop: calc(100dvh - var(--ps-sheetbot) - env(safe-area-inset-top, 0px));
-        background: rgba(20,23,32,.96); border: 1px solid var(--pc-edge); border-radius: var(--pc-r-xl);
-        padding: 13px 15px; box-shadow: 0 24px 60px rgba(0,0,0,.6);
+        background: linear-gradient(180deg, rgba(18,22,38,.92), rgba(10,12,22,.94));
+        border: 1px solid rgba(255,255,255,.11); border-radius: var(--pc-r-xl);
+        padding: 13px 15px; box-shadow: 0 24px 60px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.1);
         backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
         max-height: min(60vh, calc(var(--ps-sheettop) - 72px));
         overflow-y: auto; overscroll-behavior: contain;
@@ -1063,11 +1136,16 @@ const PS_STYLES = `
                      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
                      margin: 14px 6px 0;
                      display: flex; flex-direction: column; gap: 9px; }
+      /* The horizon glow the dock rests on rides the same pseudo as the fade —
+         absolute and pointer-events none, so it cannot change the height
+         _reserve measures. */
       .ps-dockwrap::before {
         content: ""; position: absolute; z-index: -1; pointer-events: none;
         left: -12px; right: -12px; top: -76px;
         bottom: calc(-12px - env(safe-area-inset-bottom, 0px));
-        background: linear-gradient(180deg, transparent, rgba(6,7,14,.72) 46%, rgba(6,7,14,.94)); }
+        background:
+          radial-gradient(120% 90% at 50% 118%, var(--ps-sky-glow), transparent 70%),
+          linear-gradient(180deg, transparent, rgba(6,7,14,.72) 46%, rgba(6,7,14,.94)); }
       .ps-mini { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--pc-r-xl);
                  background: var(--pc-fill-2); border: 1px solid var(--pc-edge); cursor: pointer;
                  backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
@@ -1080,17 +1158,25 @@ const PS_STYLES = `
       .ps-mb { width: 32px; height: 32px; border-radius: 50%; background: var(--pc-fill-3);
                display: grid; place-items: center; flex: 0 0 auto; }
       .ps-mb .ps-ico { width: 15px; height: 15px; }
+      /* the lit shelf — the strongest chrome on the screen */
       .ps-dock { display: flex; align-items: center; justify-content: space-between; gap: 2px;
                  padding: 9px 10px; border-radius: var(--pc-r-2xl);
-                 background: var(--pc-fill-2); border: 1px solid var(--pc-edge);
+                 background: linear-gradient(180deg, rgba(14,17,30,.78), rgba(8,10,18,.85));
+                 border: 1px solid rgba(255,255,255,.10);
                  backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
-                 box-shadow: 0 16px 40px -10px rgba(0,0,0,.65); }
+                 box-shadow: 0 18px 40px -14px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.08); }
       .ps-db { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
-               padding: 5px 0; border-radius: var(--pc-r-lg); color: var(--ps-dim); }
+               padding: 5px 0; border-radius: var(--pc-r-lg); color: var(--ps-dim); position: relative; }
       .ps-db ha-icon { --mdc-icon-size: 20px; }
       .ps-db span { font-size: var(--pc-fs-micro); letter-spacing: .01em; font-weight: 650; }
-      .ps-db.on { color: var(--ps-cool); background: rgba(77,208,225,.13); }
+      /* Active is a brightened label over an aurora underline, not a filled pill. */
+      .ps-db.on { color: var(--ps-text); }
+      .ps-db.on::after { content: ""; position: absolute; bottom: 0; left: 50%; margin-left: -8px;
+                         width: 16px; height: 3px; border-radius: var(--pc-r-hair);
+                         background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b));
+                         box-shadow: 0 0 12px rgba(139,124,255,.9); }
       .ps-db.alert { color: var(--ps-bad); }
+      .ps-db.alert ha-icon { filter: drop-shadow(0 0 6px rgba(242,122,131,.6)); }
 
       /* a sheet hosting an existing card — the card brings its own surface,
          so the host adds nothing but room */
