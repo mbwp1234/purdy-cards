@@ -12,7 +12,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.67.0";
+const PC_VERSION = "1.68.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -31,10 +31,15 @@ const PC_TOKENS = `
         --pc-text: var(--primary-text-color, #e6ecf2);
         --pc-muted: var(--secondary-text-color, #8b96a3);
         --pc-heat: #ff9557;
-        --pc-cool: #4dd0e1;
-        --pc-good: #81c995;
+        --pc-cool: #56D4E4;
+        --pc-good: #7FD8A4;
         --pc-warn: #f2c14e;
-        --pc-bad: #ef6a6a;
+        --pc-bad: #F27A83;
+        /* The one aurora accent (Skyline). Cyan to violet owns everything
+           non-semantic: dock active slot, ring strokes, the greeting word,
+           section-label ticks. Semantic colours stay the five above. */
+        --pc-aur-a: #56D4E4;
+        --pc-aur-b: #8B7CFF;
         --pc-radius: 24px;
         /* The cool wash across the top of a panel, lifted from the climate
            card's weather strip so every panel opens the same way. */

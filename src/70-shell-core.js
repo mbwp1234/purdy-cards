@@ -508,6 +508,43 @@ class PurdyShellCard extends PcBaseCard {
     this._eventTimer = setInterval(() => this._fetchEvents(), 30 * 60 * 1000);
   }
 
+  /* Which sky the hour wears. Dawn 5–9, day 9–17, dusk 17–22, night 22–5 —
+     the same clock as the greeting, never a timer of its own. */
+  _skyBand(h) {
+    if (h >= 5 && h < 9) return "sky-dawn";
+    if (h >= 9 && h < 17) return "sky-day";
+    if (h >= 17 && h < 22) return "sky-dusk";
+    return "sky-night";
+  }
+
+  /* Each sky's warmest colour is at its BOTTOM, which is the one strip of
+     ground the dock's legibility fade covers — so the ground alone renders
+     dawn and dusk as the same indigo. The dock's horizon glow carries the
+     band instead, written as a host variable because the dock is the ground's
+     SIBLING and cannot inherit from it. */
+  static get skyGlow() {
+    return {
+      "sky-dawn": "rgba(247,178,103,.22)",
+      "sky-day": "rgba(94,168,216,.20)",
+      "sky-dusk": "rgba(139,124,255,.20)",
+      "sky-night": "rgba(96,84,200,.13)",
+    };
+  }
+
+  /* No crossfade and no repaint: the palette switch is one class write on the
+     ground node plus one variable, both skipped when nothing changed. */
+  _paintSky(band) {
+    const g = this.shadowRoot.getElementById("ps-ground");
+    if (!g) return;
+    const cls = "ps-ground " + band;
+    if (g.className === cls) return;
+    g.className = cls;
+    const glow = PurdyShellCard.skyGlow[band];
+    if (glow && this.style && typeof this.style.setProperty === "function") {
+      this.style.setProperty("--ps-sky-glow", glow);
+    }
+  }
+
   /* The skeleton is built once. Everything after this is a patch into one of
      these four slots, so the stylesheet is parsed once rather than on every
      state change, and untouched regions keep their DOM — which is what keeps
@@ -515,7 +552,7 @@ class PurdyShellCard extends PcBaseCard {
   _mount() {
     this.shadowRoot.innerHTML = `
       <style>${PurdyShellCard.styles}</style>
-      <div class="ps-ground"></div>
+      <div class="ps-ground" id="ps-ground"></div>
       <div class="ps-wxfx"></div>
       <div class="ps-stat" id="ps-stat"></div>
       <div class="ps-col" id="ps-col"></div>
@@ -657,6 +694,13 @@ class PurdyShellCard extends PcBaseCard {
     const raised = this._raised();
     if (this._config.log_to) this._syncLog(raised);
     const faults = this._faults();
+
+    /* The living sky, keyed off the same clock that drives the greeting — the
+       30s tick re-enters here, so no new timer. Written straight onto the one
+       node _mount built, because a class on a surviving element is the only
+       thing that changes. Modes get the day sky always: cooler, more
+       instrument-panel. */
+    this._paintSky(this._mode ? "sky-day" : this._skyBand(now.getHours()));
 
     /* Systems mode owns the same four slots — header, column, sheet and dock —
        so it branches here rather than being a section. Everything above this

@@ -5,7 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>harness: booting</title>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #0A0C15; }
+  /* The background goes on html ALONE, never on both.
+   *
+   * The card's ground is `position: fixed; z-index: -1`, and :host creates no
+   * stacking context, so it joins the ROOT stacking context at -1. Give html a
+   * background and body's stops propagating to the canvas — it then paints as
+   * an ordinary block background, which comes AFTER negative-z-index
+   * descendants, i.e. straight over the ground. Declaring it on both is what
+   * this file did, and it made the harness blind to the entire ground layer:
+   * four time-of-day sky palettes measured pixel-IDENTICAL because every shot
+   * was photographing this flat colour instead. Nothing said so. */
+  html { background: #0A0C15; }
+  html, body { margin: 0; padding: 0; height: 100%; }
   /* The card must be the only thing on the page: no chrome, no letterboxing,
    * nothing of ours in the screenshot. #mount fills the viewport exactly so
    * 100dvh and env(safe-area-inset-*) mean what they mean in HA. */
@@ -221,6 +232,22 @@ function buildHass(states) {
          face is otherwise unphotographable whenever the televisions are off,
          which is most of the day. */
       if (P.get("media")) { el._mediaPick = P.get("media"); touched = true; }
+      /* Which sky. The band is derived from the wall clock, so three of the
+         four palettes are unphotographable at any given moment — and a
+         palette you cannot see is a palette you cannot verify. This pins the
+         band by overriding the card's own writer ON THE INSTANCE, because
+         _render re-derives it from the hour on every tick and would paint
+         over a one-shot class write. Dev only: nothing in the card knows. */
+      if (P.get("sky") && !el.__skyPinned) {
+        const band = "sky-" + P.get("sky").replace(/^sky-/, "");
+        if (!/^sky-(dawn|day|dusk|night)$/.test(band)) note(`sky=${P.get("sky")} is not a band`);
+        else {
+          const real = el._paintSky.bind(el);
+          el._paintSky = () => real(band);
+          el.__skyPinned = band;
+          touched = true;
+        }
+      }
       /* The correction sheet. It is opened by a long press, which is the one
          entry point a URL cannot express, and the sheet has no content at all
          until a session is chosen — so this picks one out of the card's own
