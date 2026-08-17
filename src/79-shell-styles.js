@@ -154,7 +154,7 @@ const PS_STYLES = `
               display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
       /* Presence, in the chrome rather than in a section of its own.
-         The occupancy helper says "Brian Only"; two avatars with a ring say the
+         The occupancy helper says "Alex Only"; two avatars with a ring say the
          same thing without a heading, a card and 105px — and they say WHICH one
          without being read. The tap target is padded out behind the paint, the
          same way every round control on this card is.

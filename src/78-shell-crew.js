@@ -12,7 +12,7 @@
  * two buttons stranded at the bottom. So each card owns its own open state and
  * its own panel, and both can be open, or neither.
  *
- * A NUMBER NEEDS ITS NOUN. The old tiles read "Jeeves 10 %" and "Litter 16 %" —
+ * A NUMBER NEEDS ITS NOUN. The old tiles read "Vacuum 10 %" and "Litter 16 %" —
  * the dirty-water tank and the waste drawer, unlabelled, pointing opposite ways.
  * Every figure here is drawn next to what it measures.
  *
@@ -29,7 +29,7 @@ function psCrewPct(v) {
   return v == null ? "—" : `${Math.round(v)}%`;
 }
 
-/* Dreame publishes its selects as slugs — select.jeeves_cleaning_mode is
+/* Dreame publishes its selects as slugs — select.vacuum_cleaning_mode is
    "mopping", not "Mopping". Only rendering against real states caught it. */
 function psCrewWords(s) {
   if (!s || s === "unknown" || s === "unavailable") return "";
@@ -66,7 +66,7 @@ function psCrewMiles(areaValue, unit, widthM) {
 /* THE WATER IS THE JOB, and it comes off the vacuum's own ATTRIBUTES.
  *
  * Dreame publishes the water picture twice: as a spray of enum sensors
- * (sensor.jeeves_low_water_warning = "no_warning") and as plain booleans on the
+ * (sensor.vacuum_low_water_warning = "no_warning") and as plain booleans on the
  * vacuum entity itself (low_water: false). The attributes win. They are one
  * read instead of six, they cannot drift out of sync with each other, and they
  * are already typed — parsing "no_warning" back into a boolean is inventing a
@@ -261,7 +261,7 @@ Object.assign(PurdyShellCard.prototype, {
 
     return `<div class="ps-cwcard ${open ? "open" : ""}">
         <button class="ps-cwface" type="button" data-crewzone="vac">
-          ${this._crewCardHead(v.name || "Jeeves", open, running, aside)}
+          ${this._crewCardHead(v.name || "Vacuum", open, running, aside)}
           <div class="ps-cwring">
             ${this._crewRing(92,
               { frac: w.dirty == null ? null : w.dirty / 100, col: dirtyCol },
@@ -604,7 +604,7 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* The full crew body, shared by the section and the sheet.
    *
-   * `openDefault` is how the sheet opens with Jeeves already expanded. In the
+   * `openDefault` is how the sheet opens with the vacuum already expanded. In the
    * column an expanded panel pushed everything below it down, so collapsed was
    * the right default; a sheet has the room, and leaving it collapsed would put
    * the vacuum map — the whole reason the map sheet exists — two taps behind a
@@ -634,7 +634,7 @@ Object.assign(PurdyShellCard.prototype, {
    * This is the whole argument for moving the crew behind the dock. The section
    * measured 329px — the second largest thing on the phone — and the great
    * majority of the time it said: everything is docked, nothing is running, the
-   * washer is off. That is a lot of screen to report an absence. Jeeves is idle
+   * washer is off. That is a lot of screen to report an absence. The vacuum is idle
    * most of the day, the litter box is interesting twice a month, and the washer
    * matters for the twenty minutes after it finishes.
    *

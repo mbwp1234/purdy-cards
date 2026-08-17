@@ -2,6 +2,6 @@
   "_note": "Copy to napedit.json with your own entity ids, then shoot with `node dev/shoot/shoot.mjs phone-napedit`. Real patches are gitignored — they name entities and this repo is public. This one turns on the nursery section's correction store, so the long-press targets and the correction sheet can be photographed before the store is deployed to the live dashboard.",
 
   "$mergeSections": [
-    { "key": "joel", "edits": { "store": "input_text.<your-nap-edits-helper>" } }
+    { "key": "nursery", "edits": { "store": "input_text.<your-nap-edits-helper>" } }
   ]
 }

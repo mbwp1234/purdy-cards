@@ -398,7 +398,7 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   /* Deduped: a room temp is frequently also the graph's inside sensor, and
-     Joel's room appears in both the climate rooms and the sleep section. The
+     the baby's room appears in both the climate rooms and the sleep section. The
      same id twice makes the recorder query longer for no extra data. */
   _historyEntities() {
     const ids = new Set();
@@ -784,7 +784,7 @@ class PurdyShellCard extends PcBaseCard {
           ${/* Presence used to be a section: two rows reading "Home · 80% ·
                 3,805", 105px, with nothing to tap and nothing to decide. It is
                 ambient, so it belongs in the chrome. The avatars also supersede
-                the occupancy WORD — house_occupancy is Home / Away / Brian Only
+                the occupancy WORD — house_occupancy is Home / Away / Alex Only
                 / Tayler Only, which is per-person presence spelled out, and two
                 rings say which without being read. Occupancy still prints when
                 no people: is configured. */""}
@@ -1453,7 +1453,7 @@ class PurdyShellCard extends PcBaseCard {
     });
 
     /* A row can be the way into a mode as well as a dock button — the
-       PurdyNAS row on the landing page opens the server pages rather than
+       HomeServer row on the landing page opens the server pages rather than
        expanding a smaller copy of them beside the real thing. */
     this._each("[data-mode]", (el) => {
       el.addEventListener("click", (e) => {

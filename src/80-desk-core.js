@@ -576,7 +576,7 @@ class PurdyDeskCard extends PcBaseCard {
   /* --------------------------------------------------------------- sheets --
    *
    * The desktop inverts the phone's rule: what you LOOK AT is inline, what you
-   * FIDDLE WITH is behind a sheet. Climate, Joel, music and the calendar are
+   * FIDDLE WITH is behind a sheet. Climate, the baby, music and the calendar are
    * on the glass; the TV remote, the notification log and the vacuum map stay
    * sheets, because a d-pad is a task and a log is read on demand.
    *

@@ -101,7 +101,7 @@ Object.assign(PurdyShellCard.prototype, {
   /* Is this light guarded right now?
    *
    * `protect.when` names an entity and `protect.state` the state that means
-   * "guarded" — for Joel that is the Hatch playing, i.e. a sleep session
+   * "guarded" — for the baby that is the Hatch playing, i.e. a sleep session
    * actually in progress. Gated on the SESSION and not on the light, so the
    * prompt is silent all day and unmissable at 2am.
    */

@@ -3,7 +3,7 @@
  *
  * THE UNIT IS A METER, NOT A RING.
  *
- * Brian rejected the Apple activity rings. He did *not* reject graphed metrics
+ * The Apple activity rings were rejected here — but not graphed metrics
  * — that misreading cost a round trip, and it is worth writing down because the
  * two look like the same objection and are not. A meter is a micro label, the
  * number, and a track carrying his own normal band with a dot on today. It
@@ -96,7 +96,7 @@ function psHmDur(h) {
  *   unit    small trailing unit, inside the numeral
  *   band    {lo, hi} from HIS readings, or null/absent when there is none yet
  *   hiOk    true when above the band is not a fault (HRV, REM)
- *   loOk    the mirror, and it arrived with Joel: for wake-ups fewer is better,
+ *   loOk    the mirror, and it arrived with the baby: for wake-ups fewer is better,
  *           so an undisturbed night sits BELOW his band and drawing it amber
  *           would call the best night of the week a fault. Any "lower is
  *           better" metric needs it — there was no such metric in Body, which
@@ -422,7 +422,7 @@ Object.assign(PurdyShellCard.prototype, {
      The chip carries the half of the loop the body is NOT showing. The three
      collapsed meters are night and recovery, so the chip is today's load.
      It must never carry the sentence's conclusion — that is the duplication
-     this project has shipped four times now (weather, desk, Joel, and the
+     this project has shipped four times now (weather, desk, the baby, and the
      first draft of this card) — and it must never claim a roll-up like "all
      in band", because sleep is routinely out while the other two are in, and
      the chip would then contradict a dot two centimetres below it. */
@@ -647,7 +647,7 @@ Object.assign(PurdyShellCard.prototype, {
     const awake = this._hlRead(sec.sleep_awake);
     const goal = this._hlGoal(sec, "sleep", 7.5);
 
-    /* Three arcs on one ring, summing to the total in the middle — the Joel
+    /* Three arcs on one ring, summing to the total in the middle — the baby
        ring's construction, which already answers "how much, and what was it
        made of" in a single picture. The arcs are drawn from the STAGES rather
        than sliced out of the total: they sum to it anyway, and scaling
@@ -726,7 +726,7 @@ Object.assign(PurdyShellCard.prototype, {
      The first live render broke that on three pages out of four — "31 ms HRV"
      directly above an HRV meter reading 31, "200 W FTP" above an FTP meter
      reading 200, "4,817 steps" above a Steps meter. It is the same duplication
-     as the weather hero, the desk's "Up 2h 0m", Joel's chip and this section's
+     as the weather hero, the desk's "Up 2h 0m", the baby's chip and this section's
      own first sentence, and it keeps coming back because a number is the
      easiest thing to reach for when a chip needs filling.
    *

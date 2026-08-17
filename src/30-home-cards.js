@@ -645,7 +645,7 @@ class PurdyNotificationsCard extends PcBaseCard {
     detail = detail.replace(/^(critical|warn|info)\s*·?\s*/, "").replace(/·\s*$/, "").trim();
     return {
       uid: it.uid,
-      /* "Notice [PURDYNAS] - Version update ac65..33a6" spends its first twenty
+      /* "Notice [HOMESERVER] - Version update ac65..33a6" spends its first twenty
          characters saying what the severity dot beside it already says, then
          pushes the real subject onto a second line or off the end. The systems
          page learned this in v1.46.2 and the log never did — same feed, same

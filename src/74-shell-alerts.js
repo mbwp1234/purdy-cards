@@ -200,7 +200,7 @@ Object.assign(PurdyShellCard.prototype, {
         const names = Object.keys(hass.states)
           .filter((id) => re.test(id) && hit(hass.states[id]))
           /* `strip` takes a list as well as a single string. One pattern only
-             ever removed a prefix, so the Jeeves consumables rule came out as
+             ever removed a prefix, so the vacuum consumables rule came out as
              "Filter Left · Sensor Dirty Time Left · Wheel Dirty Time Left" —
              HA's friendly names leaking through the tail. Applied in order,
              then collapsed, so a rule can take both ends off a name. */
@@ -335,7 +335,7 @@ Object.assign(PurdyShellCard.prototype, {
        printing "Crew" twice. The section stays in the config as `alerts_only`,
        so the landing page keeps the moments that need a human and nothing else.
 
-       The vacuum map is reached from the Jeeves tile inside this body, which is
+       The vacuum map is reached from the vacuum tile inside this body, which is
        the door that had to move with it: replacing a surface orphans whatever
        was only reachable through it, and this card has lost the music presets
        and the vacuum map to exactly that mistake before. */

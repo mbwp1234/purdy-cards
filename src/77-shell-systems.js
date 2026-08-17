@@ -18,7 +18,7 @@
  * THE LISTS ARE DISCOVERED, NOT CONFIGURED. Containers, disks and shares come
  * out of `hass.states` by prefix. The hand-typed version of this had five
  * Docker groups naming eleven containers, and THREE of those entity ids did
- * not exist (`switch.purdynas_container_lancache`, `_lancache_dns`,
+ * not exist (`switch.homeserver_container_lancache`, `_lancache_dns`,
  * `_lancache_prefill`) — they had rendered as permanently-off toggles that did
  * nothing, for however long. A list that is derived cannot drift from the
  * server; a list that is typed always eventually has.
@@ -142,7 +142,7 @@ Object.assign(PurdyShellCard.prototype, {
       .map((c) => {
         const st = this._hass.states[c.id];
         const over = names[c.key] || {};
-        /* The friendly name is "PurdyNAS Container binhex-jellyfin" — the last
+        /* The friendly name is "HomeServer Container binhex-jellyfin" — the last
            segment is the container's real name, which is what to show. */
         const fn = (st && st.attributes.friendly_name) || c.key;
         const auto = fn.indexOf(" Container ") > 0 ? fn.split(" Container ").pop() : c.key;
@@ -433,7 +433,7 @@ Object.assign(PurdyShellCard.prototype, {
     const regType = pcState(h, s.registration_type);
     /* An alert a human action clears is fine; one no action clears is noise.
      *
-     * `sensor.purdynas_registration_state` reads `expired` on this Plus key and
+     * `sensor.homeserver_registration_state` reads `expired` on this Plus key and
      * always will — what has lapsed is the free-update window, not the licence,
      * and the server is working exactly as bought. So it drew a permanent amber
      * dot on Overview for a condition with nothing to do about it, which is the
@@ -885,7 +885,7 @@ Object.assign(PurdyShellCard.prototype, {
     ];
     const filter = this._synf || "all";
 
-    /* "Notice [PURDYNAS] - Version update 2026.08.07.1706" spends its first
+    /* "Notice [HOMESERVER] - Version update 2026.08.07.1706" spends its first
        twenty characters saying what the dot beside it already says, on every
        row, and pushes the actual subject off the end of the line. */
     const subject = (x) => String(x.subject || "Notification")

@@ -11,7 +11,7 @@
  *   mini   the folded headline, shown when a DIFFERENT panel is expanded
  *
  * `mini` is why this is folding and not hiding. Opening climate must not make
- * Joel disappear — it makes him a number you can still read. That is the whole
+ * the baby disappear — it makes it a number you can still read. That is the whole
  * difference between this and the phone's pop-ups, which black out everything
  * behind them.
  *

@@ -421,7 +421,7 @@ const dhass = { states: {
 }, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
 
 const dc = new DC();
-dc.setConfig({ title:'PurdyNAS', subtitle_entity:'sensor.up',
+dc.setConfig({ title:'HomeServer', subtitle_entity:'sensor.up',
   faults:[{entity:'binary_sensor.parity',state:'off'},{entity:'binary_sensor.flash',state:'off'}],
   groups:[
     { name:'Stats', chips:['sensor.cpu','sensor.array'],
@@ -526,11 +526,11 @@ for (const n of names) {
 
 
 // the greeting should follow whoever is signed in
-const hassBrian = { ...hass, user:{ name:'Brian Purdy', id:'u1' } };
+const hassAlex = { ...hass, user:{ name:'Alex Rivera', id:'u1' } };
 const hassTay   = { ...hass, user:{ name:'Tayler', id:'u2' } };
 
-const hA = new H(); hA.setConfig({ weather:'weather.home' }); hA.hass = hassBrian;
-check('greeting uses the signed-in user first name', /Good (morning|afternoon|evening), Brian</.test(hA.shadowRoot.innerHTML));
+const hA = new H(); hA.setConfig({ weather:'weather.home' }); hA.hass = hassAlex;
+check('greeting uses the signed-in user first name', /Good (morning|afternoon|evening), Alex</.test(hA.shadowRoot.innerHTML));
 hA.disconnectedCallback();
 
 const hB = new H(); hB.setConfig({ weather:'weather.home' }); hB.hass = hassTay;
@@ -568,7 +568,7 @@ check('tint applied via the token', /linear-gradient\(180deg, var\(--pc-tint\)/.
 
 // the header range must come from the bedtime helpers, not the history window
 const sr = new SPC();
-sr.setConfig({ sleep_state:'sensor.s', person:'person.joel',
+sr.setConfig({ sleep_state:'sensor.s', person:'person.nursery',
   session:{ start:'input_datetime.bed', end:'input_datetime.wake' } });
 const srHass = { states:{
   'sensor.s': { state:'unavailable', attributes:{} },
@@ -963,7 +963,7 @@ shell.setConfig({
   now_playing: { players: [{ entity: 'media_player.a', name: 'Kitchen' }] },
   dock: [{ icon: 'mdi:home', name: 'Home', link: '/lovelace/x' }],
   sections: [
-    { type: 'sleep', key: 'joel', sleep_state: 'sensor.sleep', ring: { deep: 'sensor.d', light: 'sensor.l' },
+    { type: 'sleep', key: 'nursery', sleep_state: 'sensor.sleep', ring: { deep: 'sensor.d', light: 'sensor.l' },
       vitals: [{ label: 'Heart', entity: 'sensor.hr', baseline: 'sensor.hrb', unit: 'bpm', digits: 0, lower_is_better: true }] },
     { type: 'climate', key: 'clim', goal: 'climate.g', graph: { inside: 'sensor.in', outside: 'sensor.out' },
       zones: { select: 'select.z', options: [{ label: '1st', option: '1st floor', temp: 'sensor.z1' }] } },
@@ -1340,7 +1340,7 @@ check('a now-playing tv row can open a sheet instead of a hash pop-up',
 /* The axis ran to Date.now() whatever the sock was doing, so as the day went
    on the night was squeezed into a shrinking slice with a growing empty tail. */
 const shhyp = new SH();
-shhyp.setConfig({ sections: [{ type: 'sleep', key: 'sleep', sleep_state: 'sensor.sock', name: 'Joel' }] });
+shhyp.setConfig({ sections: [{ type: 'sleep', key: 'sleep', sleep_state: 'sensor.sock', name: 'Nursery' }] });
 const HOUR = 3600000;
 const bed = Date.now() - 14 * HOUR;
 const woke = Date.now() - 6 * HOUR;
@@ -1465,7 +1465,7 @@ const shf = new SH();
 shf.setConfig({
   weather: 'weather.w',
   sections: [{
-    type: 'sleep', key: 'sleep', sleep_state: 'sensor.sock', name: 'Joel',
+    type: 'sleep', key: 'sleep', sleep_state: 'sensor.sock', name: 'Nursery',
     ring: { max_hours: 12, deep: 'sensor.d', light: 'sensor.l',
       deep_last_night: 'input_number.dl', light_last_night: 'input_number.ll' },
     vitals: [{ label: 'Heart', entity: 'sensor.hr', unit: 'bpm', digits: 0 }],
@@ -1815,7 +1815,7 @@ check('a door header draws the door glyph and never the chevron', (() => {
 check('an expanding header keeps the chevron and is not a door', (() => {
   const s = new SH();
   s.setConfig({ sections: [] });
-  const h = s._head({ key: 'a', title: 'Joel' }, '');
+  const h = s._head({ key: 'a', title: 'Nursery' }, '');
   return /ps-cv/.test(h) && !/ps-dv/.test(h) && /data-open="a"/.test(h);
 })());
 
@@ -1920,14 +1920,14 @@ check('one optimistic dismissal does not hide a different rule', (() => {
 const shwear = new SH();
 shwear.setConfig({
   dismiss_store: 'input_text.dis', dismiss_hours: 12,
-  attention: [{ key: 'wear', match: '^sensor\\.jeeves_.*_left$', below: 20,
+  attention: [{ key: 'wear', match: '^sensor\\.vacuum_.*_left$', below: 20,
     severity: 'warn', title: 'consumables low' }],
   sections: [{ type: 'people', key: 'p', people: [] }],
 });
 shwear._hass = { states: {
-  'sensor.jeeves_filter_left': { state: '14', attributes: { friendly_name: 'Jeeves Filter Left' },
+  'sensor.vacuum_filter_left': { state: '14', attributes: { friendly_name: 'Vacuum Filter Left' },
     last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
-  'sensor.jeeves_main_brush_left': { state: '57', attributes: { friendly_name: 'Jeeves Main Brush Left' },
+  'sensor.vacuum_main_brush_left': { state: '57', attributes: { friendly_name: 'Vacuum Main Brush Left' },
     last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
   'input_text.dis': { state: '', attributes: {} },
 } };
@@ -2390,7 +2390,7 @@ check('a card with no pin store shows no star', (() => {
 // ---- systems as devices, not peer groups ----
 const shd = new SH();
 shd.setConfig({ sections: [{ type: 'systems', key: 'sys', title: 'Systems', devices: [
-  { name: 'PurdyNAS', key: 'nas', icon: 'mdi:server', subtitle_entity: 'sensor.up', chip: 'sensor.running',
+  { name: 'HomeServer', key: 'nas', icon: 'mdi:server', subtitle_entity: 'sensor.up', chip: 'sensor.running',
     faults: [{ entity: 'binary_sensor.parity', state: 'on', label: 'Parity', detail: 'invalid' }],
     meters: [{ label: 'Array', entity: 'sensor.array', warn_above: 80 }],
     stats: [{ label: 'CPU', entity: 'sensor.cpu' }],
@@ -2399,7 +2399,7 @@ shd.setConfig({ sections: [{ type: 'systems', key: 'sys', title: 'Systems', devi
       { entity: 'switch.b', name: 'MeTube' },
       { entity: 'switch.missing', name: 'Ghost' }] }],
     buttons: [{ name: 'Dashboard', tap_action: { action: 'url', url_path: 'http://x' } }] },
-  { name: 'Jeeves', key: 'floor', icon: 'mdi:robot-vacuum',
+  { name: 'Vacuum', key: 'floor', icon: 'mdi:robot-vacuum',
     meters: [{ label: 'Dirty water', entity: 'sensor.water', warn_above: 80 }],
     stats: [{ label: 'State', entity: 'vacuum.j' }] },
 ] }] });
@@ -2419,10 +2419,10 @@ shd._hass = { states: {
 } };
 const devHtml = shd._secSystems(shd._config.sections[0]);
 check('each device gets its own header', (devHtml.match(/ps-devh/g) || []).length === 2);
-check('the robot is a device, not a group', /ps-devn">Jeeves/.test(devHtml) && !/ps-gn">Jeeves/.test(devHtml));
+check('the robot is a device, not a group', /ps-devn">Vacuum/.test(devHtml) && !/ps-gn">Vacuum/.test(devHtml));
 check('docker categories sit inside the NAS, not beside it',
-  devHtml.indexOf('ps-devn">PurdyNAS') < devHtml.indexOf('ps-gn">Media') &&
-  devHtml.indexOf('ps-gn">Media') < devHtml.indexOf('ps-devn">Jeeves'));
+  devHtml.indexOf('ps-devn">HomeServer') < devHtml.indexOf('ps-gn">Media') &&
+  devHtml.indexOf('ps-gn">Media') < devHtml.indexOf('ps-devn">Vacuum'));
 check('a healthy device says so', /ps-chip good"><span class="ps-dot"><\/span>OK/.test(devHtml));
 check('a device meter is visible while collapsed', /ps-meter/.test(devHtml) && !/ps-dev open/.test(devHtml));
 check('the array meter warns past its threshold', /background:var\(--ps-warn\)/.test(devHtml));
@@ -2539,7 +2539,7 @@ const shdim = new SH();
 shdim.setConfig({
   sections: [{ type: 'quick', key: 'q', tiles: [] }],
   sheets: {
-    vac: { title: 'Jeeves', dim: 0.8, card: { type: 'x-card' } },
+    vac: { title: 'Vacuum', dim: 0.8, card: { type: 'x-card' } },
     plain: { title: 'Plain', card: { type: 'x-card' } },
   },
 });
@@ -3140,7 +3140,7 @@ check('a running session has no end, so nothing is treated as retrieval', (() =>
 /* A night that has not happened and a night of no sleep are different facts. */
 check('no night recorded reads as no data, not as a zero-length night', (() => {
   const sh = new SH();
-  sh.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+  sh.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   sh._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'off', attributes: {} } } };
@@ -3262,7 +3262,7 @@ check('every accepted section type has a renderer, and vice versa', (() => {
    --------------------------------------------------------------------------- */
 const crewCfg = {
   type: 'crew', key: 'crew', title: 'Crew',
-  vacuum: { entity: 'vacuum.j', name: 'Jeeves', battery: 'sensor.batt',
+  vacuum: { entity: 'vacuum.j', name: 'Vacuum', battery: 'sensor.batt',
     dirty_water: 'sensor.dirty', filter: 'sensor.filt', progress: 'sensor.prog',
     current_room: 'sensor.room', cleaning_mode: 'select.mode', suction: 'select.suck',
     room_select: 'input_select.room', room_script: 'script.clean_room',
@@ -3450,7 +3450,7 @@ check('a full waste drawer raises a row and a very full one is critical', (() =>
    are cleared by walking to the machine. */
 check('a full dirty tank raises a row, and says it is an estimate', (() => {
   const h = mkCrew({ 'sensor.dirty': { state: '85', attributes: {} } })._secCrew(crewAlertCfg);
-  return /ps-cwneed warn/.test(h) && /Empty Jeeves/.test(h) && /dirty water/.test(h)
+  return /ps-cwneed warn/.test(h) && /Empty Vacuum/.test(h) && /dirty water/.test(h)
     && /85% full/.test(h) && /6 washes/.test(h);
 })());
 check('an overflowing dirty tank is critical', (() =>
@@ -3500,12 +3500,12 @@ check('the clean tank gets the inner arc and the charge no longer does', (() => 
      one. The battery reads 100 in this fixture, so an inner arc scaled to the
      charge would be a FULL circle — a 55% arc proves it is the water. */
   const arcs = h.match(/stroke-dasharray="([\d.]+)/g) || [];
-  return arcs.length >= 4 && !/Jeeves<\/span>\s*<span class="ps-cwas">100%/.test(h);
+  return arcs.length >= 4 && !/Vacuum<\/span>\s*<span class="ps-cwas">100%/.test(h);
 })());
 
 /* A NUMBER NEEDS ITS NOUN — the rule this whole file was written around. The
    charge was briefly a bare "100%" beside the name, which is the exact tile
-   ("Jeeves 10 %") the crew section replaced. Caught by a screenshot. */
+   ("Vacuum 10 %") the crew section replaced. Caught by a screenshot. */
 check('the head carries no unlabelled percentage', (() => {
   const h = mkCrew(crewCleanStates)._secCrew(crewCleanCfg);
   return !/ps-cwas">\d+%/.test(h);
@@ -3550,7 +3550,7 @@ check('a mop pad being washed or dried says which', (() => {
 
 check('an errored robot raises a row', (() => {
   const h = mkCrew({ 'vacuum.j': { state: 'error', attributes: {} } })._secCrew(crewAlertCfg);
-  return /ps-cwneed bad/.test(h) && /Jeeves needs help/.test(h);
+  return /ps-cwneed bad/.test(h) && /Vacuum needs help/.test(h);
 })());
 
 check('low consumables collapse into ONE row, not five', (() => {
@@ -3558,7 +3558,7 @@ check('low consumables collapse into ONE row, not five', (() => {
      fixture has the filter at 14% and the brush at 57%. */
   const h = mkCrew()._secCrew({ ...crewAlertCfg, wear_below: 60 });
   return (h.match(/ps-cwneed/g) || []).length === 1
-    && /2 Jeeves parts to replace/.test(h)
+    && /2 Vacuum parts to replace/.test(h)
     && /Filter 14% · Main brush 57%/.test(h);
 })());
 
@@ -3587,7 +3587,7 @@ check('setConfig accepts a crew section', (() => {
   try { new SH().setConfig({ sections: [crewCfg] }); return true; } catch (e) { return false; }
 })());
 check('crew draws a card for each robot',
-  /Jeeves/.test(crewHtml) && /Litter box/.test(crewHtml));
+  /Vacuum/.test(crewHtml) && /Litter box/.test(crewHtml));
 check('crew names every number it prints — no bare percentage',
   /Clean water/.test(crewHtml) && /Filter/.test(crewHtml) && /Scoops/.test(crewHtml)
   && /dirty tank/.test(crewHtml));
@@ -3802,7 +3802,7 @@ check('crew styles carry no loose font-size', (() => {
    with two arcs and a total in the middle, then a strip showing the day. */
 const nurseryRendered = (() => {
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery', name: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
   /* idle, matching its own history — the fixture used to claim the Hatch was
      playing while its history ended in idle, so the chip took the "asleep with
@@ -3842,7 +3842,7 @@ check('the length-fitted ring steps are defined',
    worse than no test. */
 check('a nap reading that crosses the hour asks for a smaller step', (() => {
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery', name: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
   s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'off', attributes: {} } } };
@@ -3939,7 +3939,7 @@ check('the chip carries awake time and since, on the collapsed face', (() => {
 })());
 check('the door is not a chip state', (() => {
   const sh = new SH();
-  sh.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+  sh.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   sh._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'on', attributes: {} } } };
@@ -4009,12 +4009,12 @@ const jweek = (() => {
   /* `edits:` is what makes a session a correction target — without a store to
      write to, the long press does nothing and the card correctly declines to
      invite it. */
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery', name: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
-    edits: { store: 'input_text.joel_nap_edits' } }] });
+    edits: { store: 'input_text.nursery_nap_edits' } }] });
   s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'off', attributes: {} },
-    'input_text.joel_nap_edits': { state: '', attributes: {} } } };
+    'input_text.nursery_nap_edits': { state: '', attributes: {} } } };
   /* Pinned to the afternoon AFTER the last night, so the most recent completed
      night is "yesterday" — which is the slot the strip highlights. */
   s._testNow = new Date(2026, 7, 7, 15, 0).getTime();
@@ -4258,7 +4258,7 @@ check('a passed due time reads negative rather than clamping to zero', (() => {
 
 check('the chip answers when the nap is due, not how long he has been up', (() => {
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
     'binary_sensor.d': { state: 'off', attributes: {} } } };
@@ -4278,7 +4278,7 @@ check('the chip answers when the nap is due, not how long he has been up', (() =
 
 check('a nursery section renders without a recorder answer', (() => {
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} }, 'binary_sensor.d': { state: 'off', attributes: {} } } };
   const html = s._secNursery(s._config.sections[0]);
   /* Loading and "he has never slept" must not read the same. */
@@ -4405,7 +4405,7 @@ check('the store drops the oldest entries rather than failing the write', (() =>
 
 const editedCard = (() => {
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery', name: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
     edits: { store: 'input_text.napedits' } }] });
   s._testNow = NT(12, 0);
@@ -4447,7 +4447,7 @@ check('the mark exists on the desk too, which reads the same store',
    unambiguously wrong rather than off by a minute that rounding could hide. */
 const lateWokeCard = (() => {
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery', name: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
     edits: { store: 'input_text.napedits' } }] });
   s._testNow = NT(12, 0);
@@ -4492,7 +4492,7 @@ check('the corrected wake window (not the raw Hatch span) drives "Awake for"', (
 check('the rows are long-press targets only where there is somewhere to write', (() => {
   const withStore = editedCard._secNursery(editedCard._config.sections[0]);
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery', name: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
   s._testNow = NT(12, 0);
   s._hass = editedCard._hass;
@@ -4533,7 +4533,7 @@ check('_bindNapEdit is actually called, not merely defined',
 
 check('the corrections store is in the watched set', (() => {
   const s = new SH();
-  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Nursery',
     hatch: 'media_player.h', door: 'binary_sensor.d',
     edits: { store: 'input_text.napedits' } }] });
   return (s._watched || []).indexOf('input_text.napedits') >= 0;
@@ -4626,7 +4626,7 @@ check('an optimistic goal for one entity does not leak onto another', (() => {
 })());
 
 /* ============================ lights ============================
-   The row is a lit room, not a progress bar — and the guard on Joel's night
+   The row is a lit room, not a progress bar — and the guard on Nursery's night
    light has to cover the LEVEL as well as the switch. */
 const LSEC = {
   type: 'lights', key: 'lights', title: 'Lights',
@@ -4637,7 +4637,7 @@ const LSEC = {
       members: ['light.a1', 'light.a2'], extras: ['switch.scent'] },
     { entity: 'light.b', name: 'Kitchen' },
     { entity: 'light.night', name: 'Night light',
-      protect: { when: 'media_player.hatch', state: 'playing', ask: 'Joel is asleep' } },
+      protect: { when: 'media_player.hatch', state: 'playing', ask: 'Nursery is asleep' } },
     { entity: 'light.xmas', name: 'Christmas', hide_when_unavailable: 'sensor.xmas' },
   ],
 };
@@ -4749,7 +4749,7 @@ check('the guard asks before turning it off', (() => {
   const sh = lsh();
   sh._lightAsk = { id: 'light.night', kind: 'toggle' };
   const h = sh._secLights(LSEC);
-  return /Joel is asleep/.test(h) && /Turn it off/.test(h);
+  return /Nursery is asleep/.test(h) && /Turn it off/.test(h);
 })());
 
 /* The likelier accident is a thumb dragging it to 80% at 2am, not a tap. The
@@ -4887,7 +4887,7 @@ check('the guard prompt works inside the sheet too', (() => {
   sh._sheet = 'lights';
   sh._lightAsk = { id: 'light.night', kind: 'level', value: 80 };
   const h = sh._sheetHtml([]);
-  return /Joel is asleep/.test(h) && /Set it to 80%\?/.test(h);
+  return /Nursery is asleep/.test(h) && /Set it to 80%\?/.test(h);
 })());
 check('a lights sheet with every light hidden renders nothing at all', (() => {
   const sh = lsh();
@@ -5034,100 +5034,100 @@ check('the lights row never reaches for pointer capture',
    DISCOVERED, since the hand-typed version had three container ids that did
    not exist and rendered as dead toggles for weeks. */
 const SRV = {
-  name: 'PurdyNAS', prefix: 'purdynas', url: 'http://nas/Dashboard',
-  status: 'sensor.purdynas_system_status',
-  uptime: 'sensor.purdynas_uptime_text',
-  version: 'sensor.purdynas_unraid_version',
-  registration: 'sensor.purdynas_registration_state',
-  registration_type: 'sensor.purdynas_registration_type',
-  plugins: 'sensor.purdynas_installed_plugins',
-  plugin_updates: 'sensor.purdynas_plugins_with_updates',
-  update_available: 'binary_sensor.purdynas_update_available',
+  name: 'HomeServer', prefix: 'homeserver', url: 'http://nas/Dashboard',
+  status: 'sensor.homeserver_system_status',
+  uptime: 'sensor.homeserver_uptime_text',
+  version: 'sensor.homeserver_unraid_version',
+  registration: 'sensor.homeserver_registration_state',
+  registration_type: 'sensor.homeserver_registration_type',
+  plugins: 'sensor.homeserver_installed_plugins',
+  plugin_updates: 'sensor.homeserver_plugins_with_updates',
+  update_available: 'binary_sensor.homeserver_update_available',
   update_url: 'http://nas/Tools/Update', plugins_url: 'http://nas/Plugins',
-  faults: [{ entity: 'sensor.purdynas_disk_disk1_usage', above: 90, label: 'Disk 1', detail: 'low on space', severity: 'critical' }],
-  meters: [{ label: 'Array', entity: 'sensor.purdynas_array_usage' }],
-  stats: [{ label: 'CPU', entity: 'sensor.purdynas_cpu_usage', unit: '%' }],
-  parity: { problem: 'binary_sensor.purdynas_parity_valid', last_check: 'sensor.purdynas_last_parity_check',
-    next_check: 'sensor.purdynas_next_parity_check', progress: 'sensor.purdynas_parity_check_progress',
-    running: 'binary_sensor.purdynas_parity_check_running', start: 'button.purdynas_start_parity_check' },
-  power: [{ name: 'Reboot', entity: 'button.purdynas_reboot_system' }],
-  docker: { cpu: 'sensor.purdynas_docker_cpu_usage', memory: 'sensor.purdynas_docker_memory_usage',
-    vdisk: 'sensor.purdynas_docker_vdisk_usage', conflicts: 'sensor.purdynas_docker_port_conflicts',
-    running: 'sensor.purdynas_containers_running',
-    containers_prefix: 'switch.purdynas_container_', vms: ['switch.purdynas_vm_home_assistant'],
-    restart_prefix: 'button.purdynas_restart_',
+  faults: [{ entity: 'sensor.homeserver_disk_disk1_usage', above: 90, label: 'Disk 1', detail: 'low on space', severity: 'critical' }],
+  meters: [{ label: 'Array', entity: 'sensor.homeserver_array_usage' }],
+  stats: [{ label: 'CPU', entity: 'sensor.homeserver_cpu_usage', unit: '%' }],
+  parity: { problem: 'binary_sensor.homeserver_parity_valid', last_check: 'sensor.homeserver_last_parity_check',
+    next_check: 'sensor.homeserver_next_parity_check', progress: 'sensor.homeserver_parity_check_progress',
+    running: 'binary_sensor.homeserver_parity_check_running', start: 'button.homeserver_start_parity_check' },
+  power: [{ name: 'Reboot', entity: 'button.homeserver_reboot_system' }],
+  docker: { cpu: 'sensor.homeserver_docker_cpu_usage', memory: 'sensor.homeserver_docker_memory_usage',
+    vdisk: 'sensor.homeserver_docker_vdisk_usage', conflicts: 'sensor.homeserver_docker_port_conflicts',
+    running: 'sensor.homeserver_containers_running',
+    containers_prefix: 'switch.homeserver_container_', vms: ['switch.homeserver_vm_home_assistant'],
+    restart_prefix: 'button.homeserver_restart_',
     names: { binhex_jellyfin: { name: 'Jellyfin', icon: 'mdi:movie-play' } } },
-  storage: { array: 'sensor.purdynas_array_usage', text: 'sensor.purdynas_storage_text',
-    disks_prefix: 'sensor.purdynas_disk_', shares_prefix: 'sensor.purdynas_share_',
-    pools: [{ label: 'flash', entity: 'sensor.purdynas_flash_usage' }] },
-  perf: { cpu: 'sensor.purdynas_cpu_usage', ram: 'sensor.purdynas_ram_usage',
-    gpu_util: 'sensor.purdynas_gpu_utilization', gpu_temp: 'sensor.purdynas_gpu_temperature',
-    board_temp: 'sensor.purdynas_motherboard_temperature', governor: 'sensor.purdynas_cpu_governor',
-    fans: ['number.purdynas_fan_1', 'number.purdynas_fan_2'],
-    network: [{ name: 'br0', rx: 'sensor.purdynas_network_br0_rx', tx: 'sensor.purdynas_network_br0_tx' }],
-    power: { watts: 'sensor.purdynas_power', voltage: 'sensor.purdynas_voltage',
-      daily: 'sensor.purdynas_energy_daily', monthly: 'sensor.purdynas_energy_monthly' } },
-  notifications: { total: 'sensor.purdynas_notifications', alert: 'sensor.purdynas_notifications_unread_alert',
-    warning: 'sensor.purdynas_notifications_unread_warning', info: 'sensor.purdynas_notifications_unread_info',
-    archive: 'button.purdynas_archive_all_notifications' },
+  storage: { array: 'sensor.homeserver_array_usage', text: 'sensor.homeserver_storage_text',
+    disks_prefix: 'sensor.homeserver_disk_', shares_prefix: 'sensor.homeserver_share_',
+    pools: [{ label: 'flash', entity: 'sensor.homeserver_flash_usage' }] },
+  perf: { cpu: 'sensor.homeserver_cpu_usage', ram: 'sensor.homeserver_ram_usage',
+    gpu_util: 'sensor.homeserver_gpu_utilization', gpu_temp: 'sensor.homeserver_gpu_temperature',
+    board_temp: 'sensor.homeserver_motherboard_temperature', governor: 'sensor.homeserver_cpu_governor',
+    fans: ['number.homeserver_fan_1', 'number.homeserver_fan_2'],
+    network: [{ name: 'br0', rx: 'sensor.homeserver_network_br0_rx', tx: 'sensor.homeserver_network_br0_tx' }],
+    power: { watts: 'sensor.homeserver_power', voltage: 'sensor.homeserver_voltage',
+      daily: 'sensor.homeserver_energy_daily', monthly: 'sensor.homeserver_energy_monthly' } },
+  notifications: { total: 'sensor.homeserver_notifications', alert: 'sensor.homeserver_notifications_unread_alert',
+    warning: 'sensor.homeserver_notifications_unread_warning', info: 'sensor.homeserver_notifications_unread_info',
+    archive: 'button.homeserver_archive_all_notifications' },
 };
 const num = (v, attrs) => ({ state: String(v), attributes: attrs || {} });
 const sysHass = { states: {
-  'sensor.purdynas_system_status': num('online'),
-  'sensor.purdynas_uptime_text': num('13d 1h'),
-  'sensor.purdynas_unraid_version': num('7.2.3'),
-  'sensor.purdynas_registration_state': num('expired'),
-  'sensor.purdynas_registration_type': num('plus'),
-  'sensor.purdynas_installed_plugins': num(15),
-  'sensor.purdynas_plugins_with_updates': num(0),
-  'sensor.purdynas_array_usage': num(85.8, { total_capacity: '16.4 TB', free_space: '2.3 TB',
+  'sensor.homeserver_system_status': num('online'),
+  'sensor.homeserver_uptime_text': num('13d 1h'),
+  'sensor.homeserver_unraid_version': num('7.2.3'),
+  'sensor.homeserver_registration_state': num('expired'),
+  'sensor.homeserver_registration_type': num('plus'),
+  'sensor.homeserver_installed_plugins': num(15),
+  'sensor.homeserver_plugins_with_updates': num(0),
+  'sensor.homeserver_array_usage': num(85.8, { total_capacity: '16.4 TB', free_space: '2.3 TB',
     num_data_disks: 3, num_parity_disks: 1, array_state: 'STARTED' }),
-  'sensor.purdynas_storage_text': num('15.44 TB / 18 TB'),
-  'sensor.purdynas_cpu_usage': num(10.8, { cpu_model: 'AMD Ryzen 7 5800X 8-Core Processor',
+  'sensor.homeserver_storage_text': num('15.44 TB / 18 TB'),
+  'sensor.homeserver_cpu_usage': num(10.8, { cpu_model: 'AMD Ryzen 7 5800X 8-Core Processor',
     cpu_threads: 16, cpu_frequency: '4575 MHz' }),
-  'sensor.purdynas_cpu_governor': num('powersave'),
-  'sensor.purdynas_ram_usage': num(15.9, { ram_used: '10.0 GB', ram_total: '62.7 GB', ram_cached: '51.2 GB' }),
-  'sensor.purdynas_gpu_utilization': num(0), 'sensor.purdynas_gpu_temperature': num(32, { unit_of_measurement: '°C' }),
-  'sensor.purdynas_motherboard_temperature': num(34, { unit_of_measurement: '°C' }),
-  'number.purdynas_fan_1': num(71, { rpm: 0, pwm_value: 183, mode: 'automatic' }),
-  'number.purdynas_fan_2': num(44, { rpm: 997, pwm_value: 113, mode: 'automatic' }),
-  'sensor.purdynas_network_br0_rx': num(104.5, { unit_of_measurement: 'kbit/s' }),
-  'sensor.purdynas_network_br0_tx': num(100.7, { unit_of_measurement: 'kbit/s' }),
-  'sensor.purdynas_power': num(145.7), 'sensor.purdynas_voltage': num(118.5),
-  'sensor.purdynas_energy_daily': num(1.162), 'sensor.purdynas_energy_monthly': num(23.56),
-  'binary_sensor.purdynas_parity_valid': num('off', { device_class: 'problem' }),
-  'binary_sensor.purdynas_parity_check_running': num('off'),
-  'binary_sensor.purdynas_update_available': num('off', { device_class: 'update' }),
-  'button.purdynas_restart_pihole': num('unknown'),
-  'sensor.purdynas_parity_check_progress': num(0),
-  'sensor.purdynas_last_parity_check': num('2026-03-01T15:17:52+00:00'),
-  'sensor.purdynas_next_parity_check': num('2026-09-01T05:30:00+00:00'),
-  'sensor.purdynas_docker_cpu_usage': num(3.7), 'sensor.purdynas_docker_memory_usage': num(5782.5),
-  'sensor.purdynas_docker_vdisk_usage': num(24.7), 'sensor.purdynas_docker_port_conflicts': num(0),
-  'sensor.purdynas_containers_running': num('4 of 11'),
-  'switch.purdynas_container_binhex_jellyfin': num('on', { friendly_name: 'PurdyNAS Container binhex-jellyfin',
+  'sensor.homeserver_cpu_governor': num('powersave'),
+  'sensor.homeserver_ram_usage': num(15.9, { ram_used: '10.0 GB', ram_total: '62.7 GB', ram_cached: '51.2 GB' }),
+  'sensor.homeserver_gpu_utilization': num(0), 'sensor.homeserver_gpu_temperature': num(32, { unit_of_measurement: '°C' }),
+  'sensor.homeserver_motherboard_temperature': num(34, { unit_of_measurement: '°C' }),
+  'number.homeserver_fan_1': num(71, { rpm: 0, pwm_value: 183, mode: 'automatic' }),
+  'number.homeserver_fan_2': num(44, { rpm: 997, pwm_value: 113, mode: 'automatic' }),
+  'sensor.homeserver_network_br0_rx': num(104.5, { unit_of_measurement: 'kbit/s' }),
+  'sensor.homeserver_network_br0_tx': num(100.7, { unit_of_measurement: 'kbit/s' }),
+  'sensor.homeserver_power': num(145.7), 'sensor.homeserver_voltage': num(118.5),
+  'sensor.homeserver_energy_daily': num(1.162), 'sensor.homeserver_energy_monthly': num(23.56),
+  'binary_sensor.homeserver_parity_valid': num('off', { device_class: 'problem' }),
+  'binary_sensor.homeserver_parity_check_running': num('off'),
+  'binary_sensor.homeserver_update_available': num('off', { device_class: 'update' }),
+  'button.homeserver_restart_pihole': num('unknown'),
+  'sensor.homeserver_parity_check_progress': num(0),
+  'sensor.homeserver_last_parity_check': num('2026-03-01T15:17:52+00:00'),
+  'sensor.homeserver_next_parity_check': num('2026-09-01T05:30:00+00:00'),
+  'sensor.homeserver_docker_cpu_usage': num(3.7), 'sensor.homeserver_docker_memory_usage': num(5782.5),
+  'sensor.homeserver_docker_vdisk_usage': num(24.7), 'sensor.homeserver_docker_port_conflicts': num(0),
+  'sensor.homeserver_containers_running': num('4 of 11'),
+  'switch.homeserver_container_binhex_jellyfin': num('on', { friendly_name: 'HomeServer Container binhex-jellyfin',
     container_image: 'binhex/arch-jellyfin', container_ports: [{ public_port: 8096 }],
     dashboard_url: 'http://nas:8096/web/' }),
-  'switch.purdynas_container_pihole': num('on', { friendly_name: 'PurdyNAS Container pihole' }),
-  'switch.purdynas_container_ollama': num('off', { friendly_name: 'PurdyNAS Container ollama' }),
-  'switch.purdynas_vm_home_assistant': num('on', { friendly_name: 'PurdyNAS VM Home Assistant' }),
-  'sensor.purdynas_disk_disk1_health': num('PASSED', { temperature: '37.0 °C' }),
-  'sensor.purdynas_disk_disk1_usage': num(92.8, { used_size: '6.7 TB', total_size: '7.3 TB', role: 'data' }),
-  'sensor.purdynas_disk_disk2_health': num('PASSED', { temperature: '31.0 °C' }),
-  'sensor.purdynas_disk_disk2_usage': num(50.0, { role: 'data' }),
-  'sensor.purdynas_disk_disk2_temperature': num(31, { unit_of_measurement: '°C' }),
-  'sensor.purdynas_disk_parity_health': num('PASSED', { temperature: '38.0 °C' }),
-  'sensor.purdynas_disk_parity2_health': num('DISK_NP_DSBL'),
-  'sensor.purdynas_flash_usage': num(1.7),
-  'sensor.purdynas_share_appdata_usage': num(84.1, { share_name: 'appdata' }),
-  'sensor.purdynas_share_isos_usage': num(12.0, { share_name: 'isos' }),
-  'sensor.purdynas_notifications': num(51, { unread_count: 51, recent_notifications: [
+  'switch.homeserver_container_pihole': num('on', { friendly_name: 'HomeServer Container pihole' }),
+  'switch.homeserver_container_ollama': num('off', { friendly_name: 'HomeServer Container ollama' }),
+  'switch.homeserver_vm_home_assistant': num('on', { friendly_name: 'HomeServer VM Home Assistant' }),
+  'sensor.homeserver_disk_disk1_health': num('PASSED', { temperature: '37.0 °C' }),
+  'sensor.homeserver_disk_disk1_usage': num(92.8, { used_size: '6.7 TB', total_size: '7.3 TB', role: 'data' }),
+  'sensor.homeserver_disk_disk2_health': num('PASSED', { temperature: '31.0 °C' }),
+  'sensor.homeserver_disk_disk2_usage': num(50.0, { role: 'data' }),
+  'sensor.homeserver_disk_disk2_temperature': num(31, { unit_of_measurement: '°C' }),
+  'sensor.homeserver_disk_parity_health': num('PASSED', { temperature: '38.0 °C' }),
+  'sensor.homeserver_disk_parity2_health': num('DISK_NP_DSBL'),
+  'sensor.homeserver_flash_usage': num(1.7),
+  'sensor.homeserver_share_appdata_usage': num(84.1, { share_name: 'appdata' }),
+  'sensor.homeserver_share_isos_usage': num(12.0, { share_name: 'isos' }),
+  'sensor.homeserver_notifications': num(51, { unread_count: 51, recent_notifications: [
     { subject: 'Disk 1 is low on space (93%)', importance: 'alert' },
     { subject: 'Version update 2026.08.07', importance: 'normal' },
   ] }),
-  'sensor.purdynas_notifications_unread_alert': num(1),
-  'sensor.purdynas_notifications_unread_warning': num(3),
-  'sensor.purdynas_notifications_unread_info': num(47),
+  'sensor.homeserver_notifications_unread_alert': num(1),
+  'sensor.homeserver_notifications_unread_warning': num(3),
+  'sensor.homeserver_notifications_unread_info': num(47),
 } };
 
 const sy = new SH();
@@ -5184,8 +5184,8 @@ check('the pools are not swept into the array disk list', (() => {
   const p2 = new SH();
   p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p2._hass = { states: { ...sysHass.states,
-    'sensor.purdynas_disk_cache_health': num('PASSED'),
-    'sensor.purdynas_disk_cache_usage': num(24.7, { role: 'cache' }) } };
+    'sensor.homeserver_disk_cache_health': num('PASSED'),
+    'sensor.homeserver_disk_cache_usage': num(24.7, { role: 'cache' }) } };
   const out = p2._syStorage(SRV);
   const arr = out.slice(out.indexOf('Array disks'), out.indexOf('Pools'));
   return !/cache/.test(arr);
@@ -5204,8 +5204,8 @@ check('the temperature column is one unit, not a mix', (() => {
   /* disk2's entity is °F; every other disk only has a °C attribute. Rendering
      both raw would put 88°F next to 37°C in the same column. */
   p2._hass = { states: { ...sysHass.states,
-    'sensor.purdynas_disk_disk2_temperature': num(87.8, { unit_of_measurement: '°F' }),
-    'sensor.purdynas_disk_disk1_health': num('PASSED', { temperature: '37.0 °C' }) } };
+    'sensor.homeserver_disk_disk2_temperature': num(87.8, { unit_of_measurement: '°F' }),
+    'sensor.homeserver_disk_disk1_health': num('PASSED', { temperature: '37.0 °C' }) } };
   const out = p2._syStorage(SRV);
   return /99°F/.test(out) && !/37°C/.test(out);   // 37°C === 98.6°F
 })());
@@ -5218,7 +5218,7 @@ check('a share shows its real name, not its slug', (() => {
   const p2 = new SH();
   p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p2._hass = { states: { ...sysHass.states,
-    'sensor.purdynas_share_appdatabackups_usage': num(84.1, { share_name: 'AppDataBackups' }) } };
+    'sensor.homeserver_share_appdatabackups_usage': num(84.1, { share_name: 'AppDataBackups' }) } };
   return p2._syShares().some((x) => x.name === 'AppDataBackups');
 })());
 
@@ -5238,23 +5238,23 @@ check('a notification subject drops the constant Notice [HOST] prefix', (() => {
   const p2 = new SH();
   p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p2._hass = { states: { ...sysHass.states,
-    'sensor.purdynas_notifications': num(51, { recent_notifications: [
-      { subject: 'Notice [PURDYNAS] - Version update 2026.08.07', importance: 'normal' }] }) } };
+    'sensor.homeserver_notifications': num(51, { recent_notifications: [
+      { subject: 'Notice [HOMESERVER] - Version update 2026.08.07', importance: 'normal' }] }) } };
   const out = p2._syAlerts(SRV);
-  return /Version update 2026\.08\.07/.test(out) && !/\[PURDYNAS\]/.test(out);
+  return /Version update 2026\.08\.07/.test(out) && !/\[HOMESERVER\]/.test(out);
 })());
 
 /* The watched set cannot be complete until hass exists, because the lists are
    discovered from it — without the expansion a container toggle would not
    repaint until the 30s clock came round. */
-check('discovered ids are not watched before hass', !sy._watched.includes('switch.purdynas_container_pihole'));
+check('discovered ids are not watched before hass', !sy._watched.includes('switch.homeserver_container_pihole'));
 sy._expandWatched();
 check('expanding the watched set picks up discovered containers',
-  sy._watched.includes('switch.purdynas_container_pihole'));
+  sy._watched.includes('switch.homeserver_container_pihole'));
 check('expanding picks up discovered disks',
-  sy._watched.includes('sensor.purdynas_disk_disk1_health'));
+  sy._watched.includes('sensor.homeserver_disk_disk1_health'));
 check('expanding picks up the configured singles',
-  sy._watched.includes('sensor.purdynas_power') && sy._watched.includes('sensor.purdynas_uptime_text'));
+  sy._watched.includes('sensor.homeserver_power') && sy._watched.includes('sensor.homeserver_uptime_text'));
 check('expanding invalidates the signature so the next hass is not skipped', sy._last === null);
 check('_expandWatched runs on first hass', /_expandWatched\(\);/.test(src) &&
   /_start\(\) \{[\s\S]{0,400}_expandWatched/.test(src));
@@ -5280,7 +5280,7 @@ check('overview reads parity_valid as a PROBLEM sensor, so off is valid',
   /Valid<\/span>/.test(sy._syParity(SRV)));
 check('parity off-by-polarity would show invalid', (() => {
   const flipped = { ...sysHass, states: { ...sysHass.states,
-    'binary_sensor.purdynas_parity_valid': num('on', { device_class: 'problem' }) } };
+    'binary_sensor.homeserver_parity_valid': num('on', { device_class: 'problem' }) } };
   const p = new SH(); p.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p._hass = flipped;
   return /Invalid<\/span>/.test(p._syParity(SRV));
@@ -5288,7 +5288,7 @@ check('parity off-by-polarity would show invalid', (() => {
 check('parity dates are short, not ISO',
   /Mar/.test(sy._syParity(SRV)) && !/2026-03-01T/.test(sy._syParity(SRV)));
 check('reboot is behind the two-tap arm, not a bare button',
-  /data-arm="sy:button\.purdynas_reboot_system"/.test(sy._syPower(SRV)));
+  /data-arm="sy:button\.homeserver_reboot_system"/.test(sy._syPower(SRV)));
 check('the arm handler routes systems keys', /k\.indexOf\("sy:"\) === 0/.test(src));
 
 const dk = sy._syDocker(SRV);
@@ -5299,7 +5299,7 @@ check('docker memory is shown in GB, not five digits of MB', /5\.6<small>GB/.tes
    seven figures on these pages. */
 check('a docker stat with no reading shows a dash, not 0.0%', (() => {
   const gone = { states: { ...sysHass.states } };
-  delete gone.states['sensor.purdynas_docker_cpu_usage'];
+  delete gone.states['sensor.homeserver_docker_cpu_usage'];
   const p = new SH(); p.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p._hass = gone;
   const out = p._syDocker(SRV);
@@ -5307,7 +5307,7 @@ check('a docker stat with no reading shows a dash, not 0.0%', (() => {
 })());
 check('a notification count with no sensor shows a dash, not 0', (() => {
   const gone = { states: { ...sysHass.states } };
-  delete gone.states['sensor.purdynas_notifications_unread_warning'];
+  delete gone.states['sensor.homeserver_notifications_unread_warning'];
   const p = new SH(); p.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p._hass = gone;
   return /Warning —/.test(p._syAlerts(SRV));
@@ -5327,10 +5327,10 @@ sy._syq = '';
 
 /* An optimistic knob, on _optGoal's contract: a container takes seconds to
    start and a toggle that sits still for three of them reads as a missed tap. */
-sy._swOpt = { 'switch.purdynas_container_ollama': { value: 'on', until: Date.now() + 12000 } };
+sy._swOpt = { 'switch.homeserver_container_ollama': { value: 'on', until: Date.now() + 12000 } };
 check('an optimistic switch reads as its pending value',
   (sy._syContainers().find((c) => c.key === 'ollama') || {}).on === true);
-sy._swOpt = { 'switch.purdynas_container_ollama': { value: 'on', until: Date.now() - 1 } };
+sy._swOpt = { 'switch.homeserver_container_ollama': { value: 'on', until: Date.now() - 1 } };
 check('an optimistic switch that never landed expires back to the truth',
   (sy._syContainers().find((c) => c.key === 'ollama') || {}).on === false);
 sy._swOpt = {};
@@ -5368,23 +5368,23 @@ check('an available OS update turns the version row into a link', (() => {
   const p2 = new SH();
   p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p2._hass = { states: { ...sysHass.states,
-    'binary_sensor.purdynas_update_available': num('on', { device_class: 'update' }) } };
+    'binary_sensor.homeserver_update_available': num('on', { device_class: 'update' }) } };
   const out = p2._syOverview(SRV);
   return /data-syurl="http:\/\/nas\/Tools\/Update"/.test(out) && /update ↗/.test(out);
 })());
 check('no update available leaves the version row a plain more-info row',
-  /data-info="sensor\.purdynas_unraid_version"/.test(sy._syOverview(SRV)));
+  /data-info="sensor\.homeserver_unraid_version"/.test(sy._syOverview(SRV)));
 check('a running container offers its restart button',
-  /data-sybtn="button\.purdynas_restart_pihole"/.test(sy._syDocker(SRV)));
+  /data-sybtn="button\.homeserver_restart_pihole"/.test(sy._syDocker(SRV)));
 check('a stopped container does not offer restart', (() => {
   const p2 = new SH();
   p2.setConfig({ server: SRV, sections: [{ type: 'quick', key: 'q', tiles: [] }] });
   p2._hass = { states: { ...sysHass.states,
-    'switch.purdynas_container_pihole': num('off', { friendly_name: 'PurdyNAS Container pihole' }) } };
-  return !/data-sybtn="button\.purdynas_restart_pihole"/.test(p2._syDocker(SRV));
+    'switch.homeserver_container_pihole': num('off', { friendly_name: 'HomeServer Container pihole' }) } };
+  return !/data-sybtn="button\.homeserver_restart_pihole"/.test(p2._syDocker(SRV));
 })());
 check('a container with no restart button published gets none',
-  !/data-sybtn="button\.purdynas_restart_binhex_jellyfin"/.test(sy._syDocker(SRV)));
+  !/data-sybtn="button\.homeserver_restart_binhex_jellyfin"/.test(sy._syDocker(SRV)));
 check('perf prints the network unit once rather than per row', (pf.match(/kbit\/s/g) || []).length === 1);
 check('perf converts monthly energy without inventing a cost',
   /23\.6 kWh/.test(pf) && !/\$/.test(pf));
@@ -5422,7 +5422,7 @@ syr._mounted = true;
 syr._mode = 'systems';
 syr._render();
 check('systems mode replaces the greeting with the page name',
-  /PurdyNAS/.test(slots['ps-stat']._html) && /Overview/.test(slots['ps-stat']._html));
+  /HomeServer/.test(slots['ps-stat']._html) && /Overview/.test(slots['ps-stat']._html));
 check('systems mode swaps the dock', /data-sysdock="docker"/.test(slots['ps-dockwrap']._html));
 check('the systems dock leads with Home', /data-sysdock="__home"/.test(slots['ps-dockwrap']._html));
 check('Home is not drawn as a sixth tab',
@@ -5455,7 +5455,7 @@ check('switching page swaps the node',
 syr._mode = null;
 syr._render();
 check('leaving the mode restores the house dock', /data-dock="1"/.test(slots['ps-dockwrap']._html));
-check('leaving the mode restores the greeting', !/PurdyNAS/.test(slots['ps-stat']._html));
+check('leaving the mode restores the greeting', !/HomeServer/.test(slots['ps-stat']._html));
 globalThis.document = savedDocSys;
 
 /* The v1.31.1 lesson again, one level up: a renderer that is never dispatched
@@ -5475,14 +5475,14 @@ check('the systems render path binds systems', (() => {
   return /_renderSystems\([\s\S]*?this\._bindSystems\(\);/.test(sysSrc);
 })());
 check('the dock handler knows the mode verb', /if \(d\.mode\) \{/.test(src));
-/* The landing page's PurdyNAS row is the other way in. It must NOT also keep
+/* The landing page's HomeServer row is the other way in. It must NOT also keep
    its chevron: a stub of the five pages beside the real thing is two answers
    to one question. */
 check('a device row can open the mode instead of expanding', (() => {
   const p = new SH();
   p.setConfig({ server: SRV, sections: [{ type: 'systems', key: 'sys', devices: [
-    { name: 'PurdyNAS', key: 'nas', icon: 'mdi:server', mode: 'systems', chip: 'sensor.purdynas_containers_running' },
-    { name: 'Jeeves', key: 'floor', icon: 'mdi:robot-vacuum' },
+    { name: 'HomeServer', key: 'nas', icon: 'mdi:server', mode: 'systems', chip: 'sensor.homeserver_containers_running' },
+    { name: 'Vacuum', key: 'floor', icon: 'mdi:robot-vacuum' },
   ] }] });
   p._hass = sysHass;
   const out = p._devicesHtml(p._config.sections[0]);
@@ -5491,8 +5491,8 @@ check('a device row can open the mode instead of expanding', (() => {
 check('a mode row drops the expand, and its neighbours keep theirs', (() => {
   const p = new SH();
   p.setConfig({ server: SRV, sections: [{ type: 'systems', key: 'sys', devices: [
-    { name: 'PurdyNAS', key: 'nas', mode: 'systems' },
-    { name: 'Jeeves', key: 'floor' },
+    { name: 'HomeServer', key: 'nas', mode: 'systems' },
+    { name: 'Vacuum', key: 'floor' },
   ] }] });
   p._hass = sysHass;
   const out = p._devicesHtml(p._config.sections[0]);
@@ -6412,9 +6412,9 @@ dcard.setConfig({
       outside: { temp: 'sensor.out_t', humidity: 'sensor.out_h' },
       graph: { inside: 'sensor.in_t', outside: 'sensor.out_t' },
       zones: { select: 'select.zone', options: [{ label: '1st Floor', option: '1st floor', temp: 'sensor.z1' }] },
-      rooms: [{ name: "Joel's Room", temp: 'sensor.joel_t', humidity: 'sensor.joel_h' }],
+      rooms: [{ name: "Nursery's Room", temp: 'sensor.nursery_t', humidity: 'sensor.nursery_h' }],
       hold: { remaining: 'sensor.hold', cancel_service: 'gttc.cancel_override' } },
-    { type: 'nursery', key: 'joel', title: 'Joel', hatch: 'media_player.hatch', door: 'binary_sensor.door', days: 7 },
+    { type: 'nursery', key: 'nursery', title: 'Nursery', hatch: 'media_player.hatch', door: 'binary_sensor.door', days: 7 },
     { type: 'music', key: 'music', title: 'Music', config_entry: 'ENTRY', default_player: 'media_player.living',
       players: [{ entity: 'media_player.living', name: 'Living Room' }],
       presets: [{ name: 'Liked Songs', uri: 'library://playlist/7', icon: 'mdi:heart' }] },
@@ -6423,19 +6423,19 @@ dcard.setConfig({
       moods: [{ name: 'All off', icon: 'mdi:power', set: {}, off: ['light.living', 'light.night'] }],
       lights: [{ entity: 'light.living', name: 'Living Room', members: ['light.lamp'] },
                { entity: 'light.night', name: 'Night light',
-                 protect: { when: 'media_player.hatch', state: 'playing', ask: 'Joel is asleep', detail: 'His night light.' } }] },
-    { type: 'people', key: 'people', people: [{ entity: 'person.b', name: 'Brian', battery: 'sensor.bb', steps: 'sensor.bs' }] },
+                 protect: { when: 'media_player.hatch', state: 'playing', ask: 'Nursery is asleep', detail: 'His night light.' } }] },
+    { type: 'people', key: 'people', people: [{ entity: 'person.b', name: 'Alex', battery: 'sensor.bb', steps: 'sensor.bs' }] },
     /* No rooms of its own: the strip must fall back to the climate section's
        list rather than needing the same rooms written twice. */
     { type: 'rooms', key: 'rooms' },
     { type: 'quick', key: 'quick', tiles: [{ entity: 'light.living', name: 'Lights', icon: 'mdi:lightbulb', tap_action: { action: 'toggle' } }] },
-    { type: 'systems', key: 'sys', devices: [{ name: 'PurdyNAS', icon: 'mdi:server', meters: [{ label: 'Array', entity: 'sensor.array', warn_above: 80 }] }] },
+    { type: 'systems', key: 'sys', devices: [{ name: 'HomeServer', icon: 'mdi:server', meters: [{ label: 'Array', entity: 'sensor.array', warn_above: 80 }] }] },
   ],
 });
 
 check('desk routes sections to their default tiers', (() => {
   const stage = dcard._zone('stage').map((s) => s.key).join(',');
-  return stage === 'clim,joel,music,ahead,lights'
+  return stage === 'clim,nursery,music,ahead,lights'
     && dcard._zone('strip').map((s) => s.key).join(',') === 'people'
     && dcard._zone('dock').map((s) => s.key).join(',') === 'rooms,quick,sys';
 })());
@@ -6500,8 +6500,8 @@ dkr._hass = {
     'sensor.out_t': { state: '79.9', attributes: {} },
     'sensor.out_h': { state: '76.9', attributes: {} },
     'sensor.in_t': { state: '73.8', attributes: {} },
-    'sensor.joel_t': { state: '69.4', attributes: {} },
-    'sensor.joel_h': { state: '51.6', attributes: {} },
+    'sensor.nursery_t': { state: '69.4', attributes: {} },
+    'sensor.nursery_h': { state: '51.6', attributes: {} },
     'sensor.hold': { state: '0', attributes: {} },
     'media_player.hatch': { state: 'idle', attributes: {} },
     'binary_sensor.door': { state: 'off', attributes: {} },
@@ -6509,7 +6509,7 @@ dkr._hass = {
     'light.living': { state: 'on', attributes: { brightness: 128, color_temp_kelvin: 2700 } },
     'light.lamp': { state: 'on', attributes: {} },
     'light.night': { state: 'off', attributes: {} },
-    'person.b': { state: 'home', attributes: { friendly_name: 'Brian' } },
+    'person.b': { state: 'home', attributes: { friendly_name: 'Alex' } },
     'sensor.bb': { state: '100', attributes: {} },
     'sensor.bs': { state: '4293', attributes: {} },
     'sensor.array': { state: '85.6', attributes: {} },
@@ -6532,11 +6532,11 @@ check('the strip carries the greeting, the clock and the weather',
   /pd-z-id/.test(stripHtml) && /pd-time/.test(stripHtml) && /pd-z-wx/.test(stripHtml));
 check('the strip carries the HVAC summary rather than a whole climate card',
   /Cooling to/.test(stripHtml) && /pd-zc/.test(stripHtml));
-check('people land in the strip', /pd-ppl/.test(stripHtml) && /Brian/.test(stripHtml));
+check('people land in the strip', /pd-ppl/.test(stripHtml) && /Alex/.test(stripHtml));
 check('the attention band is a chip, not a band', /id="pd-alert"/.test(stripHtml) && /1 needs attention/.test(stripHtml));
 check('the fault chip colours by the worst severity', /pd-chip bad/.test(stripHtml));
 
-check('the stage renders every configured panel', stageKids.join(',') === 'clim,joel,music,ahead,lights');
+check('the stage renders every configured panel', stageKids.join(',') === 'clim,nursery,music,ahead,lights');
 check('the stage columns are written to the surviving node',
   dslots['pd-stage'].style.gridTemplateColumns === '1fr 1fr 1fr 1fr 1fr');
 
@@ -6545,12 +6545,12 @@ check('climate draws its ring and its goal', /pd-ring/.test(climHtml) && /pd-goa
 check('climate shows the live temperature, not the goal, in the ring', /72\.4°/.test(climHtml));
 check('climate names the schedule window it is holding', /8:00 PM window/.test(climHtml));
 check('a hold that is not running draws no cancel row', !/Cancel hold/.test(climHtml));
-check('the room list rides the expanded block', /pd-xtra/.test(climHtml) && /Joel&#39;s Room/.test(climHtml));
+check('the room list rides the expanded block', /pd-xtra/.test(climHtml) && /Nursery&#39;s Room/.test(climHtml));
 
-const joelHtml = dslots['pd-stage'].kids[1]._html;
+const nurseryHtml = dslots['pd-stage'].kids[1]._html;
 check('a night that has not happened reads as absent, never as zero',
-  /no night yet/.test(joelHtml) && !/0m<\/b>/.test(joelHtml));
-check('no naps yet says so rather than drawing an empty ring', /No naps yet today/.test(joelHtml));
+  /no night yet/.test(nurseryHtml) && !/0m<\/b>/.test(nurseryHtml));
+check('no naps yet says so rather than drawing an empty ring', /No naps yet today/.test(nurseryHtml));
 
 const musHtml = dslots['pd-stage'].kids[2]._html;
 check('music shows the target room track', /Dance Mode/.test(musHtml));
@@ -6577,8 +6577,8 @@ dkr._open = 'clim';
 dkr._render();
 check('expanding widens the panel and folds the others',
   dslots['pd-stage'].style.gridTemplateColumns === '2.9fr 0.62fr 0.62fr 0.62fr 0.62fr');
-const foldedJoel = dslots['pd-stage'].kids[1];
-check('a folded panel still renders its headline', /pd-mini/.test(foldedJoel._html));
+const foldedNursery = dslots['pd-stage'].kids[1];
+check('a folded panel still renders its headline', /pd-mini/.test(foldedNursery._html));
 dkr._open = null;
 
 /* A panel that has nothing to say takes its divider with it — that is how
@@ -6649,7 +6649,7 @@ check('the protect guard is silent while the session is not running',
   dcard._protectOf('light.night') === null);
 dcard._hass.states['media_player.hatch'] = { state: 'playing', attributes: {} };
 check('the protect guard speaks while he is asleep',
-  (dcard._protectOf('light.night') || {}).ask === 'Joel is asleep');
+  (dcard._protectOf('light.night') || {}).ask === 'Nursery is asleep');
 check('the guard covers the level, not just the switch',
   deskSrc.includes('covers the LEVEL') && /Set \$\{pcName/.test(deskSrc));
 check('a mood never touches a guarded light', /if \(this\._protectOf\(id\)\) return;/.test(deskSrc));
@@ -6800,7 +6800,7 @@ check('the viewport offset is config, not a baked number', (() => {
 /* --- the server earns a panel; the music earns a strip -------------------- */
 
 const srvCfg = {
-  name: 'PurdyNAS', url: 'http://server/Dashboard',
+  name: 'HomeServer', url: 'http://server/Dashboard',
   status: 'sensor.nas_status', uptime: 'sensor.nas_uptime',
   update_available: 'binary_sensor.nas_update',
   faults: [
@@ -6822,8 +6822,8 @@ dsys.setConfig({
   server: srvCfg,
   sections: [
     { type: 'systems', key: 'sys', title: 'Systems', zone: 'stage',
-      devices: [{ name: 'PurdyNAS', key: 'nas', icon: 'mdi:server' },
-                { name: 'Jeeves', key: 'floor', icon: 'mdi:robot-vacuum', chip: 'vacuum.j',
+      devices: [{ name: 'HomeServer', key: 'nas', icon: 'mdi:server' },
+                { name: 'Vacuum', key: 'floor', icon: 'mdi:robot-vacuum', chip: 'vacuum.j',
                   meters: [{ label: 'Dirty water', entity: 'sensor.dirty', warn_above: 80 }] }] },
     { type: 'nowplaying', key: 'np', title: 'Now playing', zone: 'dock', sheet: 'music' },
     { type: 'music', key: 'music', sheet_only: true, default_player: 'media_player.lr',
@@ -6852,7 +6852,7 @@ check('the server block is watched, not just the sections',
 
 const sysHtml = dsys._pnlSystems(dsys._config.sections[0]);
 check('systems on the stage names the server and its uptime',
-  /PurdyNAS/.test(sysHtml) && /12 days/.test(sysHtml));
+  /HomeServer/.test(sysHtml) && /12 days/.test(sysHtml));
 check('systems draws a bar per meter', (sysHtml.match(/pd-mbar/g) || []).length === 3);
 check('a meter with no reading draws an empty track, never a bar at zero', (() => {
   const cache = sysHtml.slice(sysHtml.indexOf('Cache'));
@@ -6869,19 +6869,19 @@ check('the fault chip counts and colours by the worst severity',
 check('the CPU trend rides the existing history fetch',
   dsys._historyEntities().includes('sensor.cpu'));
 check('the other systems devices are secondary, not absent',
-  /Jeeves/.test(sysHtml) && sysHtml.indexOf('PurdyNAS') < sysHtml.indexOf('Jeeves'));
+  /Vacuum/.test(sysHtml) && sysHtml.indexOf('HomeServer') < sysHtml.indexOf('Vacuum'));
 check('a systems panel with no server block falls back rather than rendering blank', (() => {
   const d = new DK();
   d.setConfig({ sections: [{ type: 'systems', key: 's', zone: 'stage',
-    devices: [{ name: 'Jeeves', icon: 'mdi:robot-vacuum', chip: 'vacuum.j' }] }] });
+    devices: [{ name: 'Vacuum', icon: 'mdi:robot-vacuum', chip: 'vacuum.j' }] }] });
   d._hass = { states: { 'vacuum.j': { state: 'docked', attributes: {} } } };
-  return /Jeeves/.test(d._pnlSystems(d._config.sections[0]));
+  return /Vacuum/.test(d._pnlSystems(d._config.sections[0]));
 })());
 check('a healthy server says so rather than showing an empty list', (() => {
   dsys._hass.states['binary_sensor.parity'] = { state: 'off', attributes: {} };
   const h = dsys._pnlSystems(dsys._config.sections[0]);
   dsys._hass.states['binary_sensor.parity'] = { state: 'on', attributes: {} };
-  return /pd-chip good/.test(h) && /Healthy/.test(h) && /Nothing wrong with PurdyNAS/.test(h);
+  return /pd-chip good/.test(h) && /Healthy/.test(h) && /Nothing wrong with HomeServer/.test(h);
 })());
 
 const npHtml = dsys._dockNowplaying(dsys._config.sections[1]);
@@ -6920,7 +6920,7 @@ check('the temperature graph stretches but is capped',
 /* The chip already carries how long he has been up. */
 check('the status line does not repeat the awake time the chip carries', (() => {
   const d = new DK();
-  d.setConfig({ sections: [{ type: 'nursery', key: 'joel', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  d.setConfig({ sections: [{ type: 'nursery', key: 'nursery', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   d._nursery = {};
   const line = d._nurseryStatus({}, null,
     { wakeWindowMin: 120, wakeSince: Date.parse('2026-08-08T11:47:00'), bedMean: 1146 }, null, Date.now());
@@ -6928,7 +6928,7 @@ check('the status line does not repeat the awake time the chip carries', (() => 
 })());
 check('a live session still names its own elapsed time', (() => {
   const d = new DK();
-  d.setConfig({ sections: [{ type: 'nursery', key: 'joel', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
+  d.setConfig({ sections: [{ type: 'nursery', key: 'nursery', hatch: 'media_player.h', door: 'binary_sensor.d' }] });
   const now = Date.parse('2026-08-08T15:00:00');
   d._nursery = {};
   const live = { from: now - 3600000, settledAt: now - 3000000, active: true };
@@ -7151,7 +7151,7 @@ const hlStates = {
 const mkHl = (over, bands) => {
   const s = new SH();
   s.setConfig({ sections: [{ ...hlCfg, bands: bands || {} }] });
-  s._hass = { states: { ...hlStates, ...(over || {}) }, user: { id: 'u1', name: 'Brian' } };
+  s._hass = { states: { ...hlStates, ...(over || {}) }, user: { id: 'u1', name: 'Alex' } };
   /* All ~235 samples carry one upload timestamp, so the trace is plotted by
      index; the fixture gives them near-identical times on purpose. */
   s._history = { 'hae.hr': [60, 58, 57, 59, 62, 88, 104].map((v, i) => ({ t: 1000 + i, s: String(v) })) };
@@ -7361,7 +7361,7 @@ hlr.setConfig({
          { icon: 'mdi:heart-pulse', name: 'Body', mode: 'health' }],
   sections: [{ ...hlCfg, bands: {} }],
 });
-hlr._hass = { states: hlStates, user: { id: 'u1', name: 'Brian' } };
+hlr._hass = { states: hlStates, user: { id: 'u1', name: 'Alex' } };
 hlr._history = { 'hae.hr': [60, 58, 62].map((v, i) => ({ t: 1000 + i, s: String(v) })) };
 hlr.shadowRoot = {
   getElementById: (id) => (["ps-stat", "ps-col", "ps-sheetslot", "ps-dockwrap"].includes(id) ? mkHlSlot(id) : null),
@@ -7393,7 +7393,7 @@ check('the two modes keep separate page fields', (() => {
 check('an empty health config falls back to the house rather than a dead dock', (() => {
   const s = new SH();
   s.setConfig({ dock: [], sections: [{ ...hlCfg, bands: {} }] });
-  s._hass = { states: {}, user: { id: 'u1', name: 'Brian' } };
+  s._hass = { states: {}, user: { id: 'u1', name: 'Alex' } };
   s._mounted = true;
   s.shadowRoot = { getElementById: () => new MiniNode(), querySelector: () => null, querySelectorAll: () => [] };
   s._mode = 'health';
@@ -7404,13 +7404,13 @@ check('an empty health config falls back to the house rather than a dead dock', 
 /* ---- visible_to ----------------------------------------------------------- */
 const mkVis = (user) => { const s = new SH(); s.setConfig({ sections: [] }); s._hass = { states: {}, user }; return s; };
 check('no visible_to means everyone', mkVis({ id: 'x', name: 'Tayler' })._visible({}) === true);
-check('a user id matches', mkVis({ id: 'abc', name: 'Brian' })._visible({ visible_to: ['abc'] }) === true);
+check('a user id matches', mkVis({ id: 'abc', name: 'Alex' })._visible({ visible_to: ['abc'] }) === true);
 check('a name matches, case-insensitively',
-  mkVis({ id: 'abc', name: 'Brian' })._visible({ visible_to: ['brian'] }) === true);
+  mkVis({ id: 'abc', name: 'Alex' })._visible({ visible_to: ['alex'] }) === true);
 check('a bare string is accepted as a one-item list',
-  mkVis({ id: 'abc', name: 'Brian' })._visible({ visible_to: 'abc' }) === true);
+  mkVis({ id: 'abc', name: 'Alex' })._visible({ visible_to: 'abc' }) === true);
 check('the other person does not match',
-  mkVis({ id: 'zzz', name: 'Tayler' })._visible({ visible_to: ['abc', 'Brian'] }) === false);
+  mkVis({ id: 'zzz', name: 'Tayler' })._visible({ visible_to: ['abc', 'Alex'] }) === false);
 /* Absent hass.user hides rather than shows. Showing a restricted section for
    one frame until the user object lands is the failure that gets noticed. */
 check('an absent user hides, it does not show',
@@ -7434,7 +7434,7 @@ const mkVisShell = (user) => {
   };
   return s;
 };
-const visMine = mkVisShell({ id: 'abc', name: 'Brian' });
+const visMine = mkVisShell({ id: 'abc', name: 'Alex' });
 visMine._render();
 const dockMine = visSlots['ps-dockwrap']._html;
 check('his own dock carries the Body button', /name="Body"|>Body</.test(dockMine));

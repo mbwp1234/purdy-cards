@@ -3641,7 +3641,7 @@ class PurdyNotificationsCard extends PcBaseCard {
     detail = detail.replace(/^(critical|warn|info)\s*·?\s*/, "").replace(/·\s*$/, "").trim();
     return {
       uid: it.uid,
-      /* "Notice [PURDYNAS] - Version update ac65..33a6" spends its first twenty
+      /* "Notice [HOMESERVER] - Version update ac65..33a6" spends its first twenty
          characters saying what the severity dot beside it already says, then
          pushes the real subject onto a second line or off the end. The systems
          page learned this in v1.46.2 and the log never did — same feed, same
@@ -5742,7 +5742,7 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   /* Deduped: a room temp is frequently also the graph's inside sensor, and
-     Joel's room appears in both the climate rooms and the sleep section. The
+     the baby's room appears in both the climate rooms and the sleep section. The
      same id twice makes the recorder query longer for no extra data. */
   _historyEntities() {
     const ids = new Set();
@@ -6128,7 +6128,7 @@ class PurdyShellCard extends PcBaseCard {
           ${/* Presence used to be a section: two rows reading "Home · 80% ·
                 3,805", 105px, with nothing to tap and nothing to decide. It is
                 ambient, so it belongs in the chrome. The avatars also supersede
-                the occupancy WORD — house_occupancy is Home / Away / Brian Only
+                the occupancy WORD — house_occupancy is Home / Away / Alex Only
                 / Tayler Only, which is per-person presence spelled out, and two
                 rings say which without being read. Occupancy still prints when
                 no people: is configured. */""}
@@ -6797,7 +6797,7 @@ class PurdyShellCard extends PcBaseCard {
     });
 
     /* A row can be the way into a mode as well as a dock button — the
-       PurdyNAS row on the landing page opens the server pages rather than
+       HomeServer row on the landing page opens the server pages rather than
        expanding a smaller copy of them beside the real thing. */
     this._each("[data-mode]", (el) => {
       el.addEventListener("click", (e) => {
@@ -7523,7 +7523,7 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }).join("");
 
-    /* Expanded: the recap rows and chips that used to live behind #joel. */
+    /* Expanded: the recap rows and chips that used to live behind #nursery. */
     const w = sec.wakeups || {};
     /* Everything else in this section switches to the persisted value when the
        sock is off; this row alone always read the live counter, so the night
@@ -8065,7 +8065,7 @@ Object.assign(PurdyShellCard.prototype, {
         `<button class="ps-btn" type="button" data-dbtn="${di}|${i}">${psEsc(b.name)}</button>`).join("");
 
       /* A device can hand its depth to the systems mode instead of expanding.
-         PurdyNAS is five pages now, and a chevron that opens a stub of them
+         HomeServer is five pages now, and a chevron that opens a stub of them
          beside the real thing is two answers to one question — so the row
          becomes the way in and drops the expand entirely. */
       const toMode = d.mode
@@ -9339,7 +9339,7 @@ Object.assign(PurdyShellCard.prototype, {
         const names = Object.keys(hass.states)
           .filter((id) => re.test(id) && hit(hass.states[id]))
           /* `strip` takes a list as well as a single string. One pattern only
-             ever removed a prefix, so the Jeeves consumables rule came out as
+             ever removed a prefix, so the vacuum consumables rule came out as
              "Filter Left · Sensor Dirty Time Left · Wheel Dirty Time Left" —
              HA's friendly names leaking through the tail. Applied in order,
              then collapsed, so a rule can take both ends off a name. */
@@ -9474,7 +9474,7 @@ Object.assign(PurdyShellCard.prototype, {
        printing "Crew" twice. The section stays in the config as `alerts_only`,
        so the landing page keeps the moments that need a human and nothing else.
 
-       The vacuum map is reached from the Jeeves tile inside this body, which is
+       The vacuum map is reached from the vacuum tile inside this body, which is
        the door that had to move with it: replacing a surface orphans whatever
        was only reachable through it, and this card has lost the music presets
        and the vacuum map to exactly that mistake before. */
@@ -9767,7 +9767,7 @@ Object.assign(PurdyShellCard.prototype, {
  * Nothing is persisted. Sessions, durations, start times and intervention
  * counts are all derived from recorder history of two entities, which means a
  * bug in the derivation is fixed by editing this file and the PAST recomputes.
- * That was never true of `input_number.joel_wakeups_last_night`.
+ * That was never true of `input_number.nursery_wakeups_last_night`.
  */
 
 /* Local YYYY-MM-DD. Not toISOString(), which is UTC and rolls the day over at
@@ -10392,7 +10392,7 @@ function psNurseryStats(sessions, opts) {
  * does not trust the number yet. The question actually being asked of this
  * section every morning is "is that normal for him, and is the week going the
  * right way" — which is the band-and-meter vocabulary from Body, pointed at
- * Joel. It costs nothing extra to compute: the sessions are already derived
+ * the baby. It costs nothing extra to compute: the sessions are already derived
  * from the seven-day fetch, so his normal is free where every Apple Health band
  * needs a template mirror and a nightly ring buffer.
  *
@@ -11446,7 +11446,7 @@ Object.assign(PurdyShellCard.prototype, {
   /* Is this light guarded right now?
    *
    * `protect.when` names an entity and `protect.state` the state that means
-   * "guarded" — for Joel that is the Hatch playing, i.e. a sleep session
+   * "guarded" — for the baby that is the Hatch playing, i.e. a sleep session
    * actually in progress. Gated on the SESSION and not on the light, so the
    * prompt is silent all day and unmissable at 2am.
    */
@@ -11993,7 +11993,7 @@ Object.assign(PurdyShellCard.prototype, {
  * THE LISTS ARE DISCOVERED, NOT CONFIGURED. Containers, disks and shares come
  * out of `hass.states` by prefix. The hand-typed version of this had five
  * Docker groups naming eleven containers, and THREE of those entity ids did
- * not exist (`switch.purdynas_container_lancache`, `_lancache_dns`,
+ * not exist (`switch.homeserver_container_lancache`, `_lancache_dns`,
  * `_lancache_prefill`) — they had rendered as permanently-off toggles that did
  * nothing, for however long. A list that is derived cannot drift from the
  * server; a list that is typed always eventually has.
@@ -12117,7 +12117,7 @@ Object.assign(PurdyShellCard.prototype, {
       .map((c) => {
         const st = this._hass.states[c.id];
         const over = names[c.key] || {};
-        /* The friendly name is "PurdyNAS Container binhex-jellyfin" — the last
+        /* The friendly name is "HomeServer Container binhex-jellyfin" — the last
            segment is the container's real name, which is what to show. */
         const fn = (st && st.attributes.friendly_name) || c.key;
         const auto = fn.indexOf(" Container ") > 0 ? fn.split(" Container ").pop() : c.key;
@@ -12408,7 +12408,7 @@ Object.assign(PurdyShellCard.prototype, {
     const regType = pcState(h, s.registration_type);
     /* An alert a human action clears is fine; one no action clears is noise.
      *
-     * `sensor.purdynas_registration_state` reads `expired` on this Plus key and
+     * `sensor.homeserver_registration_state` reads `expired` on this Plus key and
      * always will — what has lapsed is the free-update window, not the licence,
      * and the server is working exactly as bought. So it drew a permanent amber
      * dot on Overview for a condition with nothing to do about it, which is the
@@ -12860,7 +12860,7 @@ Object.assign(PurdyShellCard.prototype, {
     ];
     const filter = this._synf || "all";
 
-    /* "Notice [PURDYNAS] - Version update 2026.08.07.1706" spends its first
+    /* "Notice [HOMESERVER] - Version update 2026.08.07.1706" spends its first
        twenty characters saying what the dot beside it already says, on every
        row, and pushes the actual subject off the end of the line. */
     const subject = (x) => String(x.subject || "Notification")
@@ -13043,7 +13043,7 @@ Object.assign(PurdyShellCard.prototype, {
  * two buttons stranded at the bottom. So each card owns its own open state and
  * its own panel, and both can be open, or neither.
  *
- * A NUMBER NEEDS ITS NOUN. The old tiles read "Jeeves 10 %" and "Litter 16 %" —
+ * A NUMBER NEEDS ITS NOUN. The old tiles read "Vacuum 10 %" and "Litter 16 %" —
  * the dirty-water tank and the waste drawer, unlabelled, pointing opposite ways.
  * Every figure here is drawn next to what it measures.
  *
@@ -13060,7 +13060,7 @@ function psCrewPct(v) {
   return v == null ? "—" : `${Math.round(v)}%`;
 }
 
-/* Dreame publishes its selects as slugs — select.jeeves_cleaning_mode is
+/* Dreame publishes its selects as slugs — select.vacuum_cleaning_mode is
    "mopping", not "Mopping". Only rendering against real states caught it. */
 function psCrewWords(s) {
   if (!s || s === "unknown" || s === "unavailable") return "";
@@ -13097,7 +13097,7 @@ function psCrewMiles(areaValue, unit, widthM) {
 /* THE WATER IS THE JOB, and it comes off the vacuum's own ATTRIBUTES.
  *
  * Dreame publishes the water picture twice: as a spray of enum sensors
- * (sensor.jeeves_low_water_warning = "no_warning") and as plain booleans on the
+ * (sensor.vacuum_low_water_warning = "no_warning") and as plain booleans on the
  * vacuum entity itself (low_water: false). The attributes win. They are one
  * read instead of six, they cannot drift out of sync with each other, and they
  * are already typed — parsing "no_warning" back into a boolean is inventing a
@@ -13292,7 +13292,7 @@ Object.assign(PurdyShellCard.prototype, {
 
     return `<div class="ps-cwcard ${open ? "open" : ""}">
         <button class="ps-cwface" type="button" data-crewzone="vac">
-          ${this._crewCardHead(v.name || "Jeeves", open, running, aside)}
+          ${this._crewCardHead(v.name || "Vacuum", open, running, aside)}
           <div class="ps-cwring">
             ${this._crewRing(92,
               { frac: w.dirty == null ? null : w.dirty / 100, col: dirtyCol },
@@ -13635,7 +13635,7 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* The full crew body, shared by the section and the sheet.
    *
-   * `openDefault` is how the sheet opens with Jeeves already expanded. In the
+   * `openDefault` is how the sheet opens with the vacuum already expanded. In the
    * column an expanded panel pushed everything below it down, so collapsed was
    * the right default; a sheet has the room, and leaving it collapsed would put
    * the vacuum map — the whole reason the map sheet exists — two taps behind a
@@ -13665,7 +13665,7 @@ Object.assign(PurdyShellCard.prototype, {
    * This is the whole argument for moving the crew behind the dock. The section
    * measured 329px — the second largest thing on the phone — and the great
    * majority of the time it said: everything is docked, nothing is running, the
-   * washer is off. That is a lot of screen to report an absence. Jeeves is idle
+   * washer is off. That is a lot of screen to report an absence. The vacuum is idle
    * most of the day, the litter box is interesting twice a month, and the washer
    * matters for the twenty minutes after it finishes.
    *
@@ -14885,7 +14885,7 @@ Object.assign(PurdyShellCard.prototype, {
  *
  * THE UNIT IS A METER, NOT A RING.
  *
- * Brian rejected the Apple activity rings. He did *not* reject graphed metrics
+ * The Apple activity rings were rejected here — but not graphed metrics
  * — that misreading cost a round trip, and it is worth writing down because the
  * two look like the same objection and are not. A meter is a micro label, the
  * number, and a track carrying his own normal band with a dot on today. It
@@ -14978,7 +14978,7 @@ function psHmDur(h) {
  *   unit    small trailing unit, inside the numeral
  *   band    {lo, hi} from HIS readings, or null/absent when there is none yet
  *   hiOk    true when above the band is not a fault (HRV, REM)
- *   loOk    the mirror, and it arrived with Joel: for wake-ups fewer is better,
+ *   loOk    the mirror, and it arrived with the baby: for wake-ups fewer is better,
  *           so an undisturbed night sits BELOW his band and drawing it amber
  *           would call the best night of the week a fault. Any "lower is
  *           better" metric needs it — there was no such metric in Body, which
@@ -15304,7 +15304,7 @@ Object.assign(PurdyShellCard.prototype, {
      The chip carries the half of the loop the body is NOT showing. The three
      collapsed meters are night and recovery, so the chip is today's load.
      It must never carry the sentence's conclusion — that is the duplication
-     this project has shipped four times now (weather, desk, Joel, and the
+     this project has shipped four times now (weather, desk, the baby, and the
      first draft of this card) — and it must never claim a roll-up like "all
      in band", because sleep is routinely out while the other two are in, and
      the chip would then contradict a dot two centimetres below it. */
@@ -15529,7 +15529,7 @@ Object.assign(PurdyShellCard.prototype, {
     const awake = this._hlRead(sec.sleep_awake);
     const goal = this._hlGoal(sec, "sleep", 7.5);
 
-    /* Three arcs on one ring, summing to the total in the middle — the Joel
+    /* Three arcs on one ring, summing to the total in the middle — the baby
        ring's construction, which already answers "how much, and what was it
        made of" in a single picture. The arcs are drawn from the STAGES rather
        than sliced out of the total: they sum to it anyway, and scaling
@@ -15608,7 +15608,7 @@ Object.assign(PurdyShellCard.prototype, {
      The first live render broke that on three pages out of four — "31 ms HRV"
      directly above an HRV meter reading 31, "200 W FTP" above an FTP meter
      reading 200, "4,817 steps" above a Steps meter. It is the same duplication
-     as the weather hero, the desk's "Up 2h 0m", Joel's chip and this section's
+     as the weather hero, the desk's "Up 2h 0m", the baby's chip and this section's
      own first sentence, and it keeps coming back because a number is the
      easiest thing to reach for when a chip needs filling.
    *
@@ -15901,7 +15901,7 @@ const PS_STYLES = `
               display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
       /* Presence, in the chrome rather than in a section of its own.
-         The occupancy helper says "Brian Only"; two avatars with a ring say the
+         The occupancy helper says "Alex Only"; two avatars with a ring say the
          same thing without a heading, a card and 105px — and they say WHICH one
          without being read. The tap target is padded out behind the paint, the
          same way every round control on this card is.
@@ -18020,7 +18020,7 @@ class PurdyDeskCard extends PcBaseCard {
   /* --------------------------------------------------------------- sheets --
    *
    * The desktop inverts the phone's rule: what you LOOK AT is inline, what you
-   * FIDDLE WITH is behind a sheet. Climate, Joel, music and the calendar are
+   * FIDDLE WITH is behind a sheet. Climate, the baby, music and the calendar are
    * on the glass; the TV remote, the notification log and the vacuum map stay
    * sheets, because a d-pad is a task and a log is read on demand.
    *
@@ -18328,7 +18328,7 @@ Object.assign(PurdyDeskCard.prototype, {
  *   mini   the folded headline, shown when a DIFFERENT panel is expanded
  *
  * `mini` is why this is folding and not hiding. Opening climate must not make
- * Joel disappear — it makes him a number you can still read. That is the whole
+ * the baby disappear — it makes it a number you can still read. That is the whole
  * difference between this and the phone's pop-ups, which black out everything
  * behind them.
  *

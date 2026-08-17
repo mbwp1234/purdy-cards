@@ -12,7 +12,7 @@
  * Nothing is persisted. Sessions, durations, start times and intervention
  * counts are all derived from recorder history of two entities, which means a
  * bug in the derivation is fixed by editing this file and the PAST recomputes.
- * That was never true of `input_number.joel_wakeups_last_night`.
+ * That was never true of `input_number.nursery_wakeups_last_night`.
  */
 
 /* Local YYYY-MM-DD. Not toISOString(), which is UTC and rolls the day over at
@@ -637,7 +637,7 @@ function psNurseryStats(sessions, opts) {
  * does not trust the number yet. The question actually being asked of this
  * section every morning is "is that normal for him, and is the week going the
  * right way" — which is the band-and-meter vocabulary from Body, pointed at
- * Joel. It costs nothing extra to compute: the sessions are already derived
+ * the baby. It costs nothing extra to compute: the sessions are already derived
  * from the seven-day fetch, so his normal is free where every Apple Health band
  * needs a template mirror and a nightly ring buffer.
  *

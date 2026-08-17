@@ -124,7 +124,7 @@ function buildHass(states) {
     themes: { darkMode: true, theme: "default" },
     locale: { language: "en", number_format: "language", time_format: "12", first_weekday: "language" },
     config: { unit_system: { temperature: "°F", length: "mi" }, time_zone: "America/New_York" },
-    user: { id: "harness", name: "Brian", is_admin: true },
+    user: { id: "harness", name: "Alex", is_admin: true },
 
     callApi: (method, apiPath) => tracked(async () => {
       const r = await post("/h/api", { method, path: apiPath });

@@ -425,7 +425,7 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }).join("");
 
-    /* Expanded: the recap rows and chips that used to live behind #joel. */
+    /* Expanded: the recap rows and chips that used to live behind #nursery. */
     const w = sec.wakeups || {};
     /* Everything else in this section switches to the persisted value when the
        sock is off; this row alone always read the live counter, so the night
@@ -967,7 +967,7 @@ Object.assign(PurdyShellCard.prototype, {
         `<button class="ps-btn" type="button" data-dbtn="${di}|${i}">${psEsc(b.name)}</button>`).join("");
 
       /* A device can hand its depth to the systems mode instead of expanding.
-         PurdyNAS is five pages now, and a chevron that opens a stub of them
+         HomeServer is five pages now, and a chevron that opens a stub of them
          beside the real thing is two answers to one question — so the row
          becomes the way in and drops the expand entirely. */
       const toMode = d.mode

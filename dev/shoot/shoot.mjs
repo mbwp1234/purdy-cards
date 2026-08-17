@@ -33,7 +33,7 @@ const PHONE = [390, 844];
 const DESK = [1440, 900];
 /* One entry per thing worth looking at. Phone first: it is the view that ships. */
 const PRESETS = {
-  /* Section keys are the live config's: joel · clim · now · people · crew ·
+  /* Section keys are the live config's: nursery · clim · now · people · crew ·
    * ahead, plus the sheet_only music and lights. Systems is a MODE here, not a
    * section, so it is reached with mode= rather than open=. */
   phone:          [PHONE, SHELL],
@@ -44,14 +44,14 @@ const PRESETS = {
   "phone-sky-day":   [PHONE, SHELL + "&sky=day"],
   "phone-sky-dusk":  [PHONE, SHELL + "&sky=dusk"],
   "phone-sky-night": [PHONE, SHELL + "&sky=night"],
-  "phone-joel":   [PHONE, SHELL + "&open=joel"],
+  "phone-nursery":   [PHONE, SHELL + "&open=nursery"],
   /* Correcting a session. The list with its long-press targets, then the sheet
      itself — which is opened by a press-and-hold, the one entry point a URL
      cannot express, so `napedit=` picks a session out of the card's own
      derived list. */
-  "phone-napedit":      [PHONE, SHELL + "&patch=napedit&open=joel"],
-  "phone-napedit-sheet":[PHONE, SHELL + "&patch=napedit&open=joel&napedit=last"],
-  "phone-napedit-night":[PHONE, SHELL + "&patch=napedit&open=joel&napedit=night"],
+  "phone-napedit":      [PHONE, SHELL + "&patch=napedit&open=nursery"],
+  "phone-napedit-sheet":[PHONE, SHELL + "&patch=napedit&open=nursery&napedit=last"],
+  "phone-napedit-night":[PHONE, SHELL + "&patch=napedit&open=nursery&napedit=night"],
   "phone-climate":[PHONE, SHELL + "&open=clim"],
   "phone-crew":   [PHONE, SHELL + "&open=crew"],
   /* The Body section against live Apple Health and Garmin data. Collapsed is
@@ -82,7 +82,7 @@ const PRESETS = {
      cloudy day — the effect is deliberately quiet in the common conditions, so
      waiting for real weather is not a verification strategy. */
   "phone-rain":     [PHONE, SHELL + "&patch=weather-fx"],
-  "phone-rain-joel":[PHONE, SHELL + "&patch=weather-fx&open=joel"],
+  "phone-rain-nursery":[PHONE, SHELL + "&patch=weather-fx&open=nursery"],
   lights:         [PHONE, SHELL + "&sheet=lights"],
   music:          [PHONE, SHELL + "&sheet=music"],
   /* The two faces of the media sheet. Both are worth a slot because they are

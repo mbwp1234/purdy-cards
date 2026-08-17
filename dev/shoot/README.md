@@ -101,7 +101,7 @@ Three consequences worth internalising:
 
 Rules that keep it cheap:
 
-- **Shoot only what changed** (`shoot.mjs phone-joel`), not all 13.
+- **Shoot only what changed** (`shoot.mjs phone-nursery`), not all 13.
 - **Always pass `view_path=`** to `ha_config_get_dashboard` — 6× cheaper than the
   whole dashboard, and the `config_hash` still covers the full config so a
   `python_transform` still validates.
@@ -119,7 +119,7 @@ Phone shots are 390×844, desk is 1440×900. `--dpr 2` for retina (four times th
 pixels, and four times the tokens if an agent is reading them).
 
 ```
-phone  phone-joel  phone-climate  phone-crew   lights  music  alerts
+phone  phone-nursery  phone-climate  phone-crew   lights  music  alerts
 phone-weather  phone-weather-fc  phone-weather-cold
 sys-overview  sys-docker  sys-storage  sys-perf  sys-alerts
 desk  desk-weather
