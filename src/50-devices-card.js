@@ -188,7 +188,7 @@ class PurdyDevicesCard extends PcBaseCard {
           <div class="frow tappable" data-info="${f.entity}">
             <span class="fdot"></span>
             <div class="grow">
-              <div class="fn">${f.label || pcName(this._hass, f.entity)}</div>
+              <div class="fn">${pcEsc(f.label || pcName(this._hass, f.entity))}</div>
               <div class="fd">${f.detail || pcState(this._hass, f.entity)}</div>
             </div>
             <ha-icon icon="mdi:chevron-right"></ha-icon>

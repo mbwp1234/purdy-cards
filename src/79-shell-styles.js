@@ -183,7 +183,7 @@ const PS_STYLES = `
       .ps-chip.good { background: rgba(129,201,149,.17); color: var(--ps-good); }
       .ps-chip.warn { background: rgba(242,193,78,.17); color: var(--ps-warn); }
       .ps-chip.bad  { background: rgba(239,106,106,.17); color: var(--ps-bad); }
-      .ps-chip.cool { background: rgba(77,208,225,.16); color: var(--ps-cool); }
+      .ps-chip.cool { background: rgba(var(--pc-cool-rgb),.16); color: var(--ps-cool); }
       .ps-chip.deep { background: rgba(170,120,255,.18); color: var(--ps-deep); }
       .ps-chip.lt   { background: rgba(80,160,255,.18); color: var(--ps-light); }
       .ps-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
@@ -267,7 +267,7 @@ const PS_STYLES = `
       .ps-zc { flex: 1; padding: 8px 10px; border-radius: var(--pc-r-sm); background: var(--ps-fill); font-size: var(--pc-fs-xs);
                color: var(--ps-muted); font-variant-numeric: tabular-nums; line-height: 1.3; cursor: pointer; }
       .ps-zc b { display: block; font-size: var(--pc-fs-lg); color: var(--ps-text); font-weight: 660; letter-spacing: -.02em; }
-      .ps-zc.on { background: rgba(77,208,225,.15); color: var(--ps-cool); }
+      .ps-zc.on { background: rgba(var(--pc-cool-rgb),.15); color: var(--ps-cool); }
       .ps-zc.on b { color: var(--ps-cool); }
       .ps-wave { margin: 4px -15px -15px; position: relative; }
       /* The plotted range, so the line reads as a measurement rather than a
@@ -422,8 +422,8 @@ const PS_STYLES = `
                color: var(--ps-muted); font-size: var(--pc-fs-xs); font-weight: 650;
                display: inline-flex; align-items: center; gap: 6px; position: relative; }
       .ps-mr::after { content: ""; position: absolute; inset: -5px -3px; }
-      .ps-mr.sel { background: rgba(77,208,225,.16); color: var(--ps-cool);
-                   box-shadow: inset 0 0 0 1px rgba(77,208,225,.4); }
+      .ps-mr.sel { background: rgba(var(--pc-cool-rgb),.16); color: var(--ps-cool);
+                   box-shadow: inset 0 0 0 1px rgba(var(--pc-cool-rgb),.4); }
       .ps-live { width: 6px; height: 6px; border-radius: 50%; background: var(--ps-good); }
       .ps-pres { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-top: 7px; }
       .ps-pr { padding: 12px 11px; border-radius: var(--pc-r-md); background: var(--ps-fill); font-size: var(--pc-fs-sm);
@@ -434,7 +434,7 @@ const PS_STYLES = `
       .ps-rstrip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
       .ps-rc { min-width: 0; background: var(--ps-fill); border-radius: var(--pc-r-md);
                padding: 9px 11px; cursor: pointer; }
-      .ps-rc.acc { background: rgba(77,208,225,.12); }
+      .ps-rc.acc { background: rgba(var(--pc-cool-rgb),.12); }
       .ps-rn2 { font-size: var(--pc-fs-micro); letter-spacing: .11em; text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
       .ps-rc b { display: block; font-size: var(--pc-fs-xl); font-weight: 660; font-variant-numeric: tabular-nums;
                  letter-spacing: -.028em; margin-top: 3px; }
@@ -515,7 +515,7 @@ const PS_STYLES = `
                  flex: 0 0 auto; }
       .ps-knob i { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
                    background: var(--ps-muted); display: block; transition: left .18s, background .18s; }
-      .ps-knob.on { background: rgba(77,208,225,.4); }
+      .ps-knob.on { background: rgba(var(--pc-cool-rgb),.4); }
       .ps-knob.on i { left: 19px; background: var(--ps-cool); }
       .ps-btns { display: flex; gap: 6px; flex-wrap: wrap; }
       .ps-btn { display: inline-flex; align-items: center; gap: 7px;
@@ -532,11 +532,11 @@ const PS_STYLES = `
       .ps-timeline { position: relative; height: 28px; border-radius: var(--pc-r-xs); background: var(--ps-fill);
                      overflow: hidden; }
       .ps-seg { position: absolute; top: 3px; bottom: 3px; border-radius: 6px;
-                background: rgba(77,208,225,.22); border: 1px solid rgba(77,208,225,.4);
+                background: rgba(var(--pc-cool-rgb),.22); border: 1px solid rgba(var(--pc-cool-rgb),.4);
                 font-size: var(--pc-fs-micro); font-weight: 650; color: var(--ps-text);
                 display: flex; align-items: center; justify-content: center;
                 font-variant-numeric: tabular-nums; overflow: hidden; }
-      .ps-seg.live { background: rgba(77,208,225,.4); border-color: var(--ps-cool); }
+      .ps-seg.live { background: rgba(var(--pc-cool-rgb),.4); border-color: var(--ps-cool); }
       .ps-nowline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ps-warn); }
       .ps-tscale { display: flex; justify-content: space-between; font-size: var(--pc-fs-micro); color: var(--ps-dim);
                    font-variant-numeric: tabular-nums; }
@@ -544,7 +544,7 @@ const PS_STYLES = `
       .ps-sr { display: flex; align-items: center; gap: 9px; background: var(--ps-fill); border-radius: var(--pc-r-sm);
                padding: 11px 10px; font-size: var(--pc-fs-sm); font-variant-numeric: tabular-nums;
                width: 100%; text-align: left; }
-      .ps-sr.live { background: rgba(77,208,225,.13); }
+      .ps-sr.live { background: rgba(var(--pc-cool-rgb),.13); }
       .ps-sr[disabled] { cursor: default; }
       .ps-srt { font-weight: 650; flex: 0 0 128px; }
       .ps-srv { flex: 1; color: var(--ps-muted); }
@@ -741,8 +741,8 @@ const PS_STYLES = `
       .ps-wxtab { font-size: var(--pc-fs-micro); font-weight: 660; padding: 5px 11px;
                   border-radius: var(--pc-r-pill); background: var(--pc-fill-1);
                   color: var(--ps-dim); border: 1px solid transparent; position: relative; }
-      .ps-wxtab.on { background: rgba(77,208,225,.16); color: var(--ps-cool);
-                     border-color: rgba(77,208,225,.28); }
+      .ps-wxtab.on { background: rgba(var(--pc-cool-rgb),.16); color: var(--ps-cool);
+                     border-color: rgba(var(--pc-cool-rgb),.28); }
       /* The drawn size stays; the target grows behind the paint. */
       .ps-wxtab::after { content: ""; position: absolute; inset: -9px -4px; }
 
@@ -803,7 +803,7 @@ const PS_STYLES = `
                  font-variant-numeric: tabular-nums; line-height: 1; }
       .ps-wxhbar { width: 100%; height: 46px; display: flex; align-items: flex-end; }
       .ps-wxhbar i { width: 100%; border-radius: var(--pc-r-hair) var(--pc-r-hair) 0 0;
-                     background: linear-gradient(to top, rgba(77,208,225,.35), var(--ps-heat)); }
+                     background: linear-gradient(to top, rgba(var(--pc-cool-rgb),.35), var(--ps-heat)); }
       .ps-wxhp { font-size: var(--pc-fs-micro); color: var(--ps-cool); font-weight: 600;
                  font-variant-numeric: tabular-nums; line-height: 1; min-height: 10px; }
       .ps-wxhl { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-weight: 620;
@@ -931,11 +931,11 @@ const PS_STYLES = `
                background: var(--pc-fill-2); color: var(--ps-dim); }
       .ps-jb::after { content: ""; position: absolute; inset: -9px -4px; }
       .ps-jb .ps-ico { width: 14px; height: 14px; }
-      .ps-jb.on { background: rgba(77,208,225,.16); color: var(--ps-cool); }
-      .ps-mr.grp { box-shadow: inset 0 0 0 1px rgba(77,208,225,.22); color: var(--ps-cool); }
+      .ps-jb.on { background: rgba(var(--pc-cool-rgb),.16); color: var(--ps-cool); }
+      .ps-mr.grp { box-shadow: inset 0 0 0 1px rgba(var(--pc-cool-rgb),.22); color: var(--ps-cool); }
       .ps-move { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
                  padding: 11px; margin-bottom: 12px; border-radius: var(--pc-r-md);
-                 background: rgba(77,208,225,.13); color: var(--ps-cool);
+                 background: rgba(var(--pc-cool-rgb),.13); color: var(--ps-cool);
                  font-size: var(--pc-fs-sm); font-weight: 650; }
       .ps-qbar { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; padding: 8px 10px;
                  border-radius: var(--pc-r-md); background: var(--pc-fill-1); }
@@ -943,14 +943,14 @@ const PS_STYLES = `
                place-items: center; background: var(--pc-fill-2); color: var(--ps-dim); position: relative; }
       .ps-qb::after { content: ""; position: absolute; inset: -10px -4px; }
       .ps-qb .ps-ico { width: 15px; height: 15px; }
-      .ps-qb.on { background: rgba(77,208,225,.16); color: var(--ps-cool); }
+      .ps-qb.on { background: rgba(var(--pc-cool-rgb),.16); color: var(--ps-cool); }
       .ps-qone { position: absolute; right: 0; bottom: -1px; font-size: var(--pc-fs-micro);
                  font-weight: 700; line-height: 1; }
       .ps-qup { font-size: var(--pc-fs-xs); color: var(--ps-muted); }
       .ps-qpos { flex: 0 0 auto; font-size: var(--pc-fs-micro); color: var(--ps-dim);
                  font-variant-numeric: tabular-nums; }
       .ps-toast { margin-top: 10px; padding: 8px 11px; border-radius: var(--pc-r-sm);
-                  background: rgba(77,208,225,.13); color: var(--ps-cool);
+                  background: rgba(var(--pc-cool-rgb),.13); color: var(--ps-cool);
                   font-size: var(--pc-fs-xs); font-weight: 650; }
 
       /* search filters */
@@ -958,8 +958,8 @@ const PS_STYLES = `
       .ps-fc { padding: 6px 11px; border-radius: var(--pc-r-pill); background: var(--pc-fill-1);
                color: var(--ps-dim); font-size: var(--pc-fs-xs); font-weight: 650; position: relative; }
       .ps-fc::after { content: ""; position: absolute; inset: -7px -2px; }
-      .ps-fc.on { background: rgba(77,208,225,.16); color: var(--ps-cool);
-                  box-shadow: inset 0 0 0 1px rgba(77,208,225,.35); }
+      .ps-fc.on { background: rgba(var(--pc-cool-rgb),.16); color: var(--ps-cool);
+                  box-shadow: inset 0 0 0 1px rgba(var(--pc-cool-rgb),.35); }
 
       /* alert sheet */
       .ps-scrim { position: fixed; inset: 0; background: rgba(4,6,10,.6); z-index: 8; backdrop-filter: blur(2px); }
@@ -1014,7 +1014,7 @@ const PS_STYLES = `
       .ps-cwgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
       .ps-cwcard { background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
                    border-radius: var(--pc-r-lg); overflow: hidden; }
-      .ps-cwcard.open { background: var(--pc-fill-2); border-color: rgba(77,208,225,.28); }
+      .ps-cwcard.open { background: var(--pc-fill-2); border-color: rgba(var(--pc-cool-rgb),.28); }
       .ps-cwface { display: block; width: 100%; text-align: left; padding: 12px 12px 11px; }
       .ps-cwtop { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
       .ps-cwdot { width: 6px; height: 6px; border-radius: 50%; background: var(--ps-dim); flex: 0 0 auto; }
@@ -1060,8 +1060,8 @@ const PS_STYLES = `
       .ps-cwsub { font-size: var(--pc-fs-micro); letter-spacing: .13em; text-transform: uppercase;
                   color: var(--ps-dim); font-weight: 650; padding: 13px 0 7px; }
       .ps-cwhero { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
-                   background: linear-gradient(150deg, rgba(77,208,225,.14), rgba(77,208,225,.04));
-                   border: 1px solid rgba(77,208,225,.22); border-radius: var(--pc-r-lg);
+                   background: linear-gradient(150deg, rgba(var(--pc-cool-rgb),.14), rgba(var(--pc-cool-rgb),.04));
+                   border: 1px solid rgba(var(--pc-cool-rgb),.22); border-radius: var(--pc-r-lg);
                    padding: 12px 13px; }
       .ps-cwplay { width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto;
                    background: var(--ps-cool); color: #06131a; display: grid; place-items: center; }
@@ -1076,8 +1076,8 @@ const PS_STYLES = `
       .ps-cwroom { font-size: var(--pc-fs-xs); font-weight: 650; padding: 6px 10px;
                    border-radius: var(--pc-r-pill); background: var(--pc-fill-2);
                    color: var(--ps-muted); border: 1px solid transparent; }
-      .ps-cwroom.on { background: rgba(77,208,225,.15); color: var(--ps-cool);
-                      border-color: rgba(77,208,225,.3); }
+      .ps-cwroom.on { background: rgba(var(--pc-cool-rgb),.15); color: var(--ps-cool);
+                      border-color: rgba(var(--pc-cool-rgb),.3); }
       /* auto-fit with a floor, not a fixed 1fr 1fr: a third button squeezed
          three into a 340px row and clipped "Emptied tank" to "Emptied ta…".
          A truncated label is a MISSING label, not a smaller one — same fix as

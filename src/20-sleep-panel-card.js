@@ -98,7 +98,9 @@ class SleepPanelCard extends HTMLElement {
 
     if (!this._historyTimer) this._startHistory();
 
-    const snapshot = this._watched
+    /* Connection state first — see the same note on ClimatePanelCard. */
+    const off = pcOffline(hass);
+    const snapshot = (off ? "off|" : "on|") + this._watched
       .map((id) => {
         const s = hass.states[id];
         return s ? `${id}:${s.state}` : `${id}:missing`;
@@ -107,6 +109,7 @@ class SleepPanelCard extends HTMLElement {
 
     if (snapshot !== this._lastStates) {
       this._lastStates = snapshot;
+      if (this.classList && this.classList.toggle) this.classList.toggle("pc-stale", off);
       this._scheduleRender();
     }
   }
@@ -912,6 +915,11 @@ class SleepPanelCard extends HTMLElement {
         font-family: var(--paper-font-body1_-_font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
         color: var(--spc-text);
       }
+
+      /* See the same note on ClimatePanelCard: disconnected, the vitals and the
+         composition are last-known-good, and a sleeping baby's numbers are the
+         last ones you want to read as live. */
+      :host(.pc-stale) { opacity: 0.62; filter: saturate(0.45); }
 
       ha-card {
         background: var(--spc-panel);

@@ -91,7 +91,11 @@ class ClimatePanelCard extends HTMLElement {
     if (!this._historyTimer) this._startHistory();
     if (this._config.weather && !this._forecastUnsub) this._subscribeForecast();
 
-    const snapshot = this._watched
+    /* The connection state leads the snapshot, or losing the websocket would
+       change nothing in it: every entity keeps its last-known-good value, so
+       nothing repaints and the card cannot mark itself as stale. */
+    const off = pcOffline(hass);
+    const snapshot = (off ? "off|" : "on|") + this._watched
       .map((id) => {
         const s = hass.states[id];
         return s ? `${id}:${s.state}:${s.attributes.temperature}:${s.attributes.current_temperature}:${s.attributes.hvac_action}:${s.attributes.from_thermostat}` : `${id}:missing`;
@@ -100,6 +104,7 @@ class ClimatePanelCard extends HTMLElement {
 
     if (snapshot !== this._lastStates) {
       this._lastStates = snapshot;
+      if (this.classList && this.classList.toggle) this.classList.toggle("pc-stale", off);
       this._scheduleRender();
     }
   }
@@ -1144,6 +1149,11 @@ class ClimatePanelCard extends HTMLElement {
         -webkit-font-smoothing: antialiased;
       }
       * { box-sizing: border-box; }
+      /* Disconnected, every reading on this panel is last-known-good — the ring,
+         the trend, the room rows and the setpoint alike. Marked rather than
+         captioned: the home screen's header card carries the sentence, and a
+         panel opened from it inherits the answer. */
+      :host(.pc-stale) { opacity: 0.62; filter: saturate(0.45); }
       button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; text-align: inherit; }
       button:focus-visible { outline: 2px solid var(--cpc-cool); outline-offset: 2px; border-radius: 8px; }
       ha-icon { --mdc-icon-size: 18px; }
@@ -1157,7 +1167,7 @@ class ClimatePanelCard extends HTMLElement {
       .weather {
         display: flex; align-items: center; gap: 12px; width: 100%;
         padding: 12px 16px;
-        background: linear-gradient(180deg, rgba(77, 208, 225, 0.10), transparent);
+        background: linear-gradient(180deg, rgba(var(--pc-cool-rgb), 0.10), transparent);
         border-bottom: 1px solid var(--cpc-line);
         font-size: 13px; color: var(--cpc-muted);
         cursor: pointer;
@@ -1200,7 +1210,7 @@ class ClimatePanelCard extends HTMLElement {
         background: var(--cpc-chip); color: var(--cpc-muted);
       }
       .action .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-      .action.cool { background: rgba(77, 208, 225, 0.14); color: var(--cpc-cool); }
+      .action.cool { background: rgba(var(--pc-cool-rgb), 0.14); color: var(--cpc-cool); }
       .action.heat { background: rgba(255, 149, 87, 0.14); color: var(--cpc-heat); }
       .reason { margin-top: 8px; font-size: 12px; color: var(--cpc-muted); line-height: 1.45; }
 
@@ -1350,8 +1360,8 @@ class ClimatePanelCard extends HTMLElement {
       }
       .seg {
         position: absolute; top: 3px; bottom: 3px; min-width: 3px;
-        background: rgba(77, 208, 225, 0.28);
-        border: 1px solid rgba(77, 208, 225, 0.5);
+        background: rgba(var(--pc-cool-rgb), 0.28);
+        border: 1px solid rgba(var(--pc-cool-rgb), 0.5);
         border-radius: 6px; padding: 0 3px;
         font-size: 10.5px; font-weight: 600; line-height: 1;
         color: var(--cpc-text);

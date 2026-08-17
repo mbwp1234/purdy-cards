@@ -139,9 +139,9 @@ Object.assign(PurdyShellCard.prototype, {
     if (l.gone) return "unavailable";
     const mem = l.cfg.members || [];
     const dead = mem.filter((m) => !pcReading(h, m).ok);
-    if (dead.length) return `${pcName(h, dead[0])} offline`;
+    if (dead.length) return `${psEsc(pcName(h, dead[0]))} offline`;
     const ex = (l.cfg.extras || []).filter((e) => pcState(h, e) === "on");
-    if (ex.length) return `${ex.map((e) => pcName(h, e)).join(" · ")} on`;
+    if (ex.length) return `${psEsc(ex.map((e) => pcName(h, e)).join(" · "))} on`;
     if (l.on && mem.length > 3) {
       const lit = mem.filter((m) => pcState(h, m) === "on").length;
       if (lit && lit < mem.length) return `${lit} of ${mem.length} on`;
