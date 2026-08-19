@@ -1142,8 +1142,16 @@ check('the sky switches instantly, with no transition on the ground', (() => {
      comment block, and a loose match ran from that prose into an unrelated
      rule and reported a transition that is not on the ground at all. */
   const rules = [...shs.matchAll(/^ *\.ps-ground[^{\n]*\{([^}]*)\}/gm)].map((m) => m[1]);
-  return rules.length === 5 && rules.every((r) => !/transition|animation/.test(r));
+  return rules.length === 6 && rules.every((r) => !/transition|animation/.test(r));
 })());
+/* The hem. The dock's fade is anchored to the DOCK and the warm horizon it
+   hides is anchored to the VIEWPORT; HA's view puts ~42px of padding under the
+   card, so at full scroll the two stop lining up and dusk paints raw below the
+   dock. The cover has to ride the ground itself, which cannot desync from the
+   sky because it is the same node. */
+check('the ground hems its own warm horizon rather than relying on the dock',
+  /\.ps-ground::before \{[^}]*bottom: 0[^}]*\}/.test(shs)
+  && /\.ps-ground::before \{[^}]*linear-gradient\(180deg, transparent[^}]*\}/.test(shs));
 
 /* --- Skyline: one aurora accent ---------------------------------------- */
 check('the aurora pair is a token, not a loose hex in the sheet',
