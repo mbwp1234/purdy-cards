@@ -108,6 +108,21 @@ const PS_STYLES = `
           radial-gradient(140% 26% at 50% 106%, rgba(62,127,184,.22), transparent 70%),
           linear-gradient(178deg, #0A101C 0%, #080C15 52%, #0A111C 100%);
       }
+      /* The hem. Every sky puts its warmest colour at the BOTTOM, and the only
+         thing covering that strip was the DOCK's fade — a layer anchored to
+         the dock while the thing it hides is anchored to the VIEWPORT. The two
+         line up only while the dock is stuck to the bottom of the screen. It
+         is not: HA's view puts ~42px of its own padding under the card, so at
+         full scroll the dock lands that far up and the dusk horizon paints
+         raw underneath it as an orange smear across the foot of the page.
+         So the ground carries its own hem, which cannot desync from the sky
+         because it IS the sky's own node. It is entirely inside the dock's
+         188px fade in the normal case, so it changes nothing where the dock
+         already covers — it only stops the strip below the dock going warm. */
+      .ps-ground::before {
+        content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 150px;
+        background: linear-gradient(180deg, transparent, rgba(6,7,14,.55) 58%, rgba(6,7,14,.88));
+      }
       .ps-ground.sky-dawn {
         background:
           radial-gradient(120% 44% at 70% -8%, rgba(122,100,255,.22), transparent 62%),
