@@ -80,8 +80,31 @@ const PC_BASE = `
   .chip ha-icon { --mdc-icon-size: 14px; }
   .tappable { cursor: pointer; }
   .tappable:active { background: var(--pc-panel-2); }
+  /* Everything on a disconnected card is last-known-good. Two cards say so in
+     words — the header, which is the top of the column and always there, and
+     attention, whose silence is otherwise a claim of health. Every other card is
+     MARKED rather than captioned, because six cards each printing "Offline" is
+     a paragraph nobody reads.
+     On :host rather than on the card root, because the roots are not one
+     selector — .card, .wrap, .strip and .grid across five cards — and marking
+     the element is one rule that cannot miss a card added later. */
+  :host(.pc-stale) { opacity: 0.62; filter: saturate(0.45); }
+  .offline {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600; color: var(--pc-warn);
+  }
+  .offline .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--pc-warn); flex: 0 0 auto;
+  }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 `;
+
+/* The house-level statement, used by the header card. Everything else takes the
+   `pc-stale` host class instead — see PC_BASE. */
+function pcOfflineNote() {
+  return `<span class="offline"><span class="dot"></span>Offline · last known good</span>`;
+}
 
 /* Read a numeric state, or null when it is missing/non-numeric. */
 function pcNum(hass, id) {
@@ -145,12 +168,33 @@ class PcBaseCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._config) return;
-    const sig = this._watched
+    /* The connection state leads the signature.
+     *
+     * Losing the websocket changes no entity's state — every one of them keeps
+     * its last-known-good value — so the signature was identical and nothing
+     * re-rendered. Which meant a card could not have said it was offline even
+     * if it wanted to: by the time `connected` went false, the only thing that
+     * would have repainted it was an entity change, and entity changes are
+     * exactly what had stopped arriving. */
+    const off = pcOffline(hass);
+    const sig = (off ? "off|" : "on|") + this._watched
       .map((id) => (hass.states[id] ? hass.states[id].state : "~"))
       .join("|");
     if (sig === this._last) return;
     this._last = sig;
+    /* The mark, for every card that does not say it in words. Toggled here
+       rather than inside each _render because the roots are not one selector and
+       a card added later would have been the one that forgot. */
+    if (!this._ownsOffline && this.classList && this.classList.toggle) {
+      this.classList.toggle("pc-stale", off);
+    }
     this._render();
+  }
+
+  /* Set by the two cards that state the connection rather than being dimmed by
+     it — dimming the sentence that explains the dimming is not an improvement. */
+  get _ownsOffline() {
+    return false;
   }
 
   getCardSize() {
@@ -161,6 +205,8 @@ class PcBaseCard extends HTMLElement {
 /* ---------------------------------------------------------------- header --*/
 
 class PurdyHeaderCard extends PcBaseCard {
+  get _ownsOffline() { return true; }
+
   static getStubConfig(hass) {
     const w = Object.keys(hass.states).find((e) => e.startsWith("weather."));
     /* No name key at all, so the greeting follows whoever is signed in. */
@@ -221,7 +267,11 @@ class PurdyHeaderCard extends PcBaseCard {
     };
     const time = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     const date = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
-    const sub = [date, time, occ].filter(Boolean).join(" · ");
+    /* Offline, the occupancy is whatever it was when the connection dropped, so
+       it is dropped from the sub-line rather than asserted alongside a warning
+       that the line cannot be trusted. The clock is still true — it is ours. */
+    const off = pcOffline(this._hass);
+    const sub = [date, time, off ? "" : occ].filter(Boolean).join(" · ");
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -231,13 +281,15 @@ class PurdyHeaderCard extends PcBaseCard {
         .sub { font-size: 12.5px; color: var(--pc-muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
         .wx { display: flex; align-items: center; gap: 7px; color: var(--pc-cool); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
         .wx ha-icon { --mdc-icon-size: 22px; }
+        .offline { margin-top: 3px; }
       </style>
       <div class="wrap">
         <div>
           <h2>${this._greeting(now.getHours())}${this._who() ? ", " + this._who() : ""}</h2>
           <div class="sub">${sub}</div>
+          ${off ? `<div>${pcOfflineNote()}</div>` : ""}
         </div>
-        ${wTemp == null ? "" : `
+        ${off || wTemp == null ? "" : `
           <div class="wx">
             <ha-icon icon="${icons[wState] || "mdi:weather-partly-cloudy"}"></ha-icon>
             ${Math.round(wTemp)}°
@@ -254,6 +306,8 @@ class PurdyHeaderCard extends PcBaseCard {
 /* ------------------------------------------------------------- attention --*/
 
 class PurdyAttentionCard extends PcBaseCard {
+  get _ownsOffline() { return true; }
+
   static getStubConfig() {
     return {
       title: "Needs attention",
@@ -278,14 +332,19 @@ class PurdyAttentionCard extends PcBaseCard {
   }
 
   /* Group rules match by regex across the whole registry. Rescanning ~1300
-     entities on every state change is wasteful, so the id list is cached and
-     rebuilt only when the registry size changes or the cache ages out. */
+     entities on every state change is wasteful, so the id list is cached.
+   *
+   * Invalidated on the TTL alone. It used to also compare
+   * `Object.keys(states).length`, which reads like a cheap change detector and
+   * is not one: one entity removed and another added in the same reload leaves
+   * the count identical, so the count agreed while the list had moved. Two
+   * conditions where one of them cannot be trusted is not belt and braces —
+   * it is a reader believing the count means something. The TTL is the whole
+   * guarantee, so it is the only thing stated. */
   _matching(pattern) {
-    const size = Object.keys(this._hass.states).length;
     const now = Date.now();
-    if (!this._mCache || this._mSize !== size || now - this._mAt > 60000) {
+    if (!this._mCache || now - this._mAt > 60000) {
       this._mCache = {};
-      this._mSize = size;
       this._mAt = now;
     }
     if (!this._mCache[pattern]) {
@@ -318,26 +377,40 @@ class PurdyAttentionCard extends PcBaseCard {
   }
 
   /* Store format is "key:epoch|key:epoch" — compact enough that a dozen
-     dismissals fit inside input_text's 255-character ceiling. */
+     dismissals fit inside input_text's 255-character ceiling.
+
+     Split at the LAST colon: `bits.length === 2` assumed a key with no colon in
+     it, which the `st:` stale keys break, and dropping the pair means the row
+     comes back on the next render rather than staying dismissed. The epoch is
+     the tail and nothing else can hold a colon. */
   _dismissals() {
     const raw = pcState(this._hass, this._config.dismiss_store);
     const out = {};
-    if (!raw || raw === "unknown") return out;
+    if (!raw || raw === "unknown" || raw === "unavailable") return out;
     raw.split("|").forEach((pair) => {
-      const bits = pair.split(":");
-      if (bits.length === 2 && bits[0]) out[bits[0]] = parseInt(bits[1], 10) || 0;
+      const i = pair.lastIndexOf(":");
+      if (i <= 0) return;
+      const at = parseInt(pair.slice(i + 1), 10);
+      if (Number.isFinite(at)) out[pair.slice(0, i)] = at;
     });
     return out;
   }
 
+  /* Drop whole pairs, oldest first, rather than truncating the string.
+     `.join("|").slice(0, 255)` cut wherever 255 landed, which is usually the
+     middle of a token — so the entry it corrupted was the LAST one written,
+     i.e. the dismissal you just made, and the row you had just acknowledged
+     came straight back. Newest-first then pop is what purdy-shell-card already
+     does; this is the copy that never got it. */
   _writeDismissals(map) {
-    const val = Object.keys(map)
-      .map((k) => k + ":" + map[k])
-      .join("|")
-      .slice(0, 255);
+    let pairs = Object.keys(map)
+      .map((k) => [k, map[k]])
+      .sort((a, b) => b[1] - a[1])
+      .map((e) => e[0] + ":" + e[1]);
+    while (pairs.length && pairs.join("|").length > 255) pairs.pop();
     this._hass.callService("input_text", "set_value", {
       entity_id: this._config.dismiss_store,
-      value: val,
+      value: pairs.join("|"),
     });
   }
 
@@ -369,10 +442,93 @@ class PurdyAttentionCard extends PcBaseCard {
     return false;
   }
 
-  /* Every rule that currently matches, before dismissals are applied. */
+  /* --- a rule that cannot answer ------------------------------------------
+   *
+   * `_matches` is false for an entity that is missing, `unavailable` or
+   * `unknown`, which is right as a predicate and wrong as a fault list. This
+   * card renders NOTHING when no rule matches — that is its best feature and,
+   * here, the whole problem: a rule watching `vacuum.litter_box` for `error`
+   * stops matching the moment the vacuum drops off the network, and the card
+   * collapses to zero height. A dead sensor and a healthy house were the same
+   * picture, which is absence drawn as the good state — the one bug this
+   * project does not forgive anywhere else.
+   *
+   * Opt-in via `watch_stale: true` at the top level, `watch:` per rule to
+   * override either way, because a battery that legitimately goes unavailable
+   * while its device sleeps would otherwise raise a row every night. Same keys
+   * as purdy-shell-card, so a rule list moves between the two unchanged. */
+  _watchStale(r) {
+    if (r && r.watch !== undefined) return !!r.watch;
+    return !!this._config.watch_stale;
+  }
+
+  _staleWhy(id) {
+    const st = this._hass.states[id];
+    if (!st) return "missing";
+    if (st.state === "unavailable") return "unavailable";
+    if (st.state === "unknown") return "unknown";
+    return null;
+  }
+
+  /* An entity that exists carries its own answer in `last_changed`. One that is
+     gone from the registry has no timestamp, and returning 0 would put it in
+     the trap `_firedAt` already documents: every dismissal is newer than 0, so
+     the row would hide forever rather than for `dismiss_hours`. Stamped on
+     first notice instead, and forgotten on recovery so a second disappearance
+     next week raises a genuinely new row. */
+  _staleSince(key, id) {
+    if (!this._staleAt) this._staleAt = {};
+    const st = this._hass.states[id];
+    if (st) {
+      delete this._staleAt[key];
+      return Math.floor(new Date(st.last_changed).getTime() / 1000) || 0;
+    }
+    if (!this._staleAt[key]) this._staleAt[key] = Math.floor(Date.now() / 1000);
+    return this._staleAt[key];
+  }
+
+  /* Keys are prefixed `st:` so acknowledging that a sensor is dark dismisses
+     independently of acknowledging the fault it would have reported. */
+  _stale(r, i) {
+    if (!this._watchStale(r)) return null;
+    const key = "st:" + this._key(r, i);
+    if (r.match) {
+      /* A regex rule cannot miss an entity that has left the registry — there
+         is no id to miss — but it can miss a member going dark, and `_raised`
+         filters those out silently. Eleven batteries with one unavailable read
+         as ten healthy batteries. */
+      const names = this._matching(r.match)
+        .filter((id) => this._staleWhy(id))
+        .map((id) => (this._hass.states[id].attributes.friendly_name || id)
+          .replace(r.strip || "", "").trim());
+      if (!names.length) { delete (this._staleAt || {})[key]; return null; }
+      return {
+        key, rule: r, severity: r.watch_severity || "info",
+        title: names.length + " not reporting",
+        detail: names.slice(0, 4).join(" · "),
+        entity: null,
+        firedAt: this._staleSince(key, null),
+      };
+    }
+    if (!r.entity) return null;
+    const why = this._staleWhy(r.entity);
+    if (!why) { delete (this._staleAt || {})[key]; return null; }
+    return {
+      key, rule: r, severity: r.watch_severity || "info",
+      title: r.title || pcName(this._hass, r.entity),
+      detail: why === "missing" ? "not in Home Assistant" : "not reporting · " + why,
+      entity: this._hass.states[r.entity] ? r.entity : null,
+      firedAt: this._staleSince(key, r.entity),
+    };
+  }
+
+  /* Every rule that currently matches, before dismissals are applied — plus,
+     for a watched rule, every rule that cannot answer at all. See _stale. */
   _raised() {
     const out = [];
     (this._config.rules || []).forEach((r, i) => {
+      const stale = this._stale(r, i);
+      if (stale) out.push(stale);
       if (r.match) {
         const hits = this._matching(r.match)
           .filter((id) => this._hass.states[id] && this._hass.states[id].state === (r.state || "on"))
@@ -479,14 +635,39 @@ class PurdyAttentionCard extends PcBaseCard {
     if (!this._hass || !this._config) return;
     const rows = this._rows();
     if (this._config.log_to) this._syncLog(this._raised());
-    if (!rows.length) {
+    /* THE ONE CARD WHOSE SILENCE IS A CLAIM.
+     *
+     * Rendering nothing when every rule is clear is this card's best feature and
+     * costs zero height on a healthy day. Offline it is a lie: every rule is
+     * being evaluated against states frozen at the moment the websocket
+     * dropped, so "no rule matches" means "nothing had gone wrong yet when we
+     * last heard from the house" — and it draws exactly the same zero height as
+     * a house that is genuinely fine.
+     *
+     * So offline it says so instead of disappearing, whether or not any rule is
+     * raised. Rules that DO match are still listed underneath: they were true
+     * when we last heard, which is worth reading, and the note above them is
+     * what stops them being read as current. */
+    const off = pcOffline(this._hass);
+    if (!rows.length && !off) {
       this.shadowRoot.innerHTML = "";
       this.style.display = "none";
       return;
     }
     this.style.display = "block";
-    const worst = rows.some((r) => r.severity === "critical") ? "critical" : "warn";
-    const canDismiss = !!this._config.dismiss_store;
+    /* The left edge takes the worst severity PRESENT, which used to mean
+       "critical, or else amber" — so a card showing nothing but low batteries
+       wore a warning stripe, and the stale rows added alongside them would have
+       made a dark sensor look like a fault in the house. Three severities in,
+       three out. */
+    const edge = off ? "var(--pc-warn)"
+      : rows.some((r) => r.severity === "critical") ? "var(--pc-bad)"
+      : rows.some((r) => r.severity === "warn") ? "var(--pc-warn)"
+      : "var(--pc-muted)";
+    /* Nothing can be acknowledged while the write cannot land: the dismissal
+       goes to an input_text through the connection that just dropped, so the ×
+       would arm the optimistic hold, hide the row, and then quietly lose it. */
+    const canDismiss = !!this._config.dismiss_store && !off;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -518,24 +699,29 @@ class PurdyAttentionCard extends PcBaseCard {
         .x:hover { color: var(--pc-text); background: var(--pc-panel-2); }
         .x ha-icon { --mdc-icon-size: 15px; }
         .x:focus-visible, .all:focus-visible { outline: 2px solid var(--pc-cool); outline-offset: 2px; }
+        .note { font-size: 12px; line-height: 1.4; color: var(--pc-muted); padding-bottom: 4px; }
       </style>
-      <div class="card" style="--edge: ${worst === "critical" ? "var(--pc-bad)" : "var(--pc-warn)"}">
+      <div class="card" style="--edge: ${edge}">
         <div class="hd">
-          <ha-icon icon="mdi:alert-circle-outline" style="--mdc-icon-size:16px"></ha-icon>
-          <span class="lbl">${this._config.title} · ${rows.length}</span>
+          <ha-icon icon="${off ? "mdi:cloud-off-outline" : "mdi:alert-circle-outline"}" style="--mdc-icon-size:16px"></ha-icon>
+          <span class="lbl">${off ? "Not connected" : pcEsc(this._config.title) + " · " + rows.length}</span>
           <span class="spacer"></span>
           ${canDismiss && rows.length > 1
             ? `<button class="all" type="button" id="all">Dismiss all</button>` : ""}
         </div>
+        ${!off ? "" : `<div class="note">No rule here has been checked since the
+          connection dropped. ${rows.length
+            ? "What follows was true when the house last answered."
+            : "Nothing was wrong when the house last answered, which is not the same as nothing being wrong."}</div>`}
         ${rows.map((r, i) => `
           <div class="r">
             <span class="dot ${r.severity}"></span>
             <div class="grow ${r.entity ? "tappable" : ""}" data-info="${r.entity || ""}">
-              <div class="t">${r.title}</div>
-              ${r.detail ? `<div class="d">${r.detail}</div>` : ""}
+              <div class="t">${pcEsc(r.title)}</div>
+              ${r.detail ? `<div class="d">${pcEsc(r.detail)}</div>` : ""}
             </div>
             ${canDismiss
-              ? `<button class="x" type="button" data-idx="${i}" aria-label="Dismiss ${r.title}">
+              ? `<button class="x" type="button" data-idx="${i}" aria-label="Dismiss ${pcEsc(r.title)}">
                    <ha-icon icon="mdi:close"></ha-icon>
                  </button>`
               : `<ha-icon icon="mdi:chevron-right" style="--mdc-icon-size:16px;color:var(--pc-muted)"></ha-icon>`}
@@ -622,7 +808,7 @@ class PurdyNotificationsCard extends PcBaseCard {
       <div class="chips">
         ${chips.map((u) => `
           <span class="chip ${u.severity || "info"} tappable" data-info="${u.entity}">
-            <span class="cdot"></span>${u.n} ${u.label || pcName(this._hass, u.entity)}
+            <span class="cdot"></span>${u.n} ${pcEsc(u.label || pcName(this._hass, u.entity))}
           </span>`).join("")}
       </div>`;
   }
@@ -902,7 +1088,7 @@ class PurdyRoomsCard extends PcBaseCard {
           flex: 0 0 auto; min-width: 86px;
           background: var(--pc-panel); border-radius: 18px; padding: 11px 12px;
         }
-        .rm.accent { background: rgba(77, 208, 225, 0.10); }
+        .rm.accent { background: rgba(var(--pc-cool-rgb), 0.10); }
         .rm .nm { font-size: 10.5px; color: var(--pc-muted); text-transform: uppercase; letter-spacing: 0.08em; }
         .rm b { display: block; font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 4px; letter-spacing: -0.02em; }
         .rm .hum { font-size: 10.5px; color: var(--pc-muted); font-variant-numeric: tabular-nums; }
@@ -913,7 +1099,7 @@ class PurdyRoomsCard extends PcBaseCard {
           const h = pcNum(this._hass, r.humidity);
           return `
             <div class="rm ${r.accent ? "accent" : ""} tappable" data-entity="${r.temp}">
-              <span class="nm">${r.name || pcName(this._hass, r.temp)}</span>
+              <span class="nm">${pcEsc(r.name || pcName(this._hass, r.temp))}</span>
               <b>${t == null ? "—" : t.toFixed(1) + "°"}</b>
               <span class="hum">${h == null ? "" : h.toFixed(1) + "%"}</span>
             </div>`;
@@ -1005,7 +1191,7 @@ class PurdyQuickCard extends PcBaseCard {
             <div class="t ${this._tone(t)} ${bar ? "hasbar" : ""} tappable" data-idx="${i}">
               <ha-icon icon="${t.icon || (st && st.attributes.icon) || "mdi:circle-outline"}"></ha-icon>
               <div>
-                <div class="tl trunc">${pcName(this._hass, t.entity, t.name)}</div>
+                <div class="tl trunc">${pcEsc(pcName(this._hass, t.entity, t.name))}</div>
                 <div class="tv trunc">${value}</div>
               </div>
               ${bar}

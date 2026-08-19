@@ -8,11 +8,12 @@
  * Both cards keep their original type strings, so existing dashboard config
  * needs no changes when migrating from the standalone repos.
  *
- * No build step, no dependencies — plain web components.
+ * No dependencies — plain web components. One build step, and it takes no
+ * packages: `node build.mjs` concatenates src/ and strips the comments.
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.68.1";
+const PC_VERSION = "1.69.0";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -35,6 +36,21 @@ const PC_TOKENS = `
         --pc-good: #7FD8A4;
         --pc-warn: #f2c14e;
         --pc-bad: #F27A83;
+        /* The cool, as bare channels, so a translucent tint of it derives from
+           the same value the solid one does.
+
+           Skyline moved --pc-cool from #4dd0e1 to #56D4E4 and every text colour
+           in the bundle followed it, because they all read the token. The
+           forty-odd BACKGROUNDS did not: they were written as 77, 208, 225 with
+           an alpha — the OLD cool spelled out in channels — so every "on" chip
+           in the shell, the desk and the climate panel wore a tint one hue off
+           the text sitting on it. Nobody reads that as two colours; it reads as
+           the chip looking slightly dirty, which is exactly the failure a single
+           token block exists to make impossible. A hex cannot be given an alpha
+           inside a variable, so the channels have to be their own token.
+
+           NOTE: this comment lives inside a template literal. No backticks. */
+        --pc-cool-rgb: 86, 212, 228;
         /* The one aurora accent (Skyline). Cyan to violet owns everything
            non-semantic: dock active slot, ring strokes, the greeting word,
            section-label ticks. Semantic colours stay the five above. */
@@ -43,7 +59,7 @@ const PC_TOKENS = `
         --pc-radius: 24px;
         /* The cool wash across the top of a panel, lifted from the climate
            card's weather strip so every panel opens the same way. */
-        --pc-tint: rgba(77, 208, 225, 0.10);
+        --pc-tint: rgba(var(--pc-cool-rgb), 0.10);
 
         /* type — seven steps. micro is the floor: 8.5px uppercase was below
            what a phone at arm's length in daylight can resolve. */

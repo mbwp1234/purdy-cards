@@ -18,9 +18,24 @@ Object.assign(PurdyShellCard.prototype, {
     const out = {};
     if (raw && raw !== "unknown" && raw !== "unavailable") {
       raw.split("|").forEach((pair) => {
-        const bits = pair.split(":");
-        const at = parseInt(bits[1], 10);
-        if (bits[0] && Number.isFinite(at)) out[bits[0]] = at;
+        /* Split at the LAST colon, not the first.
+         *
+         * `pair.split(":")` and then `bits[1]` assumes a key with no colon in
+         * it, and the keys have carried one since the server's faults were
+         * folded in here: `sv:disk1:1755000000` parsed as key "sv", epoch
+         * parseInt("disk1") = NaN, and the pair was dropped on the floor. So
+         * dismissing a server fault wrote a perfectly good entry that the read
+         * side discarded, and the row came back on the next render — the
+         * "kinda slow to remove notifs" bug all over again, except permanent
+         * and only on the rows that came from the array. The stale rows added
+         * below are prefixed `st:` and would have inherited it.
+         *
+         * The epoch is the tail and nothing else can contain a colon, so the
+         * last one is always the separator however many the key holds. */
+        const i = pair.lastIndexOf(":");
+        if (i <= 0) return;
+        const at = parseInt(pair.slice(i + 1), 10);
+        if (Number.isFinite(at)) out[pair.slice(0, i)] = at;
       });
     }
 
@@ -130,6 +145,121 @@ Object.assign(PurdyShellCard.prototype, {
     return false;
   },
 
+  /* Why a rule cannot be evaluated at all, or null when it can.
+   *
+   * THE SILENCE THIS CLOSES. `_ruleHit` answers false for an entity that is
+   * missing, `unavailable` or `unknown` — which is correct as a predicate and
+   * wrong as a fault list. A rule watching `vacuum.litter_box` for `error`
+   * stops matching the moment the vacuum drops off the network, the row leaves
+   * the sheet, and the header chip reads **All clear** because nothing is
+   * raised. A sensor that died and a house with nothing wrong were the same
+   * picture, which is this project's one unforgivable bug wearing a different
+   * hat: absence drawn as the good state.
+   *
+   * It is the same argument `_raised` already makes about the server's faults
+   * living two taps inside a mode. The chip is where a fault is supposed to
+   * reach you, and a rule that cannot answer is not a rule that is clear.
+   *
+   * `state_not` is the tell that this was half-seen: it excludes `unavailable`
+   * and `unknown` explicitly, but excludes them into silence rather than into
+   * a row.
+   *
+   * Opt-in, because not every rule wants it. `watch_stale: true` at the top
+   * level turns it on for every attention rule and every server fault; a rule
+   * sets `watch:` to override either way. A helper battery that legitimately
+   * goes unavailable when a device sleeps would otherwise raise a row every
+   * night. */
+  _ruleWatched(r) {
+    if (r && r.watch !== undefined) return !!r.watch;
+    return !!this._config.watch_stale;
+  },
+
+  _staleWhy(st) {
+    if (!st) return "missing";
+    if (st.state === "unavailable") return "unavailable";
+    if (st.state === "unknown") return "unknown";
+    return null;
+  },
+
+  /* When a stale row fired, in epoch seconds.
+   *
+   * An entity that EXISTS and went `unavailable` carries the answer already:
+   * `last_changed` is the moment it stopped answering. An entity that is gone
+   * from the registry has no timestamp at all, and returning 0 there would
+   * reproduce the exact trap the `_firedAt` comment above documents — every
+   * dismissal is newer than 0, so `row.firedAt > at` never fires and the row
+   * would be hidden FOREVER rather than for `dismiss_hours`. So a missing
+   * entity is stamped the first time it is noticed and remembered until it
+   * comes back. A reload re-stamps it, which re-raises a row that was
+   * dismissed before the reload — the right way round for a fault nobody has
+   * fixed. */
+  _staleSince(key, st) {
+    if (!this._staleAt) this._staleAt = {};
+    if (st) {
+      delete this._staleAt[key];
+      return Math.floor(new Date(st.last_changed).getTime() / 1000) || 0;
+    }
+    if (!this._staleAt[key]) this._staleAt[key] = Math.floor(Date.now() / 1000);
+    return this._staleAt[key];
+  },
+
+  /* Forget a remembered stamp once the rule can answer again, so a sensor that
+     comes back and goes dark a week later raises a NEW row rather than one
+     still carrying its first disappearance — which a dismissal from last week
+     would already be hiding. Called on the not-stale path, which is the only
+     path that knows recovery happened.
+
+     Takes the SAME already-prefixed key `_staleSince` does. It used to add the
+     `st:` itself while its sibling expected it passed in, which is the shape of
+     asymmetry that reads fine until one of the two callers is written by
+     someone reading only the other. */
+  _staleClear(key) {
+    if (this._staleAt) delete this._staleAt[key];
+  },
+
+  /* A rule's stale row, or null. Keys are prefixed `st:` for the same reason
+     the server's are prefixed `sv:` — acknowledging that a sensor is dark is a
+     different act from acknowledging the fault it would have reported, and the
+     two must dismiss independently. */
+  _staleRow(r, key, hass) {
+    if (!this._ruleWatched(r)) return null;
+    const id = r.entity;
+    if (!id) return null;
+    const st = hass.states[id];
+    const why = this._staleWhy(st);
+    if (!why) { this._staleClear("st:" + key); return null; }
+    return {
+      key: "st:" + key,
+      severity: r.watch_severity || "info",
+      title: r.title || r.label || pcName(hass, id),
+      detail: why === "missing" ? "not in Home Assistant" : "not reporting · " + why,
+      entity: st ? id : null,
+      firedAt: this._staleSince("st:" + key, st),
+    };
+  },
+
+  /* The group-rule equivalent. A regex rule cannot notice an entity that has
+     left the registry — there is no id to miss — but it can absolutely notice
+     one of its members going dark, and `_ruleHit` filters those out silently.
+     Eleven battery sensors with one of them unavailable read as ten healthy
+     batteries. */
+  _staleGroupRow(r, key, hass) {
+    if (!this._ruleWatched(r)) return null;
+    const re = new RegExp(r.match);
+    const names = Object.keys(hass.states)
+      .filter((id) => re.test(id) && this._staleWhy(hass.states[id]))
+      .map((id) => hass.states[id].attributes.friendly_name || id);
+    if (!names.length) { this._staleClear("st:" + key); return null; }
+    return {
+      key: "st:" + key,
+      severity: r.watch_severity || "info",
+      title: names.length + " not reporting",
+      detail: names.slice(0, 4).join(" · "),
+      entity: null,
+      firedAt: this._staleSince("st:" + key, null),
+    };
+  },
+
   /* When did this rule's condition last change? A dismissal older than that
      means the fault re-fired, so the row comes back.
 
@@ -169,6 +299,13 @@ Object.assign(PurdyShellCard.prototype, {
     return (srv.faults || []).filter((f) => this._ruleHit(f, this._hass.states[f.entity]));
   },
 
+  /* A server fault's key, derived in one place. `_raised` and the stale pass
+     have to agree on it exactly or a dismissal would land on one and not the
+     other, and the two had already been written twice. */
+  _serverKey(f) {
+    return f.key || String(f.label || f.entity).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8);
+  },
+
   /* Everything currently matching, before dismissals are applied.
 
      The server's faults are in here too, and that is the point. They used to
@@ -185,7 +322,7 @@ Object.assign(PurdyShellCard.prototype, {
     const out = [];
     this._serverFaults().forEach((f) => {
       out.push({
-        key: "sv:" + (f.key || String(f.label || f.entity).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8)),
+        key: "sv:" + this._serverKey(f),
         severity: f.severity || "warn",
         title: f.label || pcName(hass, f.entity),
         detail: f.detail || "",
@@ -193,8 +330,22 @@ Object.assign(PurdyShellCard.prototype, {
         firedAt: this._firedAt(f),
       });
     });
+    /* A server fault whose sensor is dark, on the same footing as a house rule
+       whose sensor is dark. Walks `srv.faults` rather than `_serverFaults()`
+       because the latter has already filtered out exactly the rules this pass
+       is looking for. */
+    const srv = this._config.server;
+    ((srv && srv.faults) || []).forEach((f) => {
+      const row = this._staleRow(f, "sv:" + this._serverKey(f), hass);
+      if (row) out.push(row);
+    });
     rules.forEach((r, i) => {
       const hit = (st) => this._ruleHit(r, st);
+      const key = r.key || "r" + i;
+      const stale = r.match
+        ? this._staleGroupRow(r, key, hass)
+        : this._staleRow(r, key, hass);
+      if (stale) out.push(stale);
       if (r.match) {
         const re = new RegExp(r.match);
         const names = Object.keys(hass.states)
@@ -213,7 +364,7 @@ Object.assign(PurdyShellCard.prototype, {
           .filter(Boolean);
         if (names.length) {
           out.push({
-            key: r.key || "r" + i,
+            key,
             severity: r.severity || "info",
             title: `${names.length} ${r.title || "issues"}`,
             detail: names.slice(0, 4).join(" · "),
@@ -225,7 +376,7 @@ Object.assign(PurdyShellCard.prototype, {
       }
       if (hit(hass.states[r.entity])) {
         out.push({
-          key: r.key || "r" + i,
+          key,
           severity: r.severity || "warn",
           title: r.title || pcName(hass, r.entity),
           detail: r.detail || "",

@@ -236,6 +236,25 @@ class PurdyShellCard extends PcBaseCard {
     if (this._wxTimer) clearInterval(this._wxTimer);
     clearTimeout(this._goalSend);
     this._goalSend = null;
+    /* Every pending timeout, not only the setpoint's.
+     *
+     * `_armTimer` and `_tapTimer` both fire a bare `_render()` five seconds
+     * out, and the view they were armed in may be gone by then — Lovelace
+     * detaches the element rather than destroying it, so the callback still
+     * holds a live `this` and repaints a card nobody is looking at. Harmless in
+     * isolation, and the reason to fix it anyway is that the comment below
+     * makes the timer HANDLES load-bearing: leaving two of them set is a
+     * standing invitation to reason about "is it running" from a handle that
+     * the previous detach never cleared. */
+    clearTimeout(this._armTimer);
+    clearTimeout(this._tapTimer);
+    this._armTimer = null;
+    this._tapTimer = null;
+    /* An armed destructive control does not survive walking away from the view.
+       Coming back to a primed Reboot button, five seconds after the arm that
+       primed it has been forgotten, is the one state this arming pattern exists
+       to prevent. */
+    this._armed = null;
     this._clock = null;
     this._historyTimer = null;
     this._eventTimer = null;

@@ -7,7 +7,7 @@ One bundle, one HACS entry, one version number — a pair of custom Lovelace car
 | `climate-panel-card` | Full climate panel: weather strip, temperature ring with goal + hold steppers, trend graph, zone switcher, status chips, room rows. Plus a **`compact`** mode for a home screen. |
 | `sleep-panel-card` | Full infant sleep panel: composition ring with a 7-day goal marker, vitals with baseline deltas, hypnogram, recap rows. Plus a **`ribbon`** mode for a home screen. |
 | `purdy-header-card` | Greeting, date, time, weather and occupancy. |
-| `purdy-attention-card` | Rule-driven fault list. Renders nothing at all when every rule is clear. |
+| `purdy-attention-card` | Rule-driven fault list. Renders nothing at all when every rule is clear — and says so instead when it cannot check them. |
 | `purdy-people-card` | Presence with battery and step counts, side by side. |
 | `purdy-rooms-card` | Scrolling strip of room temperatures and humidity. |
 | `purdy-quick-card` | Grid of state-coloured action tiles. |
@@ -18,7 +18,7 @@ One bundle, one HACS entry, one version number — a pair of custom Lovelace car
 | `purdy-shell-card` | **The whole phone view as one element** — gradient ground, one glass column of expanding sections, fixed dock. |
 | `purdy-desk-card` | **The whole desktop view as one element** — one glass sheet that never scrolls, a status strip, a stage of panels that expand sideways, and a dock. |
 
-No build step, no dependencies — plain web components.
+No dependencies — plain web components. One build step, and it needs no packages: `node build.mjs`.
 
 ## Why one repo
 
@@ -113,13 +113,29 @@ node build.mjs
 
 Numeric filename prefixes define concatenation order — `00-core.js` first (version, shared tokens, `pcDefine`, `pcNavigate`), `90-register.js` last. HACS serves a single file; that is the only reason the bundle is one.
 
+### The comments stay in `src/` and do not ship
+
+The build strips JS comments on the way out: **1005KB → 754KB raw, 282KB → 179KB gzipped**, which is what a phone downloads before it can draw anything. They were 27% of the file, and a comment explaining a bug to a reader is of no use to a browser.
+
+Nothing comes out of `src/`. That is where every "only a render against live data caught this" lives and it is the most valuable thing in the repo.
+
+Three things the stripper guarantees, each with a test:
+
+- **Template literals are left byte-identical.** ~160KB of the bundle is CSS inside them, and a `/*` in a string is content, not a comment. Their CSS comments are another 14KB gzipped and stay — rewriting the strings the browser parses to save a further 8% is the wrong side of that trade. This is why the strip is a context-tracking scanner rather than a regex: it has to know the difference between a comment, a string, a template literal, a `${}` inside one, and a regex literal.
+- **Line numbers still match `src/` concatenated**, offset only by the four-line banner, because the newlines a block comment spanned are preserved. A stack trace off a phone stays readable.
+- **The bundle says what it is** — name, version, repo, and a pointer at `src/`.
+
+`node build.mjs --keep-comments` emits the unstripped bundle, for when a trace needs reading against the shipped file directly.
+
+The test suite reads **both**: source text from `src/`, and the eval from `purdy-cards.js`. So behavioural assertions run against the artifact HACS serves, and the stripper is re-verified on every run — a strip that broke a regex literal fails in `test/`, not on a phone. Before this split both were the same string, which meant the fifty-one text assertions depended on the bundle carrying comments; stripping it would have deleted those assertions rather than failing them.
+
 ## Tests
 
 ```
 node test/smoke.mjs
 ```
 
-1100 assertions against DOM stubs — registration, token resolution, the compact and ribbon paths, the split-bar maths, music search and history, section reconciliation, the bind-once guards, failure states, and a duplicate load warning instead of throwing. The shell and the desk each carry a **mini-DOM**, because the plain stub answers `null` to everything and would pass every patching assertion vacuously.
+1450 assertions against DOM stubs — registration, token resolution, the compact and ribbon paths, the split-bar maths, music search and history, section reconciliation, the bind-once guards, failure states, the stale-rule and offline paths, the built file itself, and a duplicate load warning instead of throwing. The shell and the desk each carry a **mini-DOM**, because the plain stub answers `null` to everything and would pass every patching assertion vacuously.
 
 Run it before every release.
 
@@ -131,9 +147,16 @@ Run it before every release.
 |-------|---------|
 | `--pc-panel` | `--ha-card-background` → `--card-background-color` → `#181f26` |
 | `--pc-text` / `--pc-muted` | `--primary-text-color` / `--secondary-text-color` |
-| `--pc-heat` / `--pc-cool` | `#ff9557` / `#4dd0e1` |
-| `--pc-good` / `--pc-warn` / `--pc-bad` | `#81c995` / `#f2c14e` / `#ef6a6a` |
+| `--pc-heat` / `--pc-cool` | `#ff9557` / `#56D4E4` |
+| `--pc-good` / `--pc-warn` / `--pc-bad` | `#7FD8A4` / `#f2c14e` / `#F27A83` |
+| `--pc-cool-rgb` | `86, 212, 228` — the cool as bare channels |
+| `--pc-aur-a` / `--pc-aur-b` | `#56D4E4` / `#8B7CFF` — the aurora accent |
+| `--pc-tint` | `rgba(var(--pc-cool-rgb), 0.10)` |
 | `--pc-radius` | `24px` |
+
+Five semantic colours, and **one** accent. `--pc-aur-a` → `--pc-aur-b` (cyan to violet) owns everything *non*-semantic — the active dock slot, ring strokes, the greeting word, section-label ticks. If a colour is saying "this is wrong" or "this is warm", it comes from the five; if it is saying "this is the one you are looking at", it comes from the aurora.
+
+`--pc-cool-rgb` exists because a hex cannot be given an alpha inside a variable. A translucent cool is `rgba(var(--pc-cool-rgb), .16)`, never channels written out — the Skyline release moved `--pc-cool` and forty-odd backgrounds spelling the old value out in channels stayed behind, so every "on" chip in the shell, the desk and the climate panel wore a tint one hue off the text sitting on it. A test now fails if a brand colour is spelled in channels anywhere.
 
 ### Scales
 
@@ -237,7 +260,46 @@ rules: [...]
 
 **A dismissal is an acknowledgement, not a mute.** A row stays hidden only while the underlying condition is unchanged — if the entity changes state again, the fault has re-fired and the row comes back. `dismiss_hours` adds a ceiling so a long-running fault resurfaces on its own.
 
-The compact `key:epoch` encoding matters: `input_text` caps at 255 characters, which fits roughly a dozen dismissals. Keep keys short.
+The compact `key:epoch` encoding matters: `input_text` caps at 255 characters, which fits roughly a dozen dismissals. Keep keys short. When the store is full, whole pairs are dropped **oldest first** — truncating the string cut mid-token, and the entry it corrupted was the newest one, i.e. the dismissal you had just made.
+
+Keys may contain a colon (`sv:` for a server fault, `st:` for a stale one) and the store is parsed at the **last** colon. It was parsed at the first, which meant a server fault wrote a perfectly good entry that the read side discarded — so dismissing one was a silent no-op and the row came back on the next render.
+
+#### `watch_stale` — a rule that cannot answer
+
+A rule is a predicate, and a predicate over a sensor that has stopped answering is `false`. So a rule watching `vacuum.litter_box` for `error` **stops matching** the moment the vacuum drops off the network, the row leaves the list, and this card — which renders nothing at all when every rule is clear — collapses to zero height. A dead sensor and a healthy house drew the same picture.
+
+That is absence rendered as the good state, at the one place it costs the most.
+
+```yaml
+type: custom:purdy-attention-card
+watch_stale: true                   # every rule below reports its own silence
+rules:
+  - entity: vacuum.litter_box
+    state: error
+    title: Litter box
+  - entity: sensor.helper_battery    # sleeps on purpose; do not raise for it
+    below: 15
+    title: Helper battery
+    watch: false
+```
+
+`watch_stale: true` at the top level turns it on for every rule; `watch:` on a rule overrides either way. It is opt-in because a battery that legitimately goes unavailable while its device sleeps would otherwise raise a row every night.
+
+A stale row is `info` severity (`watch_severity:` to change it), keeps the rule's own title, and says which kind of silence it is — `not reporting · unavailable`, or `not in Home Assistant` for an entity that has left the registry altogether. Its key is the rule's key prefixed `st:`, because acknowledging that a sensor is dark is a different act from acknowledging the fault it would have reported, and the two have to dismiss independently.
+
+A **group rule** cannot notice an id that has left the registry — there is no id to miss — but it does notice a member going dark, which `_ruleHit` was filtering out silently. Eleven battery sensors with one unavailable read as ten healthy batteries.
+
+An entity that is *gone* has no `last_changed` to fire at, and `0` would be worse than useless: every dismissal is newer than 0, so the row would hide **forever** rather than for `dismiss_hours`. It is stamped when first noticed and the stamp is forgotten on recovery, so a sensor that dies again next week raises a genuinely new row rather than one last week's dismissal still hides.
+
+`purdy-shell-card` and `purdy-desk-card` take the same two keys in their `attention:` block, and apply them to `server:` faults as well.
+
+#### Offline
+
+Losing the websocket changes no entity's state — every one keeps its last-known-good value. Which is exactly why the card could not previously say so: nothing re-rendered, because the only thing that would have was an entity change, and entity changes are what had stopped arriving. The connection state now leads the render signature.
+
+This card **does not hide itself while disconnected**, raised rules or not. Its silence is a claim of health, and offline that claim is being made about frozen data. It says the rules have not been checked since the connection dropped, lists what was true when the house last answered, and offers no × — a dismissal writes to an `input_text` through the connection that just dropped.
+
+The other cards are **marked rather than captioned**: `purdy-header-card` carries the one sentence, and every other card takes a `pc-stale` host class that dims and desaturates it. Six cards each printing "Offline" is a paragraph nobody reads. Both panel cards do the same, so a panel opened from a dimmed home screen agrees with it.
 
 With `log_to` set, each newly raised rule is written to a todo list and dismissing marks it completed — that list is what `purdy-notifications-card` reads.
 

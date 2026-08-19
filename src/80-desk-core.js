@@ -95,7 +95,12 @@ const PD_BORROW = [
   "_wxHourCols", "_wxClock",
   /* faults, dismissals and the notification log */
   "_dismissals", "_writeDismissals", "_dismiss", "_ruleHit", "_firedAt", "_serverFaults",
-  "_raised", "_faults", "_syncLog",
+  "_raised", "_faults", "_syncLog", "_serverKey",
+  /* The stale pass — a rule whose entity has stopped answering raises its own
+     row instead of leaving the chip reading "All clear". Borrowed rather than
+     copied for the usual reason: it is a claim about what the data can support,
+     and the desk's chip tells exactly the same lie without it. */
+  "_ruleWatched", "_staleWhy", "_staleSince", "_staleClear", "_staleRow", "_staleGroupRow",
   /* Dependencies of the three above, added when a test started walking what
      borrowed methods CALL rather than only whether they resolve. All three
      were reachable and none of them worked: _dismiss threw on any desk
@@ -269,6 +274,12 @@ class PurdyDeskCard extends PcBaseCard {
     if (this._wxTimer) clearInterval(this._wxTimer);
     clearTimeout(this._goalSend);
     this._goalSend = null;
+    /* The arm timeout too — it fires a bare _render() five seconds out, into a
+       view that may already be gone, and an armed Reboot button must not
+       survive walking away from the sheet that armed it. Same as the shell. */
+    clearTimeout(this._armTimer);
+    this._armTimer = null;
+    this._armed = null;
     /* Nulled rather than merely cleared: connectedCallback tells "stopped"
        from "running" by the handle, so leaving one set stacks a second poller
        on every return to the view. */

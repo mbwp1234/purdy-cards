@@ -43,7 +43,7 @@ window.customCards.push(
 
 console.info(
   `%c PURDY-CARDS %c v${PC_VERSION} %c climate v${CPC_VERSION} · sleep v${SPC_VERSION} `,
-  "background:#4dd0e1;color:#0f1317;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;",
+  "background:#56D4E4;color:#0f1317;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;",
   "background:#232d38;color:#e6ecf2;padding:2px 6px;",
   "background:#151b22;color:#8b96a3;border-radius:0 4px 4px 0;padding:2px 6px;"
 );

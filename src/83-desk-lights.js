@@ -271,7 +271,7 @@ Object.assign(PurdyDeskCard.prototype, {
             this._guard = {
               ask: prot.ask || "Are you sure?",
               detail: prot.detail || "",
-              what: `Set ${pcName(this._hass, id)} to ${pct}%`,
+              what: `Set ${psEsc(pcName(this._hass, id))} to ${pct}%`,
               go: () => this._lightSetBri(id, pct),
             };
           }
@@ -287,7 +287,7 @@ Object.assign(PurdyDeskCard.prototype, {
           this._guard = {
             ask: prot.ask || "Are you sure?",
             detail: prot.detail || "",
-            what: `Turn ${pcName(this._hass, id)} ${st && st.state === "on" ? "off" : "on"}`,
+            what: `Turn ${psEsc(pcName(this._hass, id))} ${st && st.state === "on" ? "off" : "on"}`,
             go: () => this._hass.callService("homeassistant", "toggle", { entity_id: id }),
           };
           this._last = null;

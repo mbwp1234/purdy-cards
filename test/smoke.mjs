@@ -1,5 +1,32 @@
 import fs from 'fs';
-const src = fs.readFileSync(new URL('../purdy-cards.js', import.meta.url),'utf8');
+
+/* TWO INPUTS, AND THE SPLIT IS THE POINT.
+ *
+ * `src` is src/ concatenated the way build.mjs concatenates it — what this suite
+ * asserts TEXT against. Fifty-one checks read source text and several read
+ * COMMENT text ("mouse: hover, no gesture to fight", "would leave _dragging
+ * stuck"), because a rule that was learned the hard way is worth pinning to the
+ * sentence that explains it.
+ *
+ * `bundle` is purdy-cards.js — what actually ships, with the comments stripped
+ * out by build.mjs. That is what gets eval'd, so every behavioural assertion in
+ * this file runs against the artifact HACS serves rather than against a
+ * reconstruction of it. Which also means the stripper is re-verified on every
+ * run: a strip that broke a regex literal or swallowed a template literal fails
+ * here rather than on a phone.
+ *
+ * Both used to be the same string. Text assertions then depended on the bundle
+ * carrying comments, so stripping it would have quietly deleted the assertions
+ * rather than failing them.
+ */
+const src = fs
+  .readdirSync(new URL('../src/', import.meta.url))
+  .filter((f) => f.endsWith('.js'))
+  .sort()
+  .map((f) => fs.readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8'))
+  .join('');
+const bundle = fs.readFileSync(new URL('../purdy-cards.js', import.meta.url),'utf8');
+
 /* The shell owns the patching render model; the standalone cards still repaint
    whole and are correct to. Assertions about binding must not sweep them in. */
 const shellSrc = ['70-shell-core','71-shell-sections','72-shell-schedule','73-shell-music','74-shell-alerts']
@@ -8,7 +35,19 @@ const shellSrc = ['70-shell-core','71-shell-sections','72-shell-schedule','73-sh
 
 const defined = {};
 class FakeEl {
-  constructor(){ this.shadowRoot=null; this._listeners={}; this.style={}; }
+  constructor(){
+    this.shadowRoot=null; this._listeners={}; this.style={};
+    /* Real enough for the offline mark, which is a host class rather than
+       markup — asserting on innerHTML alone would miss it entirely. */
+    const set = new Set();
+    this.classList = {
+      _set: set,
+      add:(c)=>set.add(c), remove:(c)=>set.delete(c),
+      contains:(c)=>set.has(c),
+      toggle:(c,on)=>{ const want = on===undefined ? !set.has(c) : !!on;
+        if (want) set.add(c); else set.delete(c); return want; },
+    };
+  }
   attachShadow(){ this.shadowRoot = { innerHTML:'', querySelector:()=>null, querySelectorAll:()=>[], getElementById:()=>null }; return this.shadowRoot; }
   addEventListener(){} dispatchEvent(){ return true; }
 }
@@ -20,7 +59,7 @@ globalThis.document = { createElement:()=>({ style:{}, setAttribute(){}, appendC
 globalThis.Event = class { constructor(t){ this.type=t; } };
 globalThis.console.info = ()=>{};
 
-eval(src);
+eval(bundle);
 
 const names = Object.keys(defined);
 console.log('defined elements:', names.join(', '));
@@ -220,6 +259,210 @@ const a2 = new A();
 a2.setConfig({ rules:[{ entity:'binary_sensor.flash', state:'off', title:'Flash' }] });
 a2.hass = hass;
 check('attention hides itself when clean', a2.shadowRoot.innerHTML==='' && a2.style.display==='none');
+
+/* --- a rule that cannot answer -------------------------------------------
+   The card renders nothing when no rule matches, and a rule whose entity has
+   gone dark does not match. Without the stale pass a dead sensor and a healthy
+   house are the same zero-height card. */
+const deadHass = { states: {
+  ...hass.states,
+  'vacuum.litter': { state:'unavailable', attributes:{ friendly_name:'Litter' }, last_changed:'2026-08-17T01:00:00Z' },
+}, callService(){} };
+delete deadHass.states['sensor.drawer'];       // gone from the registry entirely
+
+const aOff = new A();
+aOff.setConfig({ rules:[
+  { key:'lit', entity:'vacuum.litter', state:'error', severity:'critical', title:'Litter box' },
+  { key:'drw', entity:'sensor.drawer', above:85, severity:'warn', title:'Waste drawer' },
+]});
+aOff.hass = deadHass;
+check('a dark rule raises nothing without watch_stale', aOff._rows().length===0);
+
+const aOn = new A();
+aOn.setConfig({ watch_stale:true, rules:[
+  { key:'lit', entity:'vacuum.litter', state:'error', severity:'critical', title:'Litter box' },
+  { key:'drw', entity:'sensor.drawer', above:85, severity:'warn', title:'Waste drawer' },
+]});
+aOn.hass = deadHass;
+const sRows = aOn._rows();
+check('watch_stale raises the unavailable rule', sRows.some(r=>r.key==='st:lit' && /not reporting/.test(r.detail)));
+check('watch_stale raises the missing entity', sRows.some(r=>r.key==='st:drw' && /not in Home Assistant/.test(r.detail)));
+check('a stale row keeps the rule title', sRows.some(r=>r.title==='Litter box'));
+check('a stale row is info, not the rule severity', sRows.every(r=>r.severity==='info'));
+check('a stale key cannot collide with the fault key', !sRows.some(r=>r.key==='lit'||r.key==='drw'));
+check('a missing entity offers no more-info target', sRows.find(r=>r.key==='st:drw').entity===null);
+check('an unavailable entity still offers more-info', sRows.find(r=>r.key==='st:lit').entity==='vacuum.litter');
+check('the card no longer hides itself', aOn.shadowRoot.innerHTML!=='' && aOn.style.display==='block');
+check('an info-only card does not wear a warn edge',
+  aOn.shadowRoot.innerHTML.includes('--pc-muted') &&
+  !aOn.shadowRoot.innerHTML.includes('--edge: var(--pc-warn)'));
+
+/* An entity that is gone has no last_changed, and 0 would be hidden forever by
+   any dismissal — the trap _firedAt already documents. */
+check('a missing entity gets a real firedAt', sRows.find(r=>r.key==='st:drw').firedAt > 1700000000);
+check('an unavailable entity fires at its last_changed',
+  sRows.find(r=>r.key==='st:lit').firedAt === Math.floor(Date.parse('2026-08-17T01:00:00Z')/1000));
+
+/* The stamp must be forgotten on recovery, or a sensor that comes back and dies
+   again next week raises a row still carrying its FIRST disappearance — which
+   last week's dismissal is already hiding. */
+const stampBefore = aOn._staleAt['st:drw'];
+aOn.hass = { states:{ ...deadHass.states, 'sensor.drawer':{ state:'40', attributes:{} } }, callService(){} };
+aOn._rows();
+check('the stale stamp is forgotten on recovery', aOn._staleAt['st:drw'] === undefined && stampBefore > 0);
+
+/* A group rule cannot miss an id that left the registry, but it must notice a
+   member going dark — eleven batteries with one unavailable read as ten. */
+const aGrp = new A();
+aGrp.setConfig({ watch_stale:true, rules:[
+  { key:'bat', match:'battery_plus_low$', state:'on', severity:'info', title:'low batteries', strip:'Battery low' },
+]});
+aGrp.hass = { states:{
+  ...hass.states,
+  'binary_sensor.b_battery_plus_low': { state:'unavailable', attributes:{ friendly_name:'Office Battery low' } },
+}, callService(){} };
+const gRows = aGrp._rows();
+check('a group rule notices a dark member', gRows.some(r=>r.key==='st:bat' && /1 not reporting/.test(r.title)));
+check('a group rule still counts its live hits', gRows.some(r=>r.title==='1 low batteries'));
+
+/* watch: false must win over the top-level default, for the sleepy-battery
+   case the opt-in exists for. */
+const aOptOut = new A();
+aOptOut.setConfig({ watch_stale:true, rules:[
+  { key:'lit', entity:'vacuum.litter', state:'error', title:'Litter box', watch:false },
+]});
+aOptOut.hass = deadHass;
+check('watch:false overrides watch_stale', aOptOut._rows().length===0);
+
+const aOptIn = new A();
+aOptIn.setConfig({ rules:[
+  { key:'lit', entity:'vacuum.litter', state:'error', title:'Litter box', watch:true },
+]});
+aOptIn.hass = deadHass;
+check('watch:true works without the default', aOptIn._rows().some(r=>r.key==='st:lit'));
+
+/* --- the connection dropping ---------------------------------------------
+   Losing the websocket changes no entity's state — every one keeps its
+   last-known-good value — so the render signature was identical and nothing
+   repainted. A card could not have said it was offline even if it wanted to. */
+const offHass = { ...hass, connected: false, states: hass.states };
+
+check('a card repaints when the connection drops', (() => {
+  const c = new P();
+  c.setConfig({ people:[{ entity:'person.x', battery:'sensor.x_batt' }] });
+  c.hass = hass;
+  const before = c.shadowRoot.innerHTML;
+  c.hass = offHass;
+  /* Nothing in the markup changed — the mark is the host class — so the proof
+     that it repainted is the class, not the string. */
+  return before !== '' && c.classList.contains('pc-stale');
+})());
+check('the mark clears when the connection comes back', (() => {
+  const c = new P();
+  c.setConfig({ people:[{ entity:'person.x', battery:'sensor.x_batt' }] });
+  c.hass = offHass;
+  const marked = c.classList.contains('pc-stale');
+  c.hass = hass;
+  return marked && !c.classList.contains('pc-stale');
+})());
+check('connected:true is not treated as offline', (() => {
+  const c = new P();
+  c.setConfig({ people:[{ entity:'person.x' }] });
+  c.hass = { ...hass, connected:true };
+  return !c.classList.contains('pc-stale');
+})());
+check('an absent connected flag is not treated as offline', (() => {
+  const c = new P();
+  c.setConfig({ people:[{ entity:'person.x' }] });
+  c.hass = hass;
+  return !c.classList.contains('pc-stale');
+})());
+
+/* The header states it; the rooms card is dimmed by it. Dimming the sentence
+   that explains the dimming is not an improvement. */
+check('the header states the connection instead of being dimmed', (() => {
+  const c = new H();
+  c.setConfig({ name:'Alex', weather:'weather.home', occupancy:'input_select.house_occupancy' });
+  c.hass = offHass;
+  return /Offline · last known good/.test(c.shadowRoot.innerHTML)
+      && !c.classList.contains('pc-stale');
+})());
+check('the header drops the weather it can no longer vouch for', (() => {
+  const c = new H();
+  c.setConfig({ name:'Alex', weather:'weather.home' });
+  c.hass = offHass;
+  return !c.shadowRoot.innerHTML.includes('73°');
+})());
+check('the header keeps the clock, which is ours', (() => {
+  const c = new H();
+  c.setConfig({ name:'Alex', weather:'weather.home' });
+  c.hass = offHass;
+  return /Good (morning|afternoon|evening), Alex/.test(c.shadowRoot.innerHTML);
+})());
+
+/* THE ONE THAT MATTERS. Rendering nothing when every rule is clear is this
+   card's best feature and, offline, a lie: the rules are being evaluated
+   against frozen states, so "no rule matches" draws the same zero height as a
+   house that is genuinely fine. */
+check('attention does not hide itself while disconnected', (() => {
+  const c = new A();
+  c.setConfig({ rules:[{ entity:'binary_sensor.flash', state:'off', title:'Flash' }] });
+  c.hass = offHass;
+  return c.shadowRoot.innerHTML !== '' && c.style.display === 'block';
+})());
+check('attention says the rules have not been checked', (() => {
+  const c = new A();
+  c.setConfig({ rules:[{ entity:'binary_sensor.flash', state:'off', title:'Flash' }] });
+  c.hass = offHass;
+  return /Not connected/.test(c.shadowRoot.innerHTML)
+      && /not the same as nothing being wrong/.test(c.shadowRoot.innerHTML);
+})());
+check('attention still lists what was true when the house last answered', (() => {
+  const c = new A();
+  c.setConfig({ rules:[{ entity:'vacuum.litter', state:'error', severity:'critical', title:'Litter box' }] });
+  c.hass = offHass;
+  const html = c.shadowRoot.innerHTML;
+  return /Litter box/.test(html) && /was true when the house last answered/.test(html);
+})());
+check('attention offers no dismissal it cannot write', (() => {
+  const c = new A();
+  c.setConfig({ dismiss_store:'input_text.d',
+    rules:[{ entity:'vacuum.litter', state:'error', severity:'critical', title:'Litter box' }] });
+  c.hass = { ...offHass, callService(){} };
+  return !c.shadowRoot.innerHTML.includes('data-idx=');
+})());
+check('attention is not dimmed as well as captioned', (() => {
+  const c = new A();
+  c.setConfig({ rules:[{ entity:'binary_sensor.flash', state:'off', title:'Flash' }] });
+  c.hass = offHass;
+  return !c.classList.contains('pc-stale');
+})());
+
+/* Both panels mark themselves too, and neither extends PcBaseCard — so the
+   snapshot fix had to be made twice and a test has to watch both. */
+check('the climate panel marks itself offline', (() => {
+  const c = new CPC();
+  c.setConfig({ thermostat:'climate.t', compact:true });
+  c._startHistory = () => {}; c._subscribeForecast = () => {}; c._scheduleRender = () => {};
+  c.hass = { connected:false, states:{ 'climate.t': { state:'cool', attributes:{} } } };
+  return c.classList.contains('pc-stale');
+})());
+check('the sleep panel marks itself offline', (() => {
+  const c = new SPC();
+  c.setConfig({ sleep_state:'sensor.s', ribbon:true });
+  c._startHistory = () => {}; c._scheduleRender = () => {};
+  c.hass = { connected:false, states:{ 'sensor.s': { state:'awake', attributes:{} } } };
+  return c.classList.contains('pc-stale');
+})());
+
+/* A friendly name reaching markup unescaped is the one gap left in an
+   otherwise complete pcEsc pass. */
+const aEsc = new A();
+aEsc.setConfig({ rules:[{ match:'battery_plus_low$', state:'on', title:'low', strip:'Battery low' }] });
+aEsc.hass = { states:{
+  'binary_sensor.z_battery_plus_low': { state:'on', attributes:{ friendly_name:'Kids <b>Room</b> Battery low' } },
+}, callService(){} };
+check('a friendly name is escaped into the row', /Kids &lt;b&gt;Room&lt;\/b&gt;/.test(aEsc.shadowRoot.innerHTML));
 
 // people
 const p = new P();
@@ -1307,6 +1550,39 @@ shconn.disconnectedCallback();
 check('detaching stops every timer',
   !shconn._clock && !shconn._historyTimer && !shconn._eventTimer);
 
+/* The two setTimeouts were left running while every setInterval was stopped.
+   Both fire a bare _render() five seconds out, into a view Lovelace may already
+   have detached — and an armed Reboot button must not still be primed when you
+   walk back in, which is the whole point of arming it. */
+check('detaching clears the pending timeouts too', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [] });
+  s._render = () => {};
+  s._armed = 'reboot';
+  s._armTimer = setTimeout(() => {}, 60000);
+  s._tapTimer = setTimeout(() => {}, 60000);
+  s._goalSend = setTimeout(() => {}, 60000);
+  s.disconnectedCallback();
+  return s._armTimer === null && s._tapTimer === null && s._goalSend === null;
+})());
+check('detaching disarms a primed destructive control', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [] });
+  s._render = () => {};
+  s._armed = 'reboot';
+  s.disconnectedCallback();
+  return s._armed === null;
+})());
+check('the desk disarms and clears on detach as well', (() => {
+  const d = new (defined['purdy-desk-card'])();
+  d.setConfig({ sections: [] });
+  d._render = () => {};
+  d._armed = 'reboot';
+  d._armTimer = setTimeout(() => {}, 60000);
+  d.disconnectedCallback();
+  return d._armed === null && d._armTimer === null;
+})());
+
 let restarted = 0;
 shconn._start = () => { restarted++; shconn._historyTimer = 1; };
 shconn._render = () => {};
@@ -1668,6 +1944,101 @@ check('mini bar is tappable', /\.ps-mini \{[^}]*cursor: pointer/.test(shs));
 check('the type and radius scales are published as tokens',
   /--pc-fs-micro:/.test(src) && /--pc-fs-2xl:/.test(src) &&
   /--pc-r-sm:/.test(src) && /--pc-r-pill:/.test(src) && /--pc-fill-2:/.test(src));
+/* --------------------------------------------------------- the built file --
+ * The comments are 27% of a 1MB file a phone downloads before it can draw. They
+ * stay in src/ and do not ship. Everything above this line already proves the
+ * stripped bundle BEHAVES, because it is the thing being eval'd — these pin the
+ * contract of the strip itself.
+ */
+check('the shipped bundle carries no JS comment blocks', (() => {
+  /* Template literals keep theirs — the CSS inside them is string content and is
+     deliberately left byte-identical — so look only outside them. Crudely: the
+     long prose blocks that open every source file are gone. */
+  return !bundle.includes('only a render against live data caught')
+      && !bundle.includes('mouse: hover, no gesture to fight')
+      && src.includes('mouse: hover, no gesture to fight');
+})());
+check('the strip leaves CSS inside template literals alone', (() => {
+  /* These four live inside the styles template literals. They are string content
+     the browser parses, not comments the parser skips, and taking them would
+     mean rewriting what ships to save 8% — the wrong side of that trade. */
+  const inCss = [
+    'The horizon the dock rests on',
+    'dvh, not vh. vh is the LARGE viewport',
+    'Measured from the real dock after every render',
+    'Hit expansion. Every round control on this screen',
+  ];
+  return inCss.every((t) => bundle.includes(t) && src.includes(t));
+})());
+check('the strip does take the comments around the code', (() => {
+  /* The counterpart: these sit in code context and must be gone, or the check
+     above is passing because nothing was stripped at all. */
+  const inCode = [
+    'pcNum(...) || 0',
+    'mouse: hover, no gesture to fight',
+    'THE ONE CARD WHOSE SILENCE IS A CLAIM',
+  ];
+  return inCode.every((t) => src.includes(t) && !bundle.includes(t));
+})());
+check('the strip keeps line numbers aligned with src/', (() => {
+  /* Newlines inside a block comment are preserved, so a stack trace from a phone
+     still points at the right line of the concatenated source — offset only by
+     the banner the build prepends. */
+  const find = (s, needle) => s.split('\n').findIndex((l) => l.includes(needle));
+  const banner = find(bundle, 'const PC_VERSION');       // first line of real code
+  const offsets = ['const PS_SCRUB_STOPS', 'const PD_BORROW', 'function pcRingArc']
+    .map((needle) => find(bundle, needle) - find(src, needle));
+  return banner > 0 && offsets.every((o) => o === banner - find(src, 'const PC_VERSION'));
+})());
+check('the shipped bundle still says what it is', () =>
+  /^\/\* Purdy Cards v\d+\.\d+\.\d+ — https:\/\/github\.com/.test(bundle));
+check('a regex literal survived the strip', () =>
+  /replace\(\/\[\^a-z0-9\]\+\/g/.test(bundle));
+check('the version survived and matches src/', () => {
+  const v = (s) => (/const PC_VERSION = "([^"]+)"/.exec(s) || [])[1];
+  return !!v(bundle) && v(bundle) === v(src);
+});
+check('every element still registers from the stripped bundle',
+  ['climate-panel-card','sleep-panel-card','purdy-shell-card','purdy-desk-card',
+   'purdy-header-card','purdy-attention-card','purdy-music-card','purdy-remote-card']
+    .every((n) => !!defined[n]));
+
+/* A friendly name is authored in Home Assistant and interpolated straight into
+   innerHTML. 445 sites went through psEsc and eight did not — not an attack
+   surface on a personal dashboard, but an `&` in a room name renders wrong, and
+   the eight were the only gap in an otherwise complete pass. */
+check('no friendly name reaches markup unescaped', (() => {
+  const bare = (src.match(/\$\{[^{}]*pcName\([^{}]*\}/g) || [])
+    .filter((m) => !/p[cs]Esc\(/.test(m));
+  return bare.length === 0;
+})());
+
+/* Skyline moved --pc-cool and every text colour followed, because they read the
+   token. The forty-odd translucent BACKGROUNDS were channel literals of the old
+   cool, so every "on" chip wore a tint one hue off its own text. A hex cannot
+   take an alpha inside a variable, so the channels are their own token — and
+   nothing may spell a brand colour out in channels again. */
+check('the cool is published as channels as well as a hex',
+  /--pc-cool: #56D4E4/.test(src) && /--pc-cool-rgb: 86, 212, 228/.test(src));
+check('the panel tint derives from the cool rather than repeating it',
+  /--pc-tint: rgba\(var\(--pc-cool-rgb\)/.test(src));
+check('no stranded copy of the pre-Skyline cool survives', (() => {
+  /* Comments legitimately name the old value while explaining the move; CSS
+     must not. Strip block comments before looking. */
+  const css = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  return !/77\s*,\s*208\s*,\s*225/.test(css) && !/4dd0e1/i.test(css);
+})());
+check('the aurora accent is only ever a token or its own fallback', (() => {
+  const css = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  /* Two spellings are legitimate: the declaration itself, and a var() fallback
+     naming the same value. Anything else is a third copy to keep in sync. */
+  const ok = /--pc-aur-b: *#8B7CFF/.test(css);
+  const stray = (css.match(/#8B7CFF/gi) || []).filter((_, i, all) => all.length > 0);
+  const accounted = (css.match(/--pc-aur-b: *#8B7CFF/gi) || []).length
+    + (css.match(/var\(--[a-z-]*aur-b, *#8B7CFF\)/gi) || []).length;
+  return ok && stray.length === accounted;
+})());
+
 check('the shell sizes itself from the scale, not from loose pixels', (() => {
   const loose = (shs.match(/font-size: *[0-9.]+px/g) || [])
     .filter((d) => !/: *16px/.test(d));   // 16px on fields is deliberate, see below
@@ -1795,6 +2166,159 @@ shp._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 1200), attribute
 check('a re-fire brings the row back', shp._faults().length === 1);
 shp._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 13 * 3600), attributes: {} };
 check('dismiss_hours caps how long a stale row hides', shp._faults().length === 1);
+
+/* --- a rule whose sensor has gone dark ------------------------------------
+   _ruleHit is false for missing / unavailable / unknown, which is right as a
+   predicate and wrong as a fault list: the row leaves the sheet and the header
+   chip reads "All clear" because nothing is raised. Same argument _raised
+   already makes about the server's faults being two taps inside a mode. */
+const mkDark = (cfg) => {
+  const s = new SH();
+  s.setConfig({ dismiss_store: 'input_text.dis', sections: [], ...cfg });
+  s._hass = { states: {
+    'vacuum.l': { state: 'unavailable', attributes: {}, last_changed: new Date((NOW_S - 300) * 1000).toISOString() },
+    'input_text.dis': { state: '', attributes: {} },
+  } };
+  return s;
+};
+const rule = { key: 'lit', entity: 'vacuum.l', state: 'error', severity: 'critical', title: 'Litter' };
+
+const dkOff = mkDark({ attention: [rule] });
+check('a dark rule is silent without watch_stale', dkOff._faults().length === 0);
+
+const dkOn = mkDark({ watch_stale: true, attention: [rule] });
+const dkRows = dkOn._faults();
+check('watch_stale raises the dark rule', dkRows.length === 1 && dkRows[0].key === 'st:lit');
+check('the dark row says why', /not reporting · unavailable/.test(dkRows[0].detail));
+check('the dark row is info, not the rule severity', dkRows[0].severity === 'info');
+check('the dark row fires at last_changed', dkRows[0].firedAt === NOW_S - 300);
+
+/* The `st:` prefix is the point: acknowledging that a sensor is dark is a
+   different act from acknowledging the fault it would have reported. */
+dkOn._hass.states['input_text.dis'] = { state: 'lit:' + (NOW_S - 60), attributes: {} };
+check('a fault dismissal does not silence the dark row', dkOn._faults().length === 1);
+dkOn._hass.states['input_text.dis'] = { state: 'st:lit:' + (NOW_S - 60), attributes: {} };
+check('the dark row dismisses on its own key', dkOn._faults().length === 0);
+
+/* An entity gone from the registry has no last_changed. Returning 0 would put
+   it in the trap the _firedAt comment documents — every dismissal is newer than
+   0, so the row would hide forever rather than for dismiss_hours. */
+const dkGone = mkDark({ watch_stale: true, attention: [rule] });
+delete dkGone._hass.states['vacuum.l'];
+const goneRow = dkGone._faults()[0];
+check('a missing entity raises too', goneRow && goneRow.key === 'st:lit');
+check('a missing entity says it is not in HA', /not in Home Assistant/.test(goneRow.detail));
+check('a missing entity gets a non-zero firedAt', goneRow.firedAt >= NOW_S);
+check('a missing entity offers no more-info target', goneRow.entity === null);
+
+/* Forgotten on recovery, or a sensor that dies again next week carries its
+   first disappearance and last week's dismissal still hides it. */
+const stamped = dkGone._staleAt['st:lit'];
+dkGone._hass.states['vacuum.l'] = { state: 'docked', attributes: {}, last_changed: new Date().toISOString() };
+dkGone._faults();
+check('the shell forgets the stamp on recovery', stamped > 0 && dkGone._staleAt['st:lit'] === undefined);
+
+check('watch:false overrides the shell default', (() => {
+  const s = mkDark({ watch_stale: true, attention: [{ ...rule, watch: false }] });
+  return s._faults().length === 0;
+})());
+check('watch:true works without the shell default', (() => {
+  const s = mkDark({ attention: [{ ...rule, watch: true }] });
+  return s._faults().length === 1;
+})());
+
+/* A regex rule cannot miss an id that left the registry, but a member going
+   dark is filtered out silently — eleven batteries with one unavailable read as
+   ten healthy batteries. */
+check('a shell group rule notices a dark member', (() => {
+  const s = new SH();
+  s.setConfig({ watch_stale: true, sections: [],
+    attention: [{ key: 'bat', match: 'battery_low$', state: 'on', title: 'low batteries' }] });
+  s._hass = { states: {
+    'binary_sensor.a_battery_low': { state: 'on', attributes: { friendly_name: 'Hall' }, last_changed: new Date().toISOString() },
+    'binary_sensor.b_battery_low': { state: 'unavailable', attributes: { friendly_name: 'Office' } },
+  } };
+  const rows = s._raised();
+  return rows.some((r) => r.key === 'st:bat' && /1 not reporting/.test(r.title))
+      && rows.some((r) => r.key === 'bat' && /1 low batteries/.test(r.title));
+})());
+
+/* A server fault's sensor going dark is the same fact about the same array. The
+   stale pass has to walk srv.faults, not _serverFaults(), because the latter
+   has already filtered out exactly what it is looking for. */
+check('a dark server fault raises as well', (() => {
+  const s = new SH();
+  s.setConfig({ watch_stale: true, sections: [],
+    server: { name: 'S', prefix: 's', faults: [
+      { entity: 'sensor.s_disk1', above: 90, label: 'Disk 1', severity: 'critical' }] } });
+  s._hass = { states: { 'sensor.s_disk1': { state: 'unavailable', attributes: {}, last_changed: new Date().toISOString() } } };
+  const rows = s._raised();
+  return rows.length === 1 && rows[0].key === 'st:sv:disk1' && /not reporting/.test(rows[0].detail);
+})());
+
+/* --- a key with a colon in it --------------------------------------------
+   `pair.split(":")` then `bits[1]` assumed a key with no colon, and the keys
+   have carried one since the server's faults were folded into _raised. So
+   `sv:disk1:1755000000` read back as key "sv" with epoch NaN and was dropped —
+   dismissing a server fault wrote a good entry the read side threw away, and
+   the row came back. Permanent, and only on the rows from the array. */
+check('a prefixed key survives the dismissal store', (() => {
+  const s = new SH();
+  s.setConfig({ dismiss_store: 'input_text.dis', sections: [], attention: [] });
+  s._hass = { states: { 'input_text.dis': { state: 'sv:disk1:1755000000|st:lit:1755000001|plain:1755000002', attributes: {} } } };
+  const d = s._dismissals();
+  return d['sv:disk1'] === 1755000000 && d['st:lit'] === 1755000001 && d['plain'] === 1755000002;
+})());
+check('a server fault can actually be dismissed', (() => {
+  const s = new SH();
+  s.setConfig({ dismiss_store: 'input_text.dis', sections: [],
+    server: { name: 'S', prefix: 's', faults: [
+      { entity: 'sensor.s_disk1', above: 90, label: 'Disk 1', severity: 'critical' }] } });
+  s._hass = { states: {
+    'sensor.s_disk1': { state: '92.8', attributes: {}, last_changed: new Date((NOW_S - 600) * 1000).toISOString() },
+    'input_text.dis': { state: 'sv:disk1:' + (NOW_S - 60), attributes: {} },
+  } };
+  return s._faults().length === 0;
+})());
+check('a malformed pair is dropped, not read as epoch zero', (() => {
+  const s = new SH();
+  s.setConfig({ dismiss_store: 'input_text.dis', sections: [], attention: [] });
+  s._hass = { states: { 'input_text.dis': { state: 'nocolon|:9|trailing:', attributes: {} } } };
+  return Object.keys(s._dismissals()).length === 0;
+})());
+
+/* The attention card's own store had the same shape, plus a truncation that cut
+   mid-token — so the corrupted entry was the newest one, i.e. the dismissal you
+   had just made. Whole pairs, oldest dropped first. */
+check('the attention store drops whole pairs, oldest first', (() => {
+  const c = new A();
+  c.setConfig({ dismiss_store: 'input_text.d', rules: [] });
+  const calls = [];
+  c._hass = { states: {}, callService: (d, s, data) => calls.push(data.value) };
+  const map = {};
+  for (let i = 0; i < 40; i++) map['keyname' + i] = 1755000000 + i;
+  c._writeDismissals(map);
+  const val = calls[0];
+  return val.length <= 255
+      && val.split('|').every((p) => /^keyname\d+:\d{10}$/.test(p))
+      && val.includes('keyname39:')            // the newest survived
+      && !val.includes('keyname0:');           // the oldest was dropped
+})());
+check('the attention store round-trips a prefixed key', (() => {
+  const c = new A();
+  c.setConfig({ dismiss_store: 'input_text.d', rules: [] });
+  c._hass = { states: { 'input_text.d': { state: 'st:lit:1755000000', attributes: {} } }, callService(){} };
+  return c._dismissals()['st:lit'] === 1755000000;
+})());
+
+/* The server key was derived in two places and had to agree exactly, or a
+   dismissal would land on the fault and not on its stale twin. */
+check('the server key is derived in one place', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [], server: { name: 'S', prefix: 's', faults: [] } });
+  return s._serverKey({ label: 'Disk 1', entity: 'sensor.x' }) === 'disk1'
+      && s._serverKey({ key: 'explicit', label: 'Disk 1' }) === 'explicit';
+})());
 /* --- affordances: a door is not an expand -------------------------------- */
 /* The named worst friction was "not tappable" — which is a complaint about not
    knowing you MAY press, not about what happens when you do. A header that
@@ -6651,7 +7175,7 @@ dcard._hass.states['media_player.hatch'] = { state: 'playing', attributes: {} };
 check('the protect guard speaks while he is asleep',
   (dcard._protectOf('light.night') || {}).ask === 'Joel is asleep');
 check('the guard covers the level, not just the switch',
-  deskSrc.includes('covers the LEVEL') && /Set \$\{pcName/.test(deskSrc));
+  deskSrc.includes('covers the LEVEL') && /Set \$\{psEsc\(pcName/.test(deskSrc));
 check('a mood never touches a guarded light', /if \(this\._protectOf\(id\)\) return;/.test(deskSrc));
 dcard._hass.states['media_player.hatch'] = { state: 'idle', attributes: {} };
 
