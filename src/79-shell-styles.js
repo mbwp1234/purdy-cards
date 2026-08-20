@@ -176,6 +176,9 @@ const PS_STYLES = `
          (No backticks anywhere in this file's comments: it is one template
          literal, and a single one terminates the whole stylesheet.) */
       .ps-pav { display: flex; align-items: center; gap: 4px; }
+      /* Two 28px rings at a 4px gap read as one blurred object at arm's
+         length; the ring needs the air the bare face did not. */
+      .ps-pav:has(.ps-pv.big) { gap: 7px; }
       /* No overflow:hidden on the avatar itself — it would clip the padded tap
          target below. The image rounds itself instead. */
       .ps-pv { position: relative; width: 21px; height: 21px; border-radius: 50%; cursor: pointer;
@@ -187,6 +190,90 @@ const PS_STYLES = `
       .ps-pv.low::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px;
                           border-radius: 50%; background: var(--ps-bad); box-shadow: 0 0 0 1.5px #10141f; }
       .ps-pv::before { content: ""; position: absolute; inset: -7px -3px; }
+      /* The tracked avatar is 28px rather than 21 so the horseshoe has somewhere
+         to be: the face stays the size it always was and the ring is drawn
+         OUTSIDE it. The header row is set by the greeting and the weather
+         numeral on the right, both taller than this, so it costs no height.
+         Presence is the face, not a second ring — see _hdrPeople. */
+      .ps-pv.big { width: 28px; height: 28px; box-shadow: none; background: none; }
+      .ps-pv.big img, .ps-pv.big .ps-pvi { width: 21px; height: 21px; border-radius: 50%; }
+      .ps-pv.big .ps-pvi { display: flex; align-items: center; justify-content: center;
+                           background: var(--pc-fill-2); color: var(--ps-dim);
+                           font-size: var(--pc-fs-micro); font-weight: 700; }
+      .ps-pv.big.home img, .ps-pv.big.home .ps-pvi { color: var(--ps-text); }
+      /* Away is dimmed and drained rather than hidden: the ring keeps counting
+         wherever they are, and a face that vanished when someone left would
+         take their steps with it. */
+      .ps-pv.away img, .ps-pv.away .ps-pvi { opacity: .45; filter: grayscale(1); }
+      .ps-pvr { position: absolute; inset: 0; pointer-events: none; }
+      .ps-pv.big.low::after { right: -2px; bottom: 0; }
+
+      /* ----------------------------------------------------------- person --*/
+      .ps-ppbody { padding: 2px 2px 4px; }
+      .ps-pphead { display: flex; align-items: center; gap: 10px; padding: 2px 2px 10px; }
+      .ps-ppname { display: block; font-size: var(--pc-fs-lg); font-weight: 600; }
+      .ps-ppwhen { display: block; font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 1px; }
+      /* A comparison, never a restatement — the numeral is 40px and six inches
+         away, and a chip repeating it is the mistake this card has shipped
+         five times. */
+      .ps-ppchip { flex: 0 0 auto; max-width: 46%; text-align: right;
+                   font-size: var(--pc-fs-micro); font-weight: 600; line-height: 1.25;
+                   padding: 5px 9px; border-radius: var(--pc-r-pill);
+                   background: var(--pc-fill-2); border: 1px solid var(--pc-edge); color: var(--ps-text); }
+      .ps-ppchip.up { color: var(--ps-good); border-color: color-mix(in srgb, var(--ps-good) 30%, transparent); }
+      .ps-ppchip.dn { color: var(--ps-warn); border-color: color-mix(in srgb, var(--ps-warn) 28%, transparent); }
+      .ps-pphero { display: flex; align-items: center; gap: 16px; padding: 4px 2px 12px; }
+      .ps-ppn { font-size: var(--pc-fs-3xl); font-weight: 600; line-height: 1;
+                letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+      .ps-ppn.none { color: var(--ps-dim); }
+      .ps-ppu { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .13em;
+                text-transform: uppercase; color: var(--ps-dim); margin-top: 6px; }
+      .ps-ppnote { font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 6px; }
+      /* Seven values with their labels underneath: a plot you READ, so it takes
+         the railbox and not the scrub. */
+      .ps-ppweek { margin: 0 0 10px; }
+      .ps-ppbars { display: flex; align-items: flex-end; gap: 6px; height: 58px; position: relative; }
+      .ps-ppband { position: absolute; left: 0; right: 0;
+                   background: color-mix(in srgb, var(--ps-aur-b) 12%, transparent);
+                   border-top: 1px solid color-mix(in srgb, var(--ps-aur-b) 30%, transparent);
+                   border-bottom: 1px solid color-mix(in srgb, var(--ps-aur-b) 30%, transparent); }
+      .ps-ppb { flex: 1; border-radius: var(--pc-r-hair); position: relative;
+                background: linear-gradient(180deg, var(--ps-aur-a), var(--ps-aur-b)); opacity: .8; }
+      .ps-ppb.now { opacity: 1; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+      /* A day nothing was reported is HATCHED, never a short bar: a short bar
+         reads as a lazy day at a glance, and a strip is the surface where a
+         zero is the most convincing lie this card could tell. */
+      .ps-ppb.miss { height: 22px; background: none; opacity: 1;
+                     border: 1px dashed var(--pc-fill-3); border-radius: var(--pc-r-hair); }
+      .ps-ppdays { display: flex; gap: 6px; margin-top: 6px; }
+      .ps-ppdays span { flex: 1; text-align: center; font-size: var(--pc-fs-micro);
+                        font-weight: 700; letter-spacing: .06em; color: var(--ps-dim); }
+      .ps-ppcap { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px;
+                  font-size: var(--pc-fs-micro); color: var(--ps-dim); }
+      .ps-ppfacts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px;
+                    background: var(--pc-edge); border-radius: var(--pc-r-sm); overflow: hidden; }
+      .ps-ppf { background: var(--ps-fill); padding: 9px 10px; }
+      .ps-ppk { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .12em;
+                text-transform: uppercase; color: var(--ps-dim); }
+      .ps-ppv { font-size: var(--pc-fs-lg); font-weight: 600; margin-top: 4px;
+                font-variant-numeric: tabular-nums; }
+      .ps-ppv small { font-size: var(--pc-fs-xs); color: var(--ps-dim); font-weight: 500; margin-left: 2px; }
+      /* Not reported, said out loud. A dash here would read as a rendering
+         fault rather than a sensor that has not decided. */
+      .ps-ppv.na { font-size: var(--pc-fs-sm); font-weight: 500; color: var(--ps-dim); margin-top: 6px; }
+      .ps-ppfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 11px 2px 4px;
+                   font-size: var(--pc-fs-xs); color: var(--ps-dim); }
+      .ps-ppfoot b { color: var(--ps-text); font-weight: 600; }
+      .ps-ppdot { width: 4px; height: 4px; border-radius: 50%; background: var(--ps-dim); flex: 0 0 auto; }
+      .ps-ppdot.bad { background: var(--ps-bad); }
+      /* The device page the avatar used to open on a tap. Replacing a surface
+         orphans whatever was only reachable through it, and this card has lost
+         the music presets and the vacuum map to exactly that — so the route
+         out is drawn, not merely bound to a hold nobody would guess at. */
+      .ps-ppmore { margin-top: 10px; padding: 9px 10px; text-align: center; cursor: pointer;
+                   border-radius: var(--pc-r-sm); background: var(--ps-fill);
+                   font-size: var(--pc-fs-sm); color: var(--ps-dim); }
+
       .ps-rt { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .ps-wx { display: flex; align-items: center; gap: 7px; color: var(--ps-cool); font-size: var(--pc-fs-xl);
                font-weight: 250; font-variant-numeric: tabular-nums; letter-spacing: -.03em; cursor: pointer; }

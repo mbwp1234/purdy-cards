@@ -1,0 +1,12 @@
+{
+  "_note": "The header avatars, with the step sensors that give them a ring and a sheet. Real entity ids live in people.json, which is gitignored.",
+  "people": [
+    { "entity": "person.<one>", "name": "<One>",
+      "battery": "sensor.<one>_battery_level",
+      "steps": "sensor.<one>_steps",
+      "distance": "sensor.<one>_distance",
+      "floors": "sensor.<one>_floors_ascended",
+      "activity": "sensor.<one>_activity",
+      "watch": "sensor.<one>_watch_battery_level" }
+  ]
+}
