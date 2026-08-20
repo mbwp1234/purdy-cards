@@ -374,6 +374,11 @@ Object.assign(PurdyDeskCard.prototype, {
       ? (night.active ? "tonight" : "last night")
       : (loaded ? "no night yet" : err ? "unavailable" : "loading");
 
+    /* Same rule as the phone: a day he was not here is not a day of missing
+       naps. The desk reads the same store and says the same word. */
+    const away = this._isAwayDay(sec, todayKey);
+    const awayLabel = this._awayLabel(sec);
+
     const napRings = naps.map((n, i) => {
       const short = n.asleepMinutes < (sec.catnap_under_min || 30);
       const f = Math.max(0.04, Math.min(1, n.asleepMinutes / (sec.nap_full_min || 120)));
@@ -381,7 +386,8 @@ Object.assign(PurdyDeskCard.prototype, {
           <div class="pd-ring sm" style="width:54px;height:54px">
             ${this._ringSvg(54, 5, [[f, short ? "var(--ps-warn)" : "var(--ps-light)"]], null)}
             <div class="pd-rv sm"><b>${psEsc(psHM(n.asleepMinutes))}</b></div>
-            ${n.edited ? `<span class="ps-edd ring" title="Corrected"></span>` : ""}
+            ${n.manual ? `<span class="ps-edd ring hand" title="Hand-logged"></span>`
+    : n.edited ? `<span class="ps-edd ring" title="Corrected"></span>` : ""}
           </div>
           <span class="pd-napt">${psEsc(pdClock(n.from))}</span>
         </div>`;
@@ -389,9 +395,14 @@ Object.assign(PurdyDeskCard.prototype, {
 
     const chip = live
       ? this._chip(live.settledAt && live.settledAt <= now ? "Asleep" : "Settling", "deep")
-      : stats.wakeWindowMin != null
-        ? this._chip(`Up ${psHM(stats.wakeWindowMin)}`, "")
-        : this._chip(loaded ? "Idle" : "…", "");
+      /* The wake window is measured from a session that ended HERE. On an away
+         day there is none, so the desk drops it rather than reporting hours he
+         may well have spent asleep at the nanny's. */
+      : away
+        ? this._chip(awayLabel, "")
+        : stats.wakeWindowMin != null
+          ? this._chip(`Up ${psHM(stats.wakeWindowMin)}`, "")
+          : this._chip(loaded ? "Idle" : "…", "");
 
     const mini = `<div class="pd-mini">
         ${this._mstat(nightMin == null ? "—" : (nightMin / 60).toFixed(1), "night", nightMin == null ? "" : "h")}
@@ -408,7 +419,8 @@ Object.assign(PurdyDeskCard.prototype, {
             <div class="pd-rv"><b>${psEsc(ringLabel)}</b><small>${psEsc(ringSub)}</small></div>
           </div>
           <div class="pd-grow">
-            <div class="pd-naps">${napRings || `<span class="pd-dimtext">No naps yet today</span>`}</div>
+            <div class="pd-naps">${napRings || `<span class="pd-dimtext">${
+              psEsc(away ? `${awayLabel} — he was out` : "No naps yet today")}</span>`}</div>
             <div class="pd-jstatus">${this._nurseryStatus(sec, live, stats, night, now)}</div>
           </div>
         </div>
@@ -506,14 +518,21 @@ Object.assign(PurdyDeskCard.prototype, {
        the phone writes, so without this it would print a corrected figure as
        though the sensors had produced it — the phone marks it, and one surface
        marking it is worse than neither. */
+    /* `ed` is the mark, and it has two values: a filled dot for a figure a
+       person corrected, a hollow one for a session a person logged. The desk
+       reads the same stores the phone writes, so without both it would print a
+       hand-logged night as though the sensors had produced it — and one surface
+       marking it while the other does not is worse than neither. */
     const row = (l, v, c, ed) => `<div class="pd-jr"><span class="pd-l">${
-        ed ? `<span class="ps-edd" title="Corrected"></span>` : ""}${psEsc(l)}</span>
+        ed === "hand" ? `<span class="ps-edd hand" title="Hand-logged"></span>`
+          : ed ? `<span class="ps-edd" title="Corrected"></span>` : ""}${psEsc(l)}</span>
         <span class="pd-v">${psEsc(v)}</span><span class="pd-c">${psEsc(c || "")}</span></div>`;
+    const mark = (n) => (n.manual ? "hand" : n.edited);
     const napRows = naps.map((n) => row(
       pdClock(n.from) + " – " + pdClock(psWokeAt(n)),
       psHM(n.asleepMinutes),
       n.interventions ? `${n.interventions} in` : "",
-      n.edited
+      mark(n)
     )).join("");
 
     /* The same words as the phone. "Down" and "Settled" are the pair a stranger
@@ -521,15 +540,20 @@ Object.assign(PurdyDeskCard.prototype, {
        surfaces label one derivation with two vocabularies is how a house ends up
        arguing with itself about what "settled" means. The desk's own layout
        rework is a later batch; the nouns are not. */
+    /* A hand-logged night knows how long he slept and nothing about the door.
+       "Went in 0" and a longest run would both be inventions, and a zero here is
+       the most convincing one the card could print — so the two door-derived
+       rows say what is true instead: nobody was watching. */
     const nightRows = night ? [
       row("Slept", psDur(night.asleepMinutes),
-        stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", night.edited),
-      row("Put down / woke", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", night.edited),
-      row("Left him", pdClock(night.settledAt), `${psHM(night.settleMinutes)} to settle`),
-      row("Went in", String(night.interventions),
-        (night.events || []).map((t) => pdClock(t)).join(" · ")),
-      row("Longest run", psDur(night.longestStretch),
-        stats.avgStretch ? `7d ${psDur(stats.avgStretch)}` : ""),
+        stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", mark(night)),
+      row("Put down / woke", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", mark(night)),
+      night.manual ? "" : row("Left him", pdClock(night.settledAt), `${psHM(night.settleMinutes)} to settle`),
+      row("Went in", night.manual ? "—" : String(night.interventions),
+        night.manual ? "not measured" : (night.events || []).map((t) => pdClock(t)).join(" · ")),
+      row("Longest run", night.longestStretch == null ? "—" : psDur(night.longestStretch),
+        night.longestStretch == null ? "not measured"
+          : stats.avgStretch ? `7d ${psDur(stats.avgStretch)}` : ""),
     ].join("") : "";
 
     const spread = stats.bedSpread != null

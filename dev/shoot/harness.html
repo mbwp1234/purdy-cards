@@ -265,6 +265,10 @@ function buildHass(states) {
         if (pick) { el._openNapEdit(pick.from); touched = true; }
         else note(`napedit=${want} matched no session`);
       }
+      /* The log sheet. Same shape as napedit: `_sheet` alone photographs an
+         empty sheet, because the editor's own state is what the body is drawn
+         from and it is only set by the opener. */
+      if (P.get("joellog") && el._openNurseryLog) { el._openNurseryLog(); touched = true; }
       if (touched) { if (el._expandWatched) el._expandWatched(); el._render(); }
     };
 

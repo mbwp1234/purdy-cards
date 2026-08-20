@@ -356,6 +356,36 @@ const PS_STYLES = `
                 background: var(--ps-cool); margin-right: 6px; vertical-align: middle; }
       .ps-edd.ring { position: absolute; top: 1px; right: 1px; margin: 0; }
       .ps-edd.wk { position: absolute; left: 50%; margin: 0; transform: translateX(-50%); }
+      /* Hand-logged: the same dot, hollowed out. Same hue on purpose — neither
+         a correction nor a log is a fault, and a card already spending five
+         semantic colours does not need a sixth to say "a person put this here".
+         Hollow reads as "nothing measured inside this" on its own. */
+      .ps-edd.hand { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ps-cool); }
+
+      /* A night he spent somewhere else. Quieter than the hatch a missing night
+         gets, because it is not a fault: the frame says the slot exists and is
+         deliberately empty, where the hatch says something should be here. */
+      .ps-jwb.away i { top: 0; height: auto; border-radius: var(--pc-r-xs);
+                       border: 1px dashed rgba(255,255,255,.055); background: none; }
+      .ps-jwx span.away { color: var(--ps-cool); opacity: .75; }
+
+      /* The log sheet. Start/Stop on top, the past-session steppers under it,
+         and the away days last — the order they are reached for. */
+      .ps-jlrun { display: flex; align-items: center; gap: 10px; padding: 11px;
+                  background: var(--ps-fill); border-radius: var(--pc-r-md);
+                  font-size: var(--pc-fs-sm); }
+      .ps-jlrun b { display: block; color: var(--ps-text); font-weight: 650; }
+      .ps-jlrun .ps-flat { display: block; margin-top: 2px; font-size: var(--pc-fs-xs); }
+      .ps-jlsec { margin: 15px 0 3px; font-size: var(--pc-fs-micro); font-weight: 700;
+                  letter-spacing: .07em; text-transform: uppercase; color: var(--ps-dim); }
+      .ps-jldays { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+      .ps-jlday { display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+                  padding: 10px 12px; border: 0; cursor: pointer; text-align: left;
+                  background: var(--ps-fill); border-radius: var(--pc-r-md);
+                  color: var(--ps-muted); font-size: var(--pc-fs-xs); font-family: inherit; }
+      .ps-jlday b { color: var(--ps-text); font-size: var(--pc-fs-sm); font-weight: 650; }
+      .ps-jlday.on { background: rgba(96,208,255,.14); }
+      .ps-jlday.on b { color: var(--ps-cool); }
 
       /* The week of nights. A column per night, HIS OWN band behind them, and a
          hatched slot where a night is missing — a short column reads as a bad

@@ -82,6 +82,13 @@ const PD_BORROW = [
      panel rendered — and more quietly, the desk would have gone on showing the
      derived figure while the phone showed the corrected one. */
   "_napEditStore", "_napEdits",
+  /* Hand-logged sessions and away days. `_nurserySessions` merges the logs in,
+     so leaving these behind would throw out of the borrowed method the moment a
+     nursery panel rendered — and quietly, the desk would go on reporting a
+     travelling week as a week of missing nights while the phone said he was
+     away. The desk does not WRITE either store; it reads both. */
+  "_manualCfg", "_manualStore", "_manualEntries",
+  "_awayStore", "_awayLabel", "_awayDays", "_isAwayDay",
   /* weather — the statistics fetch, the provider-shape detection and the rail's
      scale. `_wxCapsule` is here too, taking a class prefix: the three states it
      draws (a stub for a half-published day, a hatch for an absent one, a

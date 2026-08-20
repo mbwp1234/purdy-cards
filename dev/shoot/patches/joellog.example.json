@@ -1,0 +1,13 @@
+{
+  "_note": "Copy to joellog.json with your own entity ids, then shoot with `node dev/shoot/shoot.mjs phone-joellog phone-joel-away`. Real patches are gitignored — they name entities and this repo is public. This one turns on the nursery section's hand-log and away-day stores, so the log sheet and the nanny-day face can be photographed before either is deployed to the live dashboard.",
+
+  "$mergeSections": [
+    { "key": "joel",
+      "edits": { "store": "input_text.<your-nap-edits-helper>" },
+      "manual": {
+        "store": "input_text.<your-manual-sessions-helper>",
+        "away_store": "input_text.<your-away-days-helper>",
+        "away_label": "Nanny day"
+      } }
+  ]
+}

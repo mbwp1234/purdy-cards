@@ -49,6 +49,11 @@ const PRESETS = {
      itself — which is opened by a press-and-hold, the one entry point a URL
      cannot express, so `napedit=` picks a session out of the card's own
      derived list. */
+  /* Away from the sensors. The patch turns on the log and away stores before
+     they are deployed, and `away=` is a live helper write away — so the away
+     face is shot by writing the helper, not by a knob. */
+  "phone-joellog":      [PHONE, SHELL + "&patch=joellog&open=joel&joellog=1"],
+  "phone-joel-away":    [PHONE, SHELL + "&patch=joellog&open=joel"],
   "phone-napedit":      [PHONE, SHELL + "&patch=napedit&open=joel"],
   "phone-napedit-sheet":[PHONE, SHELL + "&patch=napedit&open=joel&napedit=last"],
   "phone-napedit-night":[PHONE, SHELL + "&patch=napedit&open=joel&napedit=night"],
