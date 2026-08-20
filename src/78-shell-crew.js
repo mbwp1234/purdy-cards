@@ -363,6 +363,97 @@ Object.assign(PurdyShellCard.prototype, {
       </button>`;
   },
 
+  /* TONIGHT is one decision — sweep, or sweep and mop — and it was the only
+     thing on the old Bubble card that a person actually touched. The bedtime
+     automation alternates it on its own; this is the override for the night
+     you look at the floor and disagree.
+   *
+   * `input_boolean.jeeves_next_clean_mop` reads at rest exactly as its name
+   * says: ON means the NEXT run mops. The automation toggles it as its first
+   * action and then branches on `off`, which is the same statement made twice
+   * — read the flag as it stands and the two agree.
+   *
+   * WHILE A RUN IS ACTIVE the flag has already been flipped and now describes
+   * TOMORROW, so the tabs would silently be answering a different question.
+   * The row switches to what is actually running, from the automation's own
+   * mode text, and stops taking taps. */
+  _crewNightly(v) {
+    const n = v.nightly || {};
+    if (!n.mop_flag) return "";
+    const h = this._hass;
+    const flag = pcState(h, n.mop_flag);
+    const known = flag === "on" || flag === "off";
+    const mop = flag === "on";
+    const running = n.active ? pcState(h, n.active) === "on" : false;
+    const mode = n.mode_text ? pcState(h, n.mode_text) : "";
+    const pad = psCrewWater(h, v).mopPad;
+
+    if (running) {
+      return `<div class="ps-cwsub">Tonight</div>
+        ${this._crewLine("Running now", `<b>${psEsc(mode && mode !== "unknown" ? mode : "Bedtime clean")}</b>`)}
+        <div class="ps-cwfine">Tonight's mode is already set. The switch below returns
+          when the run finishes.</div>`;
+    }
+
+    /* A flag that is not readable must not draw as "Sweep" — an unavailable
+       helper and a chosen sweep night are different facts, and this control's
+       whole job is to say which one tonight is. */
+    if (!known) {
+      return `<div class="ps-cwsub">Tonight</div>
+        ${this._crewLine("Mode", "<b>—</b>")}
+        <div class="ps-cwfine">The mop switch is unavailable, so tonight's mode cannot be read.</div>`;
+    }
+
+    const tab = (key, label, on) =>
+      `<button class="ps-cwtab ${on ? "on" : ""}" type="button"
+         data-crewmop="${psEsc(n.mop_flag)}" data-want="${key}">${psEsc(label)}</button>`;
+
+    /* The pad is a fact about the machine, not about the choice: picking a mop
+       night with the pad off does not fail, it quietly sweeps. Say so where the
+       choice is made rather than leaving the automation to surprise you. */
+    const note = mop && pad === false
+      ? `<div class="ps-cwnote">Mop pad is off — it will sweep instead.</div>`
+      : "";
+
+    return `<div class="ps-cwsub">Tonight</div>
+      <div class="ps-cwtabs">${tab("sweep", "Sweep", !mop)}${tab("mop", "Sweep & mop", mop)}</div>
+      ${note}
+      <div class="ps-cwfine">Set automatically each night, alternating. Runs when the
+        living room lights go off after 9pm.</div>`;
+  },
+
+  /* DEEP CLEAN is a button and nothing else.
+   *
+   * It used to be a weekly schedule that fired when both people left for work,
+   * and the schedule is exactly what went wrong: with no surface showing it,
+   * the automation sat disabled for four months and nothing said so. A deep
+   * clean happens a handful of times a year and a person decides when — so the
+   * automation stays off deliberately and `automation.trigger` runs its actions
+   * regardless, which is the one service that does not care whether the
+   * automation is enabled.
+   *
+   * It takes the two-tap arm: it starts an hours-long intensive carpet pass
+   * with the mop, which is not something to land on by scrolling. The age
+   * comes from the datetime the run itself stamps at the end, so "never" is a
+   * real answer and not a placeholder. */
+  _crewDeep(v) {
+    const d = v.deep_clean || {};
+    if (!d.automation) return "";
+    const last = psParseTs(pcState(this._hass, d.last));
+    const days = last == null ? null : Math.floor((this._nowMs() - last) / 86400000);
+    const armed = this._armed === "cw:deep";
+    const age = last == null ? "never run" : days <= 0 ? "today" : `${days}d ago`;
+
+    return `<div class="ps-cwsub">Deep clean</div>
+      <button class="ps-cwbtn wide ${armed ? "armed" : ""}" type="button" data-arm="cw:deep">
+        <ha-icon icon="mdi:broom"></ha-icon>
+        <span class="ps-grow">${armed ? "Tap again to start" : "Run deep clean"}</span>
+        <span class="ps-cwage">${psEsc(age)}</span>
+      </button>
+      <div class="ps-cwfine">Intensive carpet pass, vacuum and mop, CleanGenius on.
+        Takes hours — run it on the way out.</div>`;
+  },
+
   _crewVacPanel(v) {
     const h = this._hass;
     const st = pcState(h, v.entity);
@@ -415,6 +506,8 @@ Object.assign(PurdyShellCard.prototype, {
               `data-crewact="input_button.press" data-target="${psEsc(v.emptied_button)}"`)
             : ""}
         </div>
+        ${this._crewNightly(v)}
+        ${this._crewDeep(v)}
         ${this._crewWaterBlock(v)}
         ${wear.length ? `<div class="ps-cwnote">${psEsc(wear.join(" · "))}</div>` : ""}
       </div>`;
@@ -785,6 +878,20 @@ Object.assign(PurdyShellCard.prototype, {
           entity_id: el.getAttribute("data-crewroom"),
           option: el.getAttribute("data-val"),
         });
+      });
+    });
+
+    /* A radio, not a toggle: tapping the mode already chosen must do nothing.
+       `input_boolean.toggle` on the row that is not lit is the whole control —
+       there are two states and the helper holds one of them. */
+    this._each("[data-crewmop]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = el.getAttribute("data-crewmop");
+        const want = el.getAttribute("data-want") === "mop";
+        const now = pcState(this._hass, id) === "on";
+        if (want === now) return;
+        this._hass.callService("input_boolean", "toggle", { entity_id: id });
       });
     });
 

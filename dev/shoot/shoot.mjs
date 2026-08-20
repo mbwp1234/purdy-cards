@@ -59,6 +59,12 @@ const PRESETS = {
   "phone-napedit-night":[PHONE, SHELL + "&patch=napedit&open=joel&napedit=night"],
   "phone-climate":[PHONE, SHELL + "&open=clim"],
   "phone-crew":   [PHONE, SHELL + "&open=crew"],
+  /* The crew SHEET, which is where the vacuum panel actually lives — the
+     column carries alerts only. The sheet opens with Jeeves expanded, so this
+     is the one route that photographs tonight's mode switch and the deep-clean
+     button. `patch=crew` supplies both blocks; a missing patch renders
+     unpatched, which is the deployed section and still a valid shot. */
+  "phone-crew-sheet": [PHONE, SHELL + "&patch=crew&sheet=crew"],
   /* The Body section against live Apple Health and Garmin data. Collapsed is
      three meters and a door; there is no open= face any more, because the
      expand became a MODE — four pages behind their own dock, each with its own

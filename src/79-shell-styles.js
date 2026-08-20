@@ -1135,6 +1135,13 @@ const PS_STYLES = `
                   font-weight: 650; }
       .ps-cwbtn ha-icon { --mdc-icon-size: 17px; }
       .ps-cwnote { font-size: var(--pc-fs-xs); color: var(--ps-warn); margin-top: 10px; }
+      /* A button that spans the panel rather than sharing the auto-fit row —
+         the deep clean is one decision, and pairing it with a neighbour would
+         put a two-tap arm next to something safe at the same size. */
+      .ps-cwbtn.wide { width: 100%; margin-top: 10px; }
+      .ps-cwbtn.armed { background: var(--ps-warn); color: #1a1a1a; border-color: transparent; }
+      .ps-cwage { font-size: var(--pc-fs-xs); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
+      .ps-cwbtn.armed .ps-cwage { color: #1a1a1a; }
 
       .ps-cwchart { display: block; width: 100%; height: 56px; }
       .ps-cwaxis { display: flex; justify-content: space-between; font-size: var(--pc-fs-micro);

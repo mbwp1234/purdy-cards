@@ -379,6 +379,26 @@ class PurdyShellCard extends PcBaseCard {
         [L.steps, L.exercise, L.active, L.distance, L.flights, L.stand].forEach(push);
         [F.ftp, F.wkg, F.weight, F.vo2].forEach(push);
       }
+      /* The crew had NO branch here at all, so every control in it — the room
+         pick, the emptied-tank press, tonight's mop switch — waited on the 30s
+         clock to show what it had done. A control that answers half a minute
+         later reads as one that did nothing. */
+      if (s.type === "crew") {
+        const v = s.vacuum || {};
+        [v.entity, v.battery, v.dirty_water, v.clean_water, v.clean_water_low,
+          v.progress, v.current_room, v.cleaning_mode, v.suction, v.room_select,
+          v.emptied_button, v.wash_counter, v.wash_capacity, v.base_status].forEach(push);
+        (v.wear || []).forEach((w) => push(w.entity));
+        const n = v.nightly || {};
+        [n.mop_flag, n.active, n.mode_text, n.automation].forEach(push);
+        const dc = v.deep_clean || {};
+        [dc.automation, dc.last].forEach(push);
+        const l = s.litter || {};
+        [l.entity, l.litter_level, l.waste_drawer].forEach(push);
+        [(l.pet || {}).weight, (l.pet || {}).visits, (l.pet || {}).scoops].forEach(push);
+        const w2 = s.washer || {};
+        [w2.entity, w2.start_time].forEach(push);
+      }
       if (s.type === "lights") {
         (s.lights || []).forEach((x) => {
           push(x.entity); push(x.hide_when_unavailable);
@@ -1035,6 +1055,17 @@ class PurdyShellCard extends PcBaseCard {
              untouched, so the arm is about the averages this feeds, not about
              losing data. */
           this._napEditDelete();
+        } else if (k === "cw:deep") {
+          /* automation.trigger runs the actions whether or not the automation
+             entity is enabled, which is what lets the schedule stay off while
+             the button still works. skip_condition is its default and is named
+             here because the conditions are the schedule's, not the button's:
+             "both at work, between 7 and 10, not in the last week". */
+          const sec = (this._config.sections || []).find((x) => x.type === "crew");
+          const id = sec && sec.vacuum && sec.vacuum.deep_clean
+            && sec.vacuum.deep_clean.automation;
+          if (id) this._hass.callService("automation", "trigger", { entity_id: id, skip_condition: true });
+          this._render();
         } else if (k.indexOf("sy:") === 0) {
           /* Reboot, shut down, stop the array. The entity is in the key so
              this stays generic — the arm is the only thing core owns. */

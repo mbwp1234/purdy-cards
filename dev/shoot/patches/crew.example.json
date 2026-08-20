@@ -1,0 +1,19 @@
+{
+  "_note": "$mergeSections is SHALLOW, so vacuum: must carry the WHOLE block, not just the new keys. Copy to crew.json with your own entity ids, then shoot with `node dev/shoot/shoot.mjs phone-crew`. Real patches are gitignored — they name entities and this repo is public. This one turns on the crew section's nightly mode switch and deep-clean button so both can be photographed before either is deployed to the live dashboard.",
+
+  "$mergeSections": [
+    { "key": "crew",
+      "vacuum": {
+        "nightly": {
+          "automation": "automation.<bedtime-clean-automation>",
+          "mop_flag": "input_boolean.<next-clean-mop-helper>",
+          "active": "input_boolean.<bedtime-run-active-helper>",
+          "mode_text": "input_text.<bedtime-clean-mode-helper>"
+        },
+        "deep_clean": {
+          "automation": "automation.<deep-clean-automation>",
+          "last": "input_datetime.<last-deep-clean-helper>"
+        }
+      } }
+  ]
+}
