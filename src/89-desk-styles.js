@@ -443,6 +443,11 @@ const PD_STYLES = `
       .ps-edd { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
                 background: var(--ps-cool); margin-right: 6px; vertical-align: middle; }
       .ps-edd.ring { position: absolute; top: 1px; right: 1px; margin: 0; }
+      /* Hand-logged: the same dot, hollowed out. The desk reads the same stores
+         the phone writes, so it has to draw the same two marks — one surface
+         marking a logged figure while the other prints it as measured is worse
+         than neither marking it. */
+      .ps-edd.hand { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ps-cool); }
       .pd-jr .pd-v { font-weight: 640; }
       .pd-jr .pd-c { color: var(--ps-dim); text-align: right; max-width: 46%;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

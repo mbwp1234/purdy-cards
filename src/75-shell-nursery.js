@@ -507,12 +507,160 @@ function psApplyNapEdits(sessions, edits, tolMin) {
       edited: true,
       settleMinutes: Math.max(0, Math.round((settledAt - s.from) / 60000)),
       asleepMinutes: Math.max(0, Math.round((wokeAt - settledAt) / 60000)),
-      interventions: events.length,
+      /* A hand-logged session has no door behind it, so narrowing its window
+         cannot turn "nobody was watching" into "nobody went in". Recomputing
+         these from an empty event list would hand back a confident zero — the
+         one thing psManualSessions holds null on purpose. */
+      interventions: s.manual ? null : events.length,
       events,
-      longestStretch: Math.max(0, Math.round(best2 / 60000)),
+      longestStretch: s.manual ? null : Math.max(0, Math.round(best2 / 60000)),
     }));
   });
   return out;
+}
+
+/* ---------------------------------------------------------------------------
+ * Away from the sensors.
+ *
+ * Everything above derives sleep from two things bolted to one room: a sound
+ * machine and a door magnet. Away from that room they report nothing, and the
+ * card cannot tell "he did not sleep" from "he slept somewhere I cannot see" —
+ * which is the same zero-versus-missing rule this file already turns on, one
+ * level up. On a weekend away the section would read no naps, no night, a wake
+ * window of eleven hours and a nap OVERDUE by six: five confident statements,
+ * every one of them wrong, on the days a parent is least able to check.
+ *
+ * Two things fix it, and they are deliberately separate because they answer
+ * different questions.
+ *
+ * A MANUAL SESSION is sleep a person watched and the house did not. It is
+ * recorded rather than derived, so it is the one thing in this file that a
+ * fetch cannot recompute — which is exactly why it carries `manual: true` and
+ * why every surface marks it: a logged number and a measured one must never
+ * look the same, for the same reason a corrected one may not.
+ *
+ * An AWAY DAY says he was not here. It records no sleep at all: the nanny is
+ * not going to be asked to log naps, and a card that guessed at them would be
+ * inventing data to avoid admitting it has none. What it does is stop the card
+ * COMPLAINING — no missing naps, no overdue nap, no hatched night reading as a
+ * fault. The absence stays visible and stops being an alarm, which is the
+ * difference between "nothing recorded" and "nothing to record".
+ *
+ * Stored the same way the corrections are, and for the same reason: an
+ * input_text truncates at 255 characters, so a session is `start~dur` with the
+ * start in epoch MINUTES, and a day is its eight-digit key. The oldest entries
+ * fall off rather than the write failing, and anything past the fetch window is
+ * pruned on write — a session the recorder can no longer show has nowhere to
+ * render, and a day older than the strip has nothing left to un-flag.
+ */
+function psParseManual(raw) {
+  if (!raw || raw === "unknown" || raw === "unavailable") return [];
+  return String(raw).split("|").map((chunk) => {
+    const p = chunk.split("~");
+    const start = parseInt(p[0], 10);
+    if (!Number.isFinite(start) || start <= 0) return null;
+    /* `a` is a session STILL RUNNING — started by hand and not yet ended. It
+       cannot be stored as a duration, because the duration is whatever it has
+       reached by the time somebody looks. */
+    const dur = p[1] === "a" ? null : parseInt(p[1], 10);
+    if (dur != null && (!Number.isFinite(dur) || dur < 0)) return null;
+    const kind = p[2] === "n" || p[2] === "p" ? p[2] : null;
+    return { start: start * 60000, dur, kind };
+  }).filter(Boolean);
+}
+
+function psWriteManual(list) {
+  let parts = (list || []).slice()
+    .sort((a, b) => a.start - b.start)
+    .map((e) => `${Math.round(e.start / 60000)}~${e.dur == null ? "a" : Math.round(e.dur)}${
+      e.kind ? `~${e.kind}` : ""}`);
+  while (parts.length && parts.join("|").length > 255) parts.shift();
+  return parts.join("|");
+}
+
+/* The same session shape the derivation produces, so nothing downstream has to
+   know which kind it is holding — with three fields that are deliberately NULL
+   rather than zero.
+
+   Nobody was watching a door. `interventions: 0` would be the card claiming an
+   undisturbed night on the strength of having no sensor in the room, and the
+   "Went in" meter would read a confident zero against his band — the best night
+   of the week, invented. `longestStretch` falls with it, because it is the same
+   claim measured differently. A null reaches `psHealthMeter` as a missing
+   reading and draws the state that was designed for exactly this. */
+function psManualSessions(entries, opts) {
+  const o = opts || {};
+  const now = o.now == null ? Date.now() : o.now;
+  const nightAfter = o.night_after_hour == null ? 18 : o.night_after_hour;
+  const morning = o.morning_hour == null ? 5 : o.morning_hour;
+
+  return (entries || []).map((e) => {
+    const from = e.start;
+    const active = e.dur == null;
+    const to = active ? Math.max(from, now) : from + e.dur * 60000;
+    const hr = new Date(from).getHours();
+    /* Kind is decided the same way a derived session's is — by the hour it
+       started — with an explicit override for the case the clock gets wrong: a
+       7pm nap in a different time zone, or an early night on a bad day. */
+    const night = e.kind === "n" ? true
+      : e.kind === "p" ? false : (hr >= nightAfter || hr < morning);
+    const anchor = new Date(from);
+    if (night && hr < morning) anchor.setDate(anchor.getDate() - 1);
+    const mins = Math.max(0, Math.round((to - from) / 60000));
+
+    return {
+      from, to, active, splits: 1, minutes: mins,
+      night, day: psDayKey(anchor),
+      /* Not zero. See above. */
+      interventions: null,
+      events: [], doorAt: [],
+      /* Logged asleep-to-awake, so there is no settling to report and none is
+         claimed: `settledAt` is the start, and `settleMinutes` is a real zero
+         because the window being recorded IS the sleep. */
+      settledAt: from, wokeAt: to,
+      settleMinutes: 0, asleepMinutes: mins,
+      hadExit: true,
+      longestStretch: null,
+      manual: true,
+      kind: e.kind || null,
+    };
+  });
+}
+
+/* A hand-logged session SUPERSEDES anything derived that overlaps it.
+ *
+ * The two sources can both be running — the Hatch travels, and a nap logged in
+ * a car seat can land on top of a Hatch left playing in an empty room at home.
+ * Two sessions over one span would double the day's nap total and produce a
+ * third nap ring for a nap that happened once. The person who logged it was
+ * there and the derivation was not, so the log wins, whole. */
+function psMergeManual(derived, manual) {
+  if (!manual || !manual.length) return derived || [];
+  const keep = (derived || []).filter(
+    (s) => !manual.some((m) => m.from < s.to && s.from < m.to));
+  return keep.concat(manual).sort((a, b) => a.from - b.from);
+}
+
+/* Days he was not here, as eight-digit local day keys — the same key
+   `psDayKey` produces, with the dashes taken out to fit the store. */
+function psParseAway(raw) {
+  if (!raw || raw === "unknown" || raw === "unavailable") return [];
+  return String(raw).split("|")
+    .map((k) => String(k).trim())
+    .filter((k) => /^\d{8}$/.test(k))
+    .map((k) => `${k.slice(0, 4)}-${k.slice(4, 6)}-${k.slice(6, 8)}`);
+}
+
+function psWriteAway(days) {
+  const seen = {};
+  let parts = (days || []).filter((d) => {
+    const k = String(d).replace(/-/g, "");
+    if (!/^\d{8}$/.test(k) || seen[k]) return false;
+    seen[k] = 1;
+    return true;
+  }).map((d) => String(d).replace(/-/g, "")).sort();
+  while (parts.length && parts.join("|").length > 255) parts.shift();
+  return parts.join("|");
 }
 
 /* When he WOKE, which is the end of the Hatch span unless a correction moved
@@ -554,9 +702,15 @@ function psNurseryStats(sessions, opts) {
   const nights = all.filter((s) => s.night && !s.active).slice(-(o.days || 7));
   const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 
+  /* How long he slept is known for a hand-logged night; how many times somebody
+     went in is not, and neither is the longest undisturbed run. Averaging a
+     null in gives NaN, and defaulting it to zero would be worse — it would pull
+     his intervention average down every time the family goes away. So the two
+     door-derived averages are taken over the nights that HAD a door. */
+  const observed = nights.filter((s) => !s.manual);
   const avgNightMin = nights.length ? Math.round(mean(nights.map((s) => s.asleepMinutes))) : null;
-  const avgIns = nights.length ? mean(nights.map((s) => s.interventions)) : null;
-  const avgStretch = nights.length ? Math.round(mean(nights.map((s) => s.longestStretch))) : null;
+  const avgIns = observed.length ? mean(observed.map((s) => s.interventions)) : null;
+  const avgStretch = observed.length ? Math.round(mean(observed.map((s) => s.longestStretch))) : null;
 
   const beds = nights.map((s) => {
     const d = new Date(s.from);
@@ -662,6 +816,7 @@ function psNurseryStats(sessions, opts) {
 function psNurseryNorms(sessions, opts) {
   const o = opts || {};
   const nights = (sessions || []).filter((s) => s.night && !s.active).slice(-(o.days || 7));
+  const observed = nights.filter((s) => !s.manual);
 
   /* Bedtimes are shifted past midnight before anything is done with them, for
      the same reason `psNurseryStats` shifts them: a 00:20 bedtime is a late
@@ -692,11 +847,15 @@ function psNurseryNorms(sessions, opts) {
       longest: s.longestStretch,
       ins: s.interventions,
       edited: !!s.edited,
+      manual: !!s.manual,
     })),
     asleep: band(nights.map((s) => s.asleepMinutes), 15),
     bed: band(nights.map(bedOf), 10),
-    longest: band(nights.map((s) => s.longestStretch), 20),
-    ins: band(nights.map((s) => s.interventions), 0.5),
+    /* Door-derived, so hand-logged nights are not in these two — see
+       psNurseryStats. A band is a claim about his normal, and a night nobody
+       measured cannot narrow it or widen it. */
+    longest: band(observed.map((s) => s.longestStretch), 20),
+    ins: band(observed.map((s) => s.interventions), 0.5),
   };
 }
 
@@ -766,9 +925,15 @@ Object.assign(PurdyShellCard.prototype, {
 
   _nurserySessions(sec) {
     const h = this._nursery || {};
-    const derived = psNurserySessions(h[sec.hatch], h[sec.door],
-      Object.assign({}, sec, { now: this._nowMs() }));
-    return psApplyNapEdits(derived, this._napEdits(sec), (sec.edits || {}).match_tolerance_min);
+    const opts = Object.assign({}, sec, { now: this._nowMs() });
+    const derived = psNurserySessions(h[sec.hatch], h[sec.door], opts);
+    /* Hand-logged sessions join the derived ones BEFORE the corrections are
+       applied, so one pipeline feeds every surface and the desk — which
+       borrows this method — cannot end up showing a different set of sessions
+       from the phone. A log supersedes anything derived that overlaps it. */
+    const manual = psManualSessions(this._manualEntries(sec), opts);
+    return psApplyNapEdits(psMergeManual(derived, manual),
+      this._napEdits(sec), (sec.edits || {}).match_tolerance_min);
   },
 
   /* --- corrections --------------------------------------------------------
@@ -784,6 +949,296 @@ Object.assign(PurdyShellCard.prototype, {
     const store = this._napEditStore(sec);
     if (!store || !this._hass) return [];
     return psParseNapEdits(pcState(this._hass, store));
+  },
+
+  /* --- away from the sensors ----------------------------------------------
+     Both stores are ordinary entities in the watched set, so a write repaints
+     the section on the state change it causes — the same contract the
+     corrections store has, and the reason neither of these is fetched. */
+  _manualCfg(sec) {
+    const s = sec || this._nurserySection();
+    return (s && s.manual) || {};
+  },
+
+  _manualStore(sec) { return this._manualCfg(sec).store; },
+
+  _manualEntries(sec) {
+    const store = this._manualStore(sec);
+    if (!store || !this._hass) return [];
+    return psParseManual(pcState(this._hass, store));
+  },
+
+  _awayStore(sec) { return this._manualCfg(sec).away_store; },
+
+  /* "Nanny day" by default because that is what these days are here. It is
+     config rather than a constant so a week away reads as one. */
+  _awayLabel(sec) { return this._manualCfg(sec).away_label || "Nanny day"; },
+
+  _awayDays(sec) {
+    const store = this._awayStore(sec);
+    if (!store || !this._hass) return [];
+    return psParseAway(pcState(this._hass, store));
+  },
+
+  _isAwayDay(sec, dayKey) {
+    return this._awayDays(sec).indexOf(dayKey) !== -1;
+  },
+
+  /* One write path for both stores, so the pruning rule is stated once. Both
+     are capped at 255 characters and both are pruned to the window the card
+     can still draw: an entry outside it has nothing left to render onto. */
+  _manualWrite(sec, entries) {
+    const store = this._manualStore(sec);
+    if (!store || !this._hass) return;
+    const floor = this._nowMs() - ((sec.days || 7) + 1) * 86400000;
+    const keep = (entries || []).filter((e) => e.dur == null || e.start >= floor);
+    this._hass.callService("input_text", "set_value",
+      { entity_id: store, value: psWriteManual(keep) });
+    this._last = null;
+    this._render();
+  },
+
+  _awayWrite(sec, days) {
+    const store = this._awayStore(sec);
+    if (!store || !this._hass) return;
+    const floor = new Date(this._nowMs() - ((sec.days || 7) + 1) * 86400000);
+    const cut = psDayKey(floor);
+    this._hass.callService("input_text", "set_value",
+      { entity_id: store, value: psWriteAway((days || []).filter((d) => d >= cut)) });
+    this._last = null;
+    this._render();
+  },
+
+  /* The running hand-logged session, if there is one. At most one: a second
+     Start while one is open would leave two sessions running with no way to
+     tell which the Stop belonged to. */
+  _manualLive(sec) {
+    return this._manualEntries(sec).find((e) => e.dur == null) || null;
+  },
+
+  _manualStart() {
+    const sec = this._nurserySection();
+    if (!sec || !this._manualStore(sec) || this._manualLive(sec)) return;
+    pcHaptic("medium");
+    /* To the minute, because the store holds minutes — rounding it here rather
+       than at the write is what keeps the elapsed figure on screen agreeing
+       with the one that lands in the helper. */
+    const start = Math.round(this._nowMs() / 60000) * 60000;
+    this._manualWrite(sec, this._manualEntries(sec).concat([{ start, dur: null, kind: null }]));
+  },
+
+  /* Stopping is what records the session, so it is a completion rather than a
+     destructive act and takes no arm — unlike stopping the Hatch, which ends
+     the white noise in the room as well as the record. */
+  _manualStop() {
+    const sec = this._nurserySection();
+    const live = sec && this._manualLive(sec);
+    if (!live) return;
+    pcHaptic("success");
+    const dur = Math.max(0, Math.round((this._nowMs() - live.start) / 60000));
+    this._manualWrite(sec, this._manualEntries(sec)
+      .map((e) => (e.start === live.start ? { start: e.start, dur, kind: e.kind } : e)));
+  },
+
+  _manualAdd(from, to, kind) {
+    const sec = this._nurserySection();
+    if (!sec || !this._manualStore(sec)) return;
+    const start = Math.round(from / 60000) * 60000;
+    const dur = Math.max(0, Math.round((to - from) / 60000));
+    pcHaptic("success");
+    this._manualWrite(sec, this._manualEntries(sec)
+      .filter((e) => Math.abs(e.start - start) > 60000)
+      .concat([{ start, dur, kind: kind || null }]));
+  },
+
+  /* Matched on start within a minute rather than exactly, for the reason the
+     corrections are: the session on screen carries the rounded start. */
+  _manualDrop(start) {
+    const sec = this._nurserySection();
+    if (!sec || !this._manualStore(sec)) return;
+    this._manualWrite(sec, this._manualEntries(sec)
+      .filter((e) => Math.abs(e.start - start) > 60000));
+  },
+
+  _manualSet(oldStart, from, to, kind) {
+    const sec = this._nurserySection();
+    if (!sec || !this._manualStore(sec)) return;
+    const start = Math.round(from / 60000) * 60000;
+    this._manualWrite(sec, this._manualEntries(sec)
+      .filter((e) => Math.abs(e.start - oldStart) > 60000 && Math.abs(e.start - start) > 60000)
+      .concat([{ start, dur: Math.max(0, Math.round((to - from) / 60000)), kind: kind || null }]));
+  },
+
+  _awayToggle(dayKey) {
+    const sec = this._nurserySection();
+    if (!sec || !this._awayStore(sec)) return;
+    const days = this._awayDays(sec);
+    const on = days.indexOf(dayKey) !== -1;
+    pcHaptic("selection");
+    this._awayWrite(sec, on ? days.filter((d) => d !== dayKey) : days.concat([dayKey]));
+  },
+
+  /* --- the log sheet -------------------------------------------------------
+   *
+   * A sheet, like every other thing on this section you FIDDLE with rather than
+   * read: it slides over the column instead of pushing the rings and the rail
+   * down the screen while you count backwards to when he went down.
+   *
+   * Two ways in, because there are two situations. Away from home you press
+   * Start when he goes down and Stop when he wakes, and the section behaves
+   * exactly as it does at home — a live ring, a live chip, a bar on the day
+   * rail. Coming back from an afternoon out you log the nap that already
+   * happened, from two clock steppers.
+   *
+   * The steppers move in FIFTEEN minutes, where the correction sheet moves in
+   * five. They are answering different questions: correcting a session is
+   * reading a rail to decide which door trip ended the put-down, and logging
+   * one is remembering roughly when he went down in somebody else's house.
+   * Five-minute steps there would be false precision bought with three times
+   * the taps.
+   */
+  _openNurseryLog() {
+    const sec = this._nurserySection();
+    if (!sec || !this._manualStore(sec)) return;
+    const now = this._nowMs();
+    const q = 15 * 60000;
+    /* Defaults that are one nap wide and end now, because the overwhelmingly
+       common case is logging the nap that has just finished. Quantised to the
+       step so the first tap moves a round number rather than un-rounding one. */
+    const to = Math.round(now / q) * q;
+    this._log = { from: to - 90 * 60000, to, kind: null };
+    this._sheet = "joellog";
+    this._armed = null;
+    this._last = null;
+    this._render();
+  },
+
+  _logStep(field, delta) {
+    const e = this._log;
+    if (!e) return;
+    const next = Object.assign({}, e);
+    next[field] = e[field] + delta * 60000;
+    /* Woke can never precede fell-asleep, and a session cannot be logged into
+       the future — there is nothing to remember about sleep that has not
+       happened. Pushing one field past the other carries the other with it
+       rather than refusing the tap, exactly as the correction sheet does. */
+    const cap = Math.round(this._nowMs() / 60000) * 60000;
+    if (next.to > cap) next.to = cap;
+    if (next.from > cap) next.from = cap;
+    if (field === "from" && next.from > next.to) next.to = next.from;
+    if (field === "to" && next.to < next.from) next.from = next.to;
+    if (next.from !== e.from || next.to !== e.to) pcHaptic("selection");
+    this._log = next;
+    this._last = null;
+    this._render();
+  },
+
+  _nurseryLogHtml() {
+    const sec = this._nurserySection();
+    const e = this._log;
+    if (!sec || !this._manualStore(sec) || !e) return "";
+
+    const now = this._nowMs();
+    const live = this._manualLive(sec);
+    const label = this._awayLabel(sec);
+    const mins = Math.max(0, Math.round((e.to - e.from) / 60000));
+
+    /* Whichever of the two is not the situation you are in is still worth
+       seeing — the sheet says which one is live rather than hiding the other
+       and leaving you to wonder where it went. */
+    const running = live
+      ? `<div class="ps-jlrun">
+          <span class="ps-grow"><b>Logging since ${psEsc(psClock(live.start))}</b>
+            <span class="ps-flat">${psEsc(psHM(Math.max(0, Math.round((now - live.start) / 60000))))} so far</span></span>
+          <button class="ps-btn primary" type="button" id="ps-jlstop">Stop</button>
+        </div>`
+      : `<div class="ps-jlrun">
+          <span class="ps-grow"><b>He is going down now</b>
+            <span class="ps-flat">start the clock and stop it when he wakes</span></span>
+          <button class="ps-btn primary" type="button" id="ps-jlstart">Start</button>
+        </div>`;
+
+    const steppers = ["from", "to"].map((f) => `<div class="ps-ner">
+        <span class="ps-l">${f === "from" ? "Fell asleep" : "Woke"}</span>
+        <button class="ps-step" type="button" data-logstep="${f}:-15"
+          aria-label="${f === "from" ? "Fell asleep" : "Woke"} fifteen minutes earlier">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
+        <b>${psEsc(psClock(e[f]))}</b>
+        <button class="ps-step" type="button" data-logstep="${f}:15"
+          aria-label="${f === "from" ? "Fell asleep" : "Woke"} fifteen minutes later">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>`).join("");
+
+    /* Today and yesterday, and no further back. A nanny day is marked either
+       on the day or the morning after, and a date picker for a case nobody has
+       is more surface than the thing it serves. */
+    const dayRow = (offset, name) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() - offset);
+      const key = psDayKey(d);
+      const on = this._isAwayDay(sec, key);
+      return `<button class="ps-jlday${on ? " on" : ""}" type="button" data-away="${key}">
+          <span>${psEsc(name)}</span><b>${on ? psEsc(label) : "Home"}</b></button>`;
+    };
+    const away = !this._awayStore(sec) ? "" : `<div class="ps-jlsec">Out of the house</div>
+      <div class="ps-jldays">${dayRow(0, "Today")}${dayRow(1, "Yesterday")}</div>
+      <div class="ps-note">Marks the day as spent elsewhere: no missing naps, no
+        overdue nap window. It records no sleep — only that he was not here.</div>`;
+
+    return `${running}
+      <div class="ps-jlsec">Log a session that already happened</div>
+      ${steppers}
+      <div class="ps-nesum"><b>${psEsc(psHM(mins))}</b> asleep
+        <span class="ps-flat">· ${psEsc(psClock(e.from))} – ${psEsc(psClock(e.to))}</span></div>
+      <div class="ps-btns">
+        <button class="ps-btn primary" type="button" id="ps-jladd"${
+  mins <= 0 ? " disabled" : ""}>Add ${psEsc(this._logKindWord(sec, e))}</button>
+      </div>
+      <div class="ps-note">Hand-logged sleep is marked wherever it shows, and it
+        reports no wake-ups — nobody was watching the door.</div>
+      ${away}`;
+  },
+
+  /* Named for what it will become, so the button is not a promise the day rail
+     then breaks. The rule is the derivation's own: the hour it started. */
+  _logKindWord(sec, e) {
+    const nightAfter = sec.night_after_hour == null ? 18 : sec.night_after_hour;
+    const morning = sec.morning_hour == null ? 5 : sec.morning_hour;
+    const hr = new Date(e.from).getHours();
+    return hr >= nightAfter || hr < morning ? "night" : "nap";
+  },
+
+  _bindNurseryLog() {
+    this._each("[data-jlog]", (el) => {
+      el.addEventListener("click", (ev) => { ev.stopPropagation(); this._openNurseryLog(); });
+    });
+    this._each("[data-logstep]", (el) => {
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const p = String(el.dataset.logstep).split(":");
+        this._logStep(p[0], parseInt(p[1], 10));
+      });
+    });
+    this._each("[data-away]", (el) => {
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this._awayToggle(el.dataset.away);
+      });
+    });
+    this._one("ps-jlstart", (el) =>
+      el.addEventListener("click", (ev) => { ev.stopPropagation(); this._manualStart(); }));
+    this._one("ps-jlstop", (el) =>
+      el.addEventListener("click", (ev) => { ev.stopPropagation(); this._manualStop(); }));
+    this._one("ps-jladd", (el) => el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const e = this._log;
+      if (!e || e.to <= e.from) return;
+      this._manualAdd(e.from, e.to, e.kind);
+      this._sheet = null;
+      this._log = null;
+      this._last = null;
+      this._render();
+    }));
   },
 
   _openNapEdit(start) {
@@ -871,6 +1326,20 @@ Object.assign(PurdyShellCard.prototype, {
   _napEditSave() {
     const e = this._napEdit;
     if (!e) return;
+    /* A hand-logged session is corrected where it LIVES. Writing an override
+       into the corrections store instead would leave the log saying one thing
+       and the override saying another, in two 255-character helpers, for a
+       session that has no derivation to override in the first place. */
+    const s = this._napEditSpan();
+    if (s && s.manual) {
+      this._manualSet(s.from, s.from + e.from * 60000, s.from + e.to * 60000, s.kind);
+      this._sheet = null;
+      this._napEdit = null;
+      this._armed = null;
+      this._last = null;
+      this._render();
+      return;
+    }
     /* `success` — the one place on the card that earns it. The correction has
        landed in the helper and every number downstream is about to be
        recomputed from it, which is a thing completing rather than a control
@@ -890,6 +1359,17 @@ Object.assign(PurdyShellCard.prototype, {
   _napEditDelete() {
     const e = this._napEdit;
     if (!e) return;
+    /* Removing a hand-logged session deletes the log. Recording a deletion of
+       something that was only ever a record is two entries saying nothing. */
+    const s = this._napEditSpan();
+    if (s && s.manual) {
+      this._manualDrop(s.from);
+      this._sheet = null;
+      this._napEdit = null;
+      this._armed = null;
+      this._render();
+      return;
+    }
     this._napEditWrite({ start: e.start, del: true });
   },
 
@@ -963,12 +1443,16 @@ Object.assign(PurdyShellCard.prototype, {
             where the number came from. */""}
       <div class="ps-nesum"><b>${psEsc(psHM(now))}</b> asleep${
         now === derived ? "" : ` <span class="ps-flat">· ${
-          s.edited ? "saved" : "derived"} ${psEsc(psHM(derived))}</span>`}</div>
+          s.manual ? "logged" : s.edited ? "saved" : "derived"} ${psEsc(psHM(derived))}</span>`}</div>
 
       <div class="ps-btns">
         <button class="ps-btn primary" type="button" id="ps-nesave">Save</button>
-        <button class="ps-btn" type="button" id="ps-nenone">Didn't sleep</button>
-        ${s.edited ? `<button class="ps-btn" type="button" id="ps-nereset">Undo edit</button>` : ""}
+        ${/* "Didn't sleep" records a real zero over a derivation that claimed
+              sleep. There is no derivation behind a hand-logged session, so the
+              honest verb for one that should not be there is Remove — which is
+              already on this row. */""}
+        ${s.manual ? "" : `<button class="ps-btn" type="button" id="ps-nenone">Didn't sleep</button>`}
+        ${s.edited && !s.manual ? `<button class="ps-btn" type="button" id="ps-nereset">Undo edit</button>` : ""}
         <button class="ps-btn danger ${this._armed === "napdel" ? "armed" : ""}" type="button"
           ${/* "Not a nap" reads wrong on a night, and "Didn't happen" is a
                 hair from "Didn't sleep" beside it. Remove says what it does for
@@ -978,9 +1462,13 @@ Object.assign(PurdyShellCard.prototype, {
       ${/* The note only says what is true of the buttons actually on screen —
             offering to undo an edit that does not exist is the same shape of
             noise as a caption under every meter that has no band. */""}
-      <div class="ps-note">${s.edited
-        ? "Corrected by hand. Undo puts the derived times back."
-        : "Correcting this changes what the card reports, not what the recorder holds."}</div>`;
+      <div class="ps-note">${s.manual
+        ? (s.active
+          ? "Hand-logged and still running. Saving a wake time ends it."
+          : "Hand-logged. Saving rewrites the log itself — there is no derivation underneath.")
+        : s.edited
+          ? "Corrected by hand. Undo puts the derived times back."
+          : "Correcting this changes what the card reports, not what the recorder holds."}</div>`;
   },
 
   /* Long press, not tap. The rows are a list you read far more often than you
@@ -1114,8 +1602,11 @@ Object.assign(PurdyShellCard.prototype, {
     return `<div class="ps-hyp">
         <div class="ps-hypt" data-readout="night">
           <span class="ps-lbl">${night.active ? "Tonight" : "Last night"}</span>
-          <span><i style="background:var(--ps-light);opacity:.5"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep</span>
-          <b>${night.interventions} in</b>
+          <span>${night.manual ? `<i style="background:var(--ps-deep)"></i>asleep`
+    : `<i style="background:var(--ps-light);opacity:.5"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep`}</span>
+          ${/* A hand-logged night has no door behind it. "0 in" would be a
+                claim; naming the source is the honest thing in the same slot. */""}
+          <b>${night.manual ? "logged" : `${night.interventions} in`}</b>
         </div>
         <div class="ps-railbox">
           <div class="ps-hypplot" data-scrub="night">
@@ -1154,10 +1645,11 @@ Object.assign(PurdyShellCard.prototype, {
    * for the same reason, so a plain railbox is established here as a plot you
    * read rather than one you press — which is what keeps it off the affordance
    * sweep's list. */
-  _nurseryWeek(norms, sec) {
+  _nurseryWeek(norms, sec, awayDays) {
     const b = norms.asleep;
     const nights = norms.nights;
     if (!nights.length) return "";
+    const isAway = (k) => (awayDays || []).indexOf(k) !== -1;
 
     const days = sec.days || 7;
     const byDay = {};
@@ -1187,20 +1679,38 @@ Object.assign(PurdyShellCard.prototype, {
     const lastKey = slots.length ? slots[slots.length - 1].key : null;
     const cols = slots.map((sl) => {
       const n = byDay[sl.key];
-      if (!n) return `<div class="ps-jwb miss"><i></i></div>`;
+      /* A night away and a night the recorder lost are both empty and are not
+         the same fact. The hatch says "this should be here and is not"; the
+         away slot is quieter still and says "he was not here", which is the
+         one thing that stops a fortnight of travel reading as two weeks of
+         broken sensors. */
+      if (!n) {
+        return isAway(sl.key)
+          ? `<div class="ps-jwb away" title="${psEsc(this._awayLabel(sec))}"><i></i></div>`
+          : `<div class="ps-jwb miss"><i></i></div>`;
+      }
       const last = sl.key === lastKey;
       const hgt = y(n.asleep);
       /* The corrected pip rides on the BAR, not on the column. Pinned to the
          column it sat at the top of the plot with nothing under it — two of
          them floating over the middle of the week, attached to nothing a reader
          could connect them to. */
-      return `<div class="ps-jwb${last ? " last" : ""}" title="${psEsc(psHM(n.asleep))}">
+      const pip = n.manual ? ` hand` : n.edited ? "" : null;
+      return `<div class="ps-jwb${last ? " last" : ""}${n.manual ? " logged" : ""}" title="${
+        psEsc(psHM(n.asleep))}${n.manual ? " · hand-logged" : ""}">
           <i style="height:${hgt.toFixed(1)}%"></i>${
-        n.edited ? `<span class="ps-edd wk" style="bottom:calc(${hgt.toFixed(1)}% + 4px)" title="Corrected"></span>` : ""}</div>`;
+        pip == null ? "" : `<span class="ps-edd wk${pip}" style="bottom:calc(${
+          hgt.toFixed(1)}% + 4px)" title="${n.manual ? "Hand-logged" : "Corrected"}"></span>`}</div>`;
     }).join("");
 
-    const labels = slots.map((sl) => `<span${sl.key === lastKey ? ` class="last"` : ""}>${
+    const labels = slots.map((sl) => `<span class="${sl.key === lastKey ? "last" : ""}${
+      isAway(sl.key) && !byDay[sl.key] ? " away" : ""}">${
       psEsc(sl.date.toLocaleDateString([], { weekday: "narrow" }))}</span>`).join("");
+
+    /* A week with three days away is not a week with three nights missing, and
+       the count line was the loudest place that lie was told. Away days with no
+       night come out of the denominator and are named separately. */
+    const awayN = slots.filter((sl) => isAway(sl.key) && !byDay[sl.key]).length;
 
     const bandEl = !b ? "" : `<div class="ps-jwband" style="bottom:${y(b.lo).toFixed(1)}%;height:${
       Math.max(1, y(b.hi) - y(b.lo)).toFixed(1)}%"></div>
@@ -1210,7 +1720,7 @@ Object.assign(PurdyShellCard.prototype, {
         <div class="ps-hypt">
           <span class="ps-lbl">How the week is going</span>
           <span class="ps-grow"></span>
-          <b>${nights.length} of ${days} nights</b>
+          <b>${nights.length} of ${days - awayN} nights${awayN ? ` · ${awayN} away` : ""}</b>
         </div>
         <div class="ps-railbox">
           <div class="ps-jwk">${bandEl}<div class="ps-jwbars">${cols}</div></div>
@@ -1326,8 +1836,24 @@ Object.assign(PurdyShellCard.prototype, {
     /* A corrected figure must never look like a measured one — the same rule
        that keeps a zero apart from a missing reading, one level up. Every
        surface that can show an edited session carries the mark. */
-    const editable = !!this._napEditStore(sec);
-    const edd = (s) => (s && s.edited ? `<span class="ps-edd" title="Corrected"></span>` : "");
+    const editable = !!this._napEditStore(sec) || !!this._manualStore(sec);
+    /* Two marks, one rule. A CORRECTED figure is a filled dot; a HAND-LOGGED
+       one is the same dot hollowed out. Both are the accent rather than a
+       warning colour, because neither is a fault — one is a fact the sensors
+       could not reach and the other is a fact they were not present for — and
+       hollow reads as "there is nothing measured inside this" without needing
+       a second hue on a card that already spends five. */
+    const edd = (s) => (!s ? "" : s.manual
+      ? `<span class="ps-edd hand" title="Hand-logged"></span>`
+      : s.edited ? `<span class="ps-edd" title="Corrected"></span>` : "");
+
+    /* A day he was not here. It records no sleep — the nanny is not going to
+       be asked to log naps — so what it does is stop the card treating an
+       absence as a fault: no missing naps, no overdue nap window, no hatched
+       night reading like the recorder fell over. The absence stays on screen
+       and stops being an alarm. */
+    const away = this._isAwayDay(sec, todayKey);
+    const awayLabel = this._awayLabel(sec);
 
     const wifiOk = !sec.hatch_wifi || pcState(h, sec.hatch_wifi) === "on";
     const clock = (m) => (m == null ? "—"
@@ -1362,6 +1888,13 @@ Object.assign(PurdyShellCard.prototype, {
       if (isNight && live.interventions) chipCls = "lt";
     } else if (playing) {
       chipCls = "deep"; chipTxt = "Asleep";
+    } else if (away) {
+      /* The wake window is measured from a session that ENDED here, and on a
+         day he spent somewhere else there is no such session — so "Nap overdue
+         6h" is arithmetic on a number that was never a fact. The chip says
+         where he is instead, which is the one thing that explains every empty
+         slot underneath it. */
+      chipTxt = awayLabel;
     } else if (stats.wakeWindowMin != null) {
       /* Awake: the chip answers WHEN THE NEXT NAP IS DUE.
        *
@@ -1441,7 +1974,8 @@ Object.assign(PurdyShellCard.prototype, {
           <div class="ps-ring" style="width:${ringPx}px;height:${ringPx}px" data-info="${psEsc(sec.hatch)}">
             ${this._ringSvg(ringPx, stroke, [[s.asleepMinutes / napTarget, col]], null)}
             <div class="ps-rv sm${fit}"><b>${psEsc(val)}</b></div>
-            ${s.edited ? `<span class="ps-edd ring" title="Corrected"></span>` : ""}
+            ${s.manual ? `<span class="ps-edd ring hand" title="Hand-logged"></span>`
+    : s.edited ? `<span class="ps-edd ring" title="Corrected"></span>` : ""}
           </div>
           <span style="color:${subCol}">${psEsc(sub)}</span>
         </div>`;
@@ -1481,11 +2015,18 @@ Object.assign(PurdyShellCard.prototype, {
   })}
         ${psHealthMeter({
     label: "Longest run", value: nb.longestStretch, band: norms.longest,
-    text: psHM(nb.longestStretch), hiOk: true,
+    text: nb.longestStretch == null ? null : psHM(nb.longestStretch), hiOk: true,
+    why: "Not measured",
   })}
+        ${/* A hand-logged night has no door behind it, so both of these are
+              NULL rather than zero, and psHealthMeter's missing-reading state
+              is what draws them. Printing 0 against his band would show the
+              best night of the week on a night nobody measured. `text` has to
+              go null with the value, or the dash never appears. */""}
         ${psHealthMeter({
     label: "Went in", value: nb.interventions, band: norms.ins,
-    text: String(nb.interventions), unit: "×", loOk: true,
+    text: nb.interventions == null ? null : String(nb.interventions),
+    unit: "×", loOk: true, why: "Not measured",
   })}
       </div>`;
 
@@ -1501,7 +2042,8 @@ Object.assign(PurdyShellCard.prototype, {
         <div class="ps-grow">
           <span class="ps-lbl">Naps${napMins ? ` · ${psHM(napMins)}` : ""}</span>
           <div class="ps-naps">${napRings || `<span class="ps-flat" style="font-size:var(--pc-fs-xs)">${
-            noData ? (err ? "recorder unavailable" : loaded ? "none yet" : "loading…") : "none yet"}</span>`}</div>
+            !loaded ? "loading…" : err ? "recorder unavailable"
+              : away ? psEsc(`${awayLabel.toLowerCase()} — not recorded here`) : "none yet"}</span>`}</div>
         </div>
       </div>
       ${/* The one thing done in this room every single day, and the card could
@@ -1513,10 +2055,15 @@ Object.assign(PurdyShellCard.prototype, {
             Stopping is guarded by a two-tap arm, the same as cancelling a hold
             or deleting a schedule window: an accidental tap while he is asleep
             ends the session in the data and the white noise in the room. */""}
-      ${noData && !sec.hatch ? "" : `<div class="ps-jstat">
+      ${noData && !sec.hatch && !this._manualStore(sec) ? "" : `<div class="ps-jstat">
         <span>${psEsc(statusL)}</span>
         <span class="ps-grow"></span>
         <span>${psEsc(statusR)}</span>
+        ${!this._manualStore(sec) ? "" : `<button class="ps-jhatch ${
+          this._manualLive(sec) ? "on" : ""}" type="button" data-jlog="1"
+          aria-label="Log sleep by hand">
+          <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8.4"/></svg>
+        </button>`}
         ${!sec.hatch ? "" : `<button class="ps-jhatch ${playing ? "on" : ""} ${
           this._armed === "hatch" ? "armed" : ""}" type="button"
           data-arm="${playing ? "hatch" : ""}" data-hatch="${playing ? "" : "start"}"
@@ -1537,7 +2084,7 @@ Object.assign(PurdyShellCard.prototype, {
               figure yet. The question asked of this section each morning is
               whether the night was normal for him and whether the week is going
               the right way, so that is what it opens with now. */""}
-        ${this._nurseryWeek(norms, sec)}
+        ${this._nurseryWeek(norms, sec, this._awayDays(sec))}
         ${this._nurseryVerdict(norms)}
         ${meters}
         ${nightSession ? `
@@ -1554,12 +2101,15 @@ Object.assign(PurdyShellCard.prototype, {
           ${nightSession.hadExit ? `<i>→</i> left him <b>${psClock(nightSession.settledAt)}</b>` : ""}
           ${nightSession.active ? "" : `<i>→</i> woke <b>${psClock(psWokeAt(nightSession))}</b>`}
         </div>
-        <div class="ps-jstoryn">${nightSession.hadExit
-          ? `${psEsc(psHM(nightSession.settleMinutes))} to settle him`
-          : "still settling — nobody has left the room yet"}${
-          nightSession.events.length
-            ? ` · went in at ${psEsc(nightSession.events.map((t) => psClock(t)).join(", "))}`
-            : nightSession.hadExit ? " · nobody went in" : ""}</div>` : ""}
+        <div class="ps-jstoryn">${nightSession.manual
+          ? "Logged by hand"
+          : nightSession.hadExit
+            ? `${psEsc(psHM(nightSession.settleMinutes))} to settle him`
+            : "still settling — nobody has left the room yet"}${
+          nightSession.manual ? " · hand-logged, so wake-ups are not known"
+            : nightSession.events.length
+              ? ` · went in at ${psEsc(nightSession.events.map((t) => psClock(t)).join(", "))}`
+              : nightSession.hadExit ? " · nobody went in" : ""}</div>` : ""}
         ${/* The night's own shape, kept as the last piece of evidence rather
               than the opening statement. Its legend is also the only place
               settling and asleep are drawn apart in colour, which is what makes
@@ -1574,8 +2124,13 @@ Object.assign(PurdyShellCard.prototype, {
               <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " so far" : ""}</span>
               <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
                 !s.active && s.asleepMinutes < catnapUnder ? "short" : s.interventions ? s.interventions + " in" : ""}</span></div>`).join("")
-            : `<div class="ps-jr"><span class="ps-l">No naps yet today</span></div>`}
-          ${stats.wakeWindowMin == null ? "" : `<div class="ps-jr"><span class="ps-l">Awake for</span>
+            : `<div class="ps-jr"><span class="ps-l">${away
+              ? psEsc(`${awayLabel} — he was out, so no naps were recorded`)
+              : "No naps yet today"}</span></div>`}
+          ${/* Suppressed on an away day for the same reason the chip is: it is
+                measured from the end of a session that happened HERE, and the
+                naps it should have been reset by happened somewhere else. */""}
+          ${away || stats.wakeWindowMin == null ? "" : `<div class="ps-jr"><span class="ps-l">Awake for</span>
             <span class="ps-v">${psHM(stats.wakeWindowMin)}</span>
             <span class="ps-flat">since ${psClock(stats.wakeSince)}</span></div>`}
         </div>

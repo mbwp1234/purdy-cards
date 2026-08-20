@@ -5078,6 +5078,372 @@ check('the desk borrows the corrections readers alongside the derivation', (() =
   return /"_napEditStore", "_napEdits"/.test(src);
 })());
 
+/* ---- away from the sensors: hand-logged sessions and nanny days -------------
+ *
+ * Two entities bolted to one room cannot see a nap in somebody else's house.
+ * Left alone the section reports that absence as data — no naps, no night, a
+ * wake window of eleven hours and a nap overdue by six — which is the
+ * zero-versus-missing rule failing on the days a parent can least check it.
+ *
+ * A LOG is sleep a person watched. It is recorded, not derived, so it carries
+ * `manual` and every surface marks it; and it reports NULL wake-ups rather than
+ * zero, because nobody was watching the door.
+ *
+ * An AWAY DAY records nothing at all. It stops the card complaining.
+ */
+const parseMan = SH.helpers.parseManual;
+const writeMan = SH.helpers.writeManual;
+const manSess = SH.helpers.manualSessions;
+const mergeMan = SH.helpers.mergeManual;
+const parseAway = SH.helpers.parseAway;
+const writeAway = SH.helpers.writeAway;
+
+check('a logged session round-trips through the store', (() => {
+  const raw = writeMan([{ start: NT(13, 0), dur: 75, kind: null }]);
+  const back = parseMan(raw);
+  return back.length === 1 && back[0].start === NT(13, 0) && back[0].dur === 75;
+})());
+
+check('a running log is stored as `a`, not as a duration', (() => {
+  const raw = writeMan([{ start: NT(13, 0), dur: null, kind: null }]);
+  return /~a$/.test(raw) && parseMan(raw)[0].dur === null;
+})());
+
+check('an unwritten helper reads as no logs, not as one bad log',
+  parseMan('unknown').length === 0 && parseMan('').length === 0
+  && parseMan(null).length === 0 && parseMan('junk~x|7').length === 0);
+
+check('the log store drops the oldest entries rather than failing the write', (() => {
+  const many = Array.from({ length: 40 }, (_, i) => ({ start: NT(8, 0) + i * 86400000, dur: 60 }));
+  const raw = writeMan(many);
+  return raw.length <= 255 && parseMan(raw).length < 40 && parseMan(raw).length > 5;
+})());
+
+check('a logged session takes its kind from the hour, like a derived one', (() => {
+  const out = manSess([{ start: NT(13, 30), dur: 50 }, { start: NT(19, 30), dur: 600 }],
+    { now: NT(23, 0) });
+  return out.length === 2 && out[0].night === false && out[1].night === true;
+})());
+
+check('an explicit kind overrides the hour, for sleep in another time zone', (() => {
+  const out = manSess([{ start: NT(13, 30), dur: 50, kind: 'n' },
+    { start: NT(19, 30), dur: 600, kind: 'p' }], { now: NT(23, 0) });
+  return out[0].night === true && out[1].night === false;
+})());
+
+/* The whole reason this is not `interventions: 0`. A zero would be a claim
+   about a door nobody was standing at, and it would read as the best night of
+   the week against his own band. */
+check('a logged session reports NULL wake-ups, never zero', (() => {
+  const out = manSess([{ start: NT(19, 30), dur: 600 }], { now: NT(23, 0) });
+  return out[0].interventions === null && out[0].longestStretch === null
+    && out[0].events.length === 0 && out[0].manual === true;
+})());
+
+check('a running log measures to now and stays active', (() => {
+  const out = manSess([{ start: NT(13, 0), dur: null }], { now: NT(13, 44) });
+  return out[0].active === true && out[0].asleepMinutes === 44;
+})());
+
+check('a logged session reports the whole window as asleep, with no settling', (() => {
+  const out = manSess([{ start: NT(13, 0), dur: 50 }], { now: NT(23, 0) });
+  return out[0].settleMinutes === 0 && out[0].asleepMinutes === 50
+    && out[0].settledAt === out[0].from && out[0].wokeAt === out[0].to;
+})());
+
+/* Both sources can be running at once — a Hatch left playing in an empty room
+   at home while a nap is logged in a car seat. Two sessions over one span would
+   double the day's total and draw a nap ring for a nap that happened once. */
+check('a log supersedes any derived session it overlaps', (() => {
+  const derived = nsess([{ t: NT(13, 0), s: 'playing' }, { t: NT(14, 0), s: 'idle' }], [],
+    { now: NT(15, 0) });
+  const manual = manSess([{ start: NT(13, 10), dur: 40 }], { now: NT(15, 0) });
+  const out = mergeMan(derived, manual);
+  return derived.length === 1 && out.length === 1 && out[0].manual === true;
+})());
+
+check('a log leaves a derived session it does not touch alone, in time order', (() => {
+  const derived = nsess([{ t: NT(10, 0), s: 'playing' }, { t: NT(11, 0), s: 'idle' }], [],
+    { now: NT(20, 0) });
+  const out = mergeMan(derived, manSess([{ start: NT(14, 0), dur: 40 }], { now: NT(20, 0) }));
+  return out.length === 2 && out[0].from < out[1].from && !out[0].manual && out[1].manual;
+})());
+
+check('nothing logged leaves the derivation exactly as it was', (() => {
+  const derived = nsess([{ t: NT(10, 0), s: 'playing' }, { t: NT(11, 0), s: 'idle' }], [],
+    { now: NT(20, 0) });
+  return mergeMan(derived, []) === derived;
+})());
+
+/* Narrowing a log's window cannot turn "nobody was watching" into "nobody went
+   in": recomputing from an empty event list would hand back the zero the null
+   exists to prevent. */
+check('correcting a logged session keeps its wake-ups null', (() => {
+  const manual = manSess([{ start: NT(19, 0), dur: 600 }], { now: NT(9, 0) });
+  const out = napEdits(manual, [{ start: NT(19, 0), from: 10, to: 500 }]);
+  return out[0].edited === true && out[0].asleepMinutes === 490
+    && out[0].interventions === null && out[0].longestStretch === null;
+})());
+
+check('a logged night counts toward how long he slept, not toward the door averages', (() => {
+  const nights = [
+    { night: true, active: false, asleepMinutes: 600, interventions: 2, longestStretch: 300,
+      from: NT(19, 0), day: '2026-08-05' },
+    { night: true, active: false, asleepMinutes: 600, interventions: 4, longestStretch: 100,
+      from: NT(19, 0), day: '2026-08-06' },
+    { night: true, active: false, asleepMinutes: 540, interventions: null, longestStretch: null,
+      manual: true, from: NT(19, 30), day: '2026-08-07' },
+  ];
+  const st = SH.helpers.nurseryStats(nights, { now: NT(9, 0), days: 7 });
+  /* The mean of 600, 600 and 540 — the logged night is a real reading of how
+     long he slept. The interventions are the mean of 2 and 4 only. */
+  return st.avgNightMin === 580 && st.avgIns === 3 && st.avgStretch === 200;
+})());
+
+check('a logged night is excluded from his door bands but not his sleep band', (() => {
+  const nights = [
+    { night: true, active: false, asleepMinutes: 600, interventions: 2, longestStretch: 300,
+      from: NT(19, 0), day: '2026-08-05' },
+    { night: true, active: false, asleepMinutes: 660, interventions: 4, longestStretch: 100,
+      from: NT(19, 30), day: '2026-08-06' },
+    { night: true, active: false, asleepMinutes: 540, interventions: null, longestStretch: null,
+      manual: true, from: NT(19, 15), day: '2026-08-07' },
+  ];
+  const n = NORMS(nights, { days: 7 });
+  return n.nights.length === 3 && n.nights[2].manual === true
+    && n.asleep != null && Math.round(n.asleep.mean) === 600
+    /* Two observed nights is exactly the floor, so the door bands still exist
+       — and they are the band over 2 and 4, untouched by the null. */
+    && n.ins != null && n.ins.mean === 3 && n.longest != null && n.longest.mean === 200;
+})());
+
+check('a week of logged nights leaves no door band at all, rather than a band of zeroes', (() => {
+  const nights = [
+    { night: true, active: false, asleepMinutes: 600, interventions: null, longestStretch: null,
+      manual: true, from: NT(19, 0), day: '2026-08-05' },
+    { night: true, active: false, asleepMinutes: 660, interventions: null, longestStretch: null,
+      manual: true, from: NT(19, 30), day: '2026-08-06' },
+  ];
+  const n = NORMS(nights, { days: 7 });
+  return n.asleep != null && n.ins === null && n.longest === null;
+})());
+
+/* An away day is a local day key, eight digits, so it fits the same helper. */
+check('away days round-trip, deduped and sorted', (() => {
+  const raw = writeAway(['2026-08-09', '2026-08-07', '2026-08-07']);
+  return raw === '20260807|20260809' && parseAway(raw).length === 2
+    && parseAway(raw)[0] === '2026-08-07';
+})());
+
+check('an unwritten away store reads as no away days',
+  parseAway('unknown').length === 0 && parseAway('').length === 0
+  && parseAway(null).length === 0 && parseAway('nope|2026-08-07').length === 0);
+
+check('the away store drops the oldest days rather than failing the write', (() => {
+  const many = Array.from({ length: 60 }, (_, i) => `2026-08-${String((i % 28) + 1).padStart(2, '0')}`);
+  const raw = writeAway(many);
+  return raw.length <= 255 && parseAway(raw).length > 5;
+})());
+
+/* ---- the same facts, on the card ---- */
+
+const travelCard = (opts) => {
+  const o = opts || {};
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
+    edits: { store: 'input_text.napedits' },
+    manual: { store: 'input_text.joellog', away_store: 'input_text.joelaway' } }] });
+  s._testNow = o.now == null ? NT(15, 0) : o.now;
+  s._hass = { states: {
+    'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'input_text.napedits': { state: '', attributes: {} },
+    'input_text.joellog': { state: o.log == null ? '' : o.log, attributes: {} },
+    'input_text.joelaway': { state: o.away == null ? '' : o.away, attributes: {} } },
+  callService: (d, sv, data) => { s._calls = (s._calls || []).concat([[d, sv, data]]); } };
+  /* Loaded, and completely empty — which is exactly what a weekend away
+     produces and what the section used to report as a fault. */
+  s._nursery = { 'media_player.h': [], 'binary_sensor.d': [] };
+  return s;
+};
+
+check('both new stores are in the watched set', (() => {
+  const s = travelCard();
+  return (s._watched || []).indexOf('input_text.joellog') >= 0
+    && (s._watched || []).indexOf('input_text.joelaway') >= 0;
+})());
+
+check('a logged nap reaches the card as a nap, marked as hand-logged', (() => {
+  const s = travelCard({ log: `${Math.round(NT(13, 0) / 60000)}~50` });
+  const sess = s._nurserySessions(s._config.sections[0]);
+  const html = s._secNursery(s._config.sections[0]);
+  return sess.length === 1 && sess[0].manual === true && sess[0].night === false
+    && /ps-edd ring hand/.test(html) && /\.ps-edd\.hand \{/.test(SH.styles);
+})());
+
+/* The chip is where the complaint was loudest: with nothing recorded all day it
+   read "Nap overdue 6h" — arithmetic on a wake it never saw. */
+check('an away day replaces the overdue-nap chip with where he actually is', (() => {
+  const key = SH.helpers.dayKey(new Date(NT(15, 0))).replace(/-/g, '');
+  const away = travelCard({ away: key });
+  const home = travelCard();
+  const a = away._secNursery(away._config.sections[0]);
+  const h = home._secNursery(home._config.sections[0]);
+  return /Nanny day/.test(a) && !/overdue/i.test(a) && !/Awake for/.test(a)
+    /* And the flag is still raised on a day he WAS here — an away day must
+       suppress the complaint, never the mechanism. */
+    && !/Nanny day/.test(h);
+})());
+
+check('an away day names itself where the naps would have been', (() => {
+  const key = SH.helpers.dayKey(new Date(NT(15, 0))).replace(/-/g, '');
+  const s = travelCard({ away: key });
+  const html = s._secNursery(s._config.sections[0]);
+  return /nanny day — not recorded here/.test(html)
+    && /he was out, so no naps were recorded/.test(html);
+})());
+
+check('a logged night reports no wake-ups rather than an undisturbed one', (() => {
+  const s = travelCard({ now: NT(9, 0), log: `${Math.round(new Date(2026, 7, 6, 19, 30).getTime() / 60000)}~600` });
+  const html = s._secNursery(s._config.sections[0]);
+  return /hand-logged, so wake-ups are not known/.test(html)
+    /* The "Went in" meter draws its missing-reading state, not a zero. */
+    && /Not measured/.test(html) && !/>0<\/div>/.test(html);
+})());
+
+check('the log button only exists where there is somewhere to write', (() => {
+  const withStore = travelCard()._secNursery(travelCard()._config.sections[0]);
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
+  s._testNow = NT(15, 0);
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} } } };
+  s._nursery = { 'media_player.h': [], 'binary_sensor.d': [] };
+  return /data-jlog=/.test(withStore) && !/data-jlog=/.test(s._secNursery(s._config.sections[0]));
+})());
+
+check('the log sheet offers both ways in and the away days', (() => {
+  const s = travelCard();
+  s._openNurseryLog();
+  const html = s._sheetHtml([]);
+  s._sheet = null; s._log = null;
+  return /Log sleep/.test(html) && /ps-jlstart/.test(html)
+    && /data-logstep="from:-15"/.test(html) && /data-logstep="to:15"/.test(html)
+    && /ps-jladd/.test(html) && /data-away="/.test(html);
+})());
+
+check('the sheet shows Stop, not Start, while a log is running', (() => {
+  const s = travelCard({ log: `${Math.round(NT(14, 0) / 60000)}~a` });
+  s._openNurseryLog();
+  const html = s._sheetHtml([]);
+  s._sheet = null; s._log = null;
+  return /ps-jlstop/.test(html) && !/ps-jlstart/.test(html) && /1h 0m so far/.test(html);
+})());
+
+check('Start writes a running entry and Stop closes it with the elapsed minutes', (() => {
+  const s = travelCard();
+  s._manualStart();
+  const started = s._calls[0];
+  s._hass.states['input_text.joellog'].state = started[2].value;
+  s._testNow = NT(15, 40);
+  s._manualStop();
+  const stopped = s._calls[1];
+  return /~a$/.test(started[2].value) && started[2].entity_id === 'input_text.joellog'
+    && /~40$/.test(stopped[2].value);
+})());
+
+check('a second Start while one is running does nothing', (() => {
+  const s = travelCard({ log: `${Math.round(NT(14, 0) / 60000)}~a` });
+  s._manualStart();
+  return !s._calls;
+})());
+
+check('a logged session steps in fifteen minutes and cannot be logged into the future', (() => {
+  const s = travelCard();
+  s._openNurseryLog();
+  const from0 = s._log.from;
+  s._logStep('from', 15);
+  const stepped = s._log.from - from0 === 15 * 60000;
+  for (let i = 0; i < 20; i += 1) s._logStep('to', 15);
+  const capped = s._log.to <= s._nowMs();
+  s._sheet = null; s._log = null;
+  return stepped && capped;
+})());
+
+check('a logged session is corrected and removed in its OWN store, not the edits store', (() => {
+  const s = travelCard({ log: `${Math.round(NT(13, 0) / 60000)}~50` });
+  const sess = s._nurserySessions(s._config.sections[0]);
+  s._openNapEdit(sess[0].from);
+  s._napEditStep('to', -5);
+  s._napEditSave();
+  const saved = s._calls[0];
+  const s2 = travelCard({ log: `${Math.round(NT(13, 0) / 60000)}~50` });
+  s2._openNapEdit(s2._nurserySessions(s2._config.sections[0])[0].from);
+  s2._napEditDelete();
+  const dropped = s2._calls[0];
+  return saved[2].entity_id === 'input_text.joellog' && /~45$/.test(saved[2].value)
+    && dropped[2].entity_id === 'input_text.joellog' && dropped[2].value === '';
+})());
+
+check('the correction sheet drops "Didn\'t sleep" on a logged session and says where it writes', (() => {
+  const s = travelCard({ log: `${Math.round(NT(13, 0) / 60000)}~50` });
+  s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
+  const html = s._sheetHtml([]);
+  s._sheet = null; s._napEdit = null;
+  return !/ps-nenone/.test(html) && /no derivation underneath/.test(html)
+    && /data-arm="napdel"/.test(html);
+})());
+
+check('a nanny-day toggle writes the day key and toggles it back off', (() => {
+  const key = SH.helpers.dayKey(new Date(NT(15, 0)));
+  const s = travelCard();
+  s._awayToggle(key);
+  const on = s._calls[0][2].value;
+  const s2 = travelCard({ away: key.replace(/-/g, '') });
+  s2._awayToggle(key);
+  return on === key.replace(/-/g, '') && s2._calls[0][2].value === '';
+})());
+
+check('_bindNurseryLog is actually called, not merely defined',
+  /this\._bindNurseryLog\(\);/.test(
+    fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+
+/* The desk borrows _nurserySessions, which now merges the logs in — so the
+   store readers have to come with it, exactly as the corrections readers did. */
+check('the desk borrows the log and away readers alongside the derivation', (() => {
+  const src = fs.readFileSync(new URL('../src/80-desk-core.js', import.meta.url), 'utf8');
+  return /"_manualCfg", "_manualStore", "_manualEntries"/.test(src)
+    && /"_awayStore", "_awayLabel", "_awayDays", "_isAwayDay"/.test(src);
+})());
+
+check('the desk marks a hand-logged night and refuses to print its wake-ups as zero', (() => {
+  const dk = new (defined['purdy-desk-card'])();
+  const s = travelCard({ now: NT(9, 0),
+    log: `${Math.round(new Date(2026, 7, 6, 19, 30).getTime() / 60000)}~600` });
+  dk.setConfig(s._config);
+  dk._testNow = NT(9, 0);
+  dk._hass = s._hass;
+  dk._nursery = s._nursery;
+  const html = dk._pnlNursery(dk._config.sections[0]);
+  return /ps-edd hand/.test(html) && /not measured/.test(html)
+    && /\.ps-edd\.hand \{/.test(defined['purdy-desk-card'].styles);
+})());
+
+check('the desk says nanny day rather than reporting missing naps', (() => {
+  const key = SH.helpers.dayKey(new Date(NT(15, 0))).replace(/-/g, '');
+  const s = travelCard({ away: key });
+  const dk = new (defined['purdy-desk-card'])();
+  dk.setConfig(s._config);
+  dk._testNow = NT(15, 0);
+  dk._hass = s._hass;
+  dk._nursery = s._nursery;
+  const html = dk._pnlNursery(dk._config.sections[0]);
+  return /Nanny day/.test(html) && !/No naps yet today/.test(html);
+})());
+
+
 /* An MA player mirrors its source device: a Twitch stream came back as
    media_content_type "music", and only a missing title kept it off the screen. */
 const isMusic = SH.helpers.isMusic;

@@ -494,6 +494,20 @@ Object.assign(PurdyShellCard.prototype, {
        one: it slides over the list you were reading instead of pushing it down
        the screen, so the row you long-pressed is still where you left it when
        the sheet closes. */
+    /* Logging sleep the sensors could not see, and marking the days he was
+       somewhere else. A sheet for the same reason the correction sheet is one:
+       it slides over the rings and the rail instead of pushing them down the
+       screen while you count backwards to when he went down. */
+    if (this._sheet === "joellog") {
+      const body = this._nurseryLogHtml();
+      if (!body) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          <div class="ps-sheeth"><span class="ps-lbl">Log sleep</span>${close}</div>
+          ${body}
+        </div>`;
+    }
+
     if (this._sheet === "napedit") {
       const body = this._napEditHtml();
       if (!body) return "";

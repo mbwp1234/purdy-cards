@@ -356,6 +356,13 @@ class PurdyShellCard extends PcBaseCard {
            until the 30s clock came round — a control that answers half a
            minute later reads as one that did nothing. */
         push((s.edits || {}).store);
+        /* Hand-logged sessions and away days. Both are ordinary entities read
+           straight out of hass rather than fetched, so without them here a
+           Start, a Stop or a nanny-day toggle would not appear until the 30s
+           clock came round — a control that answers half a minute later reads
+           as one that did nothing. */
+        push((s.manual || {}).store);
+        push((s.manual || {}).away_store);
       }
       /* The hero number is a watched state, not part of the weather fetch, so
          the reading on screen moves with the thermometer rather than waiting up
@@ -838,6 +845,7 @@ class PurdyShellCard extends PcBaseCard {
     this._bindLights();
     this._bindCrew();
     this._bindNapEdit();
+    this._bindNurseryLog();
     this._bindSystems();
     this._reserve();
     /* Only while the music sheet is open, and only when the answer could have
@@ -1753,6 +1761,9 @@ class PurdyShellCard extends PcBaseCard {
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats,
       nurseryNorms: psNurseryNorms, dayKey: psDayKey, hm: psHM,
       parseNapEdits: psParseNapEdits, writeNapEdits: psWriteNapEdits, applyNapEdits: psApplyNapEdits,
+      parseManual: psParseManual, writeManual: psWriteManual,
+      manualSessions: psManualSessions, mergeManual: psMergeManual,
+      parseAway: psParseAway, writeAway: psWriteAway,
       wokeAt: psWokeAt,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
