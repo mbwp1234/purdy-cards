@@ -3802,7 +3802,10 @@ const crewCfg = {
     wash_counter: 'counter.washes', wash_capacity: 'input_number.cap',
     base_status: 'sensor.base', water_above: 80,
     wear: [{ label: 'Filter', entity: 'sensor.filt' }, { label: 'Main brush', entity: 'sensor.brush' }],
-    mileage: { area: 'sensor.area', runs: 'sensor.runs', path_width_m: 0.3 } },
+    mileage: { area: 'sensor.area', runs: 'sensor.runs', path_width_m: 0.3 },
+    nightly: { automation: 'automation.bedtime', mop_flag: 'input_boolean.mop',
+      active: 'input_boolean.running', mode_text: 'input_text.mode' },
+    deep_clean: { automation: 'automation.deep', last: 'input_datetime.deep' } },
   litter: { entity: 'vacuum.l', name: 'Litter box', litter_level: 'sensor.lit',
     waste_drawer: 'sensor.drawer', reset_button: 'button.reset', trend_days: 30,
     pet: { name: 'Crouton', weight: 'sensor.wt', visits: 'sensor.visits',
@@ -3841,6 +3844,14 @@ const crewStates = {
   'sensor.cycles': { state: '2077', attributes: { unit_of_measurement: 'cycles' } },
   'input_select.washer': { state: 'Off', attributes: {} },
   'input_datetime.ws': { state: '2026-08-06 14:33:28', attributes: {} },
+  /* ON means the next run mops — the helper reads as its name says, and the
+     automation's leading toggle is the same statement made a second time. */
+  'input_boolean.mop': { state: 'on', attributes: {} },
+  'input_boolean.running': { state: 'off', attributes: {} },
+  'input_text.mode': { state: 'Sweep & Mop', attributes: {} },
+  'automation.bedtime': { state: 'on', attributes: {} },
+  'automation.deep': { state: 'off', attributes: {} },
+  'input_datetime.deep': { state: '2026-04-08 13:01:06', attributes: {} },
 };
 const mkCrew = (over, open) => {
   const s = new SH();
@@ -4250,9 +4261,59 @@ check('the action row grows rather than clipping a third label',
 
 check('only a low consumable is called out',
   /Filter 14%/.test(crewVac) && !/Main brush/.test(crewVac));
-check('deep clean is gone entirely',
-  !/[Dd]eep clean/.test(crewVac) && !/deep_clean/.test(
-    fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8')));
+/* TONIGHT and DEEP CLEAN — the two controls the phone v2 rework orphaned.
+   They lived only on the v1 Bubble card, and with no surface showing it the
+   deep clean automation sat disabled for four months with nothing to say so. */
+check('tonight offers both modes and lights the one that is set',
+  /data-crewmop="input_boolean.mop"[^>]*data-want="sweep"/.test(crewVac)
+  && /data-want="mop"/.test(crewVac)
+  && /class="ps-cwtab on" type="button"\s+data-crewmop="input_boolean.mop" data-want="mop"/.test(crewVac));
+check('a mop night with the pad off says it will sweep instead', (() => {
+  const s2 = mkCrew({ 'vacuum.j': { state: 'docked', attributes: {
+    ...crewStates['vacuum.j'].attributes, mop_pad: false } } }, { vac: true });
+  return /will sweep instead/.test(s2._secCrew(crewCfg));
+})());
+check('a sweep night says nothing about the pad',
+  !/will sweep instead/.test(crewVac));
+/* An unreadable flag and a chosen sweep night are different facts. */
+check('an unavailable mop switch draws no choice at all', (() => {
+  const s2 = mkCrew({ 'input_boolean.mop': { state: 'unavailable', attributes: {} } }, { vac: true });
+  const h = s2._secCrew(crewCfg);
+  return !/data-crewmop/.test(h) && /cannot be read/.test(h);
+})());
+/* Mid-run the flag has already been toggled and now describes TOMORROW. */
+check('a run in progress reports its mode and stops taking taps', (() => {
+  const s2 = mkCrew({ 'input_boolean.running': { state: 'on', attributes: {} } }, { vac: true });
+  const h = s2._secCrew(crewCfg);
+  return /Running now/.test(h) && /Sweep &amp; Mop/.test(h) && !/data-crewmop/.test(h);
+})());
+check('deep clean is one armed button carrying its own age',
+  /data-arm="cw:deep"/.test(crewVac) && /Run deep clean/.test(crewVac)
+  && /\d+d ago/.test(crewVac));
+check('a deep clean that has never run says so rather than showing a zero', (() => {
+  const s2 = mkCrew({ 'input_datetime.deep': { state: 'unknown', attributes: {} } }, { vac: true });
+  return /never run/.test(s2._secCrew(crewCfg)) && !/0d ago/.test(s2._secCrew(crewCfg));
+})());
+check('the deep clean button arms before it fires', (() => {
+  const s2 = mkCrew(null, { vac: true });
+  s2._armed = 'cw:deep';
+  return /Tap again to start/.test(s2._secCrew(crewCfg));
+})());
+/* automation.trigger runs the actions whether or not the automation is
+   enabled — which is what lets the weekly schedule stay off for good. */
+check('the armed commit triggers the automation past its schedule conditions',
+  /skip_condition: true/.test(
+    fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
+/* The crew had no branch in _collectWatched at all, so every control in it
+   waited on the 30s clock to show what it had done. */
+check('the crew section is watched, so its controls answer immediately', (() => {
+  const s2 = new SH();
+  s2.setConfig({ sections: [crewCfg] });
+  const w = s2._collectWatched();
+  return w.includes('input_boolean.mop') && w.includes('input_datetime.deep')
+    && w.includes('vacuum.j') && w.includes('input_button.emptied')
+    && w.includes('sensor.drawer');
+})());
 
 /* While running the ring means progress, and the caption changes with it. */
 const crewBusy = mkCrew({ 'vacuum.j': { state: 'cleaning', attributes: {} },
@@ -5300,7 +5361,7 @@ check('an away day names itself where the naps would have been', (() => {
   const key = SH.helpers.dayKey(new Date(NT(15, 0))).replace(/-/g, '');
   const s = travelCard({ away: key });
   const html = s._secNursery(s._config.sections[0]);
-  return /nanny day — not recorded here/.test(html)
+  return /nanny day — not recorded today/.test(html)
     && /he was out, so no naps were recorded/.test(html);
 })());
 

@@ -2043,7 +2043,7 @@ Object.assign(PurdyShellCard.prototype, {
           <span class="ps-lbl">Naps${napMins ? ` · ${psHM(napMins)}` : ""}</span>
           <div class="ps-naps">${napRings || `<span class="ps-flat" style="font-size:var(--pc-fs-xs)">${
             !loaded ? "loading…" : err ? "recorder unavailable"
-              : away ? psEsc(`${awayLabel.toLowerCase()} — not recorded here`) : "none yet"}</span>`}</div>
+              : away ? psEsc(`${awayLabel.toLowerCase()} — not recorded today`) : "none yet"}</span>`}</div>
         </div>
       </div>
       ${/* The one thing done in this room every single day, and the card could
