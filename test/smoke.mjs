@@ -8608,6 +8608,167 @@ Date.now = savedNowH;
 globalThis.window = savedWin;
 globalThis.Event = savedEventH;
 
+
+/* ============================ people ============================
+   The header avatars, the horseshoe on them, and the person sheet behind them.
+   Every fixture pins its own clock: a step counter is a per-LOCAL-DAY figure,
+   so a test anchored to the wall clock passes all afternoon and fails at
+   11pm — the exact trap six nursery fixtures fell into. */
+const DAY = 86400000;
+const PNOW = new Date(2026, 7, 19, 15, 0, 0).getTime();   // 3:00 PM local
+const stepSeries = (spec) => {
+  const out = [];
+  spec.forEach(([back, samples]) => {
+    const base = new Date(PNOW - back * DAY);
+    samples.forEach(([hr, v]) => {
+      out.push({ t: new Date(base.getFullYear(), base.getMonth(), base.getDate(), hr).getTime(), s: String(v) });
+    });
+  });
+  return out.sort((a, b) => a.t - b.t);
+};
+const PSERIES = stepSeries([
+  [6, [[9, 3000], [20, 8200]]],
+  /* A late HealthKit re-sync republishing a LOWER number: the day's total is
+     its maximum, and a rule that took the last sample would report 120 steps
+     for a six-thousand-step day. */
+  [5, [[9, 2000], [20, 6100], [22, 120]]],
+  /* 4 days back: nothing reported at all — the phone was off. */
+  [3, [[9, 4000], [20, 9400]]],
+  [2, [[9, 2500], [20, 7000]]],
+  [1, [[9, 3100], [14, 5200], [20, 7600]]],
+  [0, [[9, 2200], [14, 6676]]],
+]);
+
+check('a daily-resetting counter is read as the day MAXIMUM, not its last sample',
+  (() => {
+    const d = SH.helpers.stepDays(PSERIES, { now: PNOW, days: 7 });
+    return d.length === 7 && d[0].steps === 8200 && d[1].steps === 6100 && d[5].steps === 7600;
+  })());
+check('a day nothing was reported stays null, never zero',
+  (() => SH.helpers.stepDays(PSERIES, { now: PNOW, days: 7 })[2].steps === null)());
+check('a non-numeric state is dropped rather than counted as standing still',
+  (() => {
+    const d = SH.helpers.stepDays(
+      [{ t: PNOW - 3600000, s: 'unavailable' }, { t: PNOW - 1800000, s: 'unknown' }],
+      { now: PNOW, days: 2 });
+    return d[1].steps === null;
+  })());
+check('today is excluded from his own average — a partial day must not drag it down',
+  (() => {
+    const st = SH.helpers.stepStats(SH.helpers.stepDays(PSERIES, { now: PNOW, days: 7 }));
+    return st.n === 5 && Math.round(st.avg) === 7660;
+  })());
+check('below two logged days there is no band at all, rather than one drawn round a single number',
+  (() => {
+    const st = SH.helpers.stepStats([{ today: false, steps: 5000 }, { today: true, steps: 10 }]);
+    return st.n === 1 && st.avg === null && st.sd === null;
+  })());
+check('the same clock time yesterday is a max-so-far, cut at the hour',
+  (() => SH.helpers.stepsBy(PSERIES, PNOW - DAY, PNOW - DAY) === 5200)());
+
+function psh(over) {
+  const sh = new SH();
+  sh.setConfig({
+    people: [{ entity: 'person.b', name: 'Brian', battery: 'sensor.b_batt',
+               steps: 'sensor.b_steps', distance: 'sensor.b_dist',
+               floors: 'sensor.b_floors', activity: 'sensor.b_act', watch: 'sensor.b_watch' },
+              { entity: 'person.t', name: 'Tayler' }],
+    sections: [],
+  });
+  sh._testNow = PNOW;
+  sh._people = { 'sensor.b_steps': PSERIES };
+  sh._hass = { states: Object.assign({
+    'person.b': { state: 'home', attributes: { friendly_name: 'Brian' }, last_changed: new Date(PNOW - 3600000).toISOString() },
+    'person.t': { state: 'not_home', attributes: { friendly_name: 'Tayler' } },
+    'sensor.b_steps': { state: '6676', attributes: { unit_of_measurement: 'steps' }, last_changed: new Date(PNOW - 600000).toISOString() },
+    'sensor.b_dist': { state: '5376', attributes: { unit_of_measurement: 'm' } },
+    'sensor.b_floors': { state: '17', attributes: {} },
+    'sensor.b_act': { state: 'Automotive', attributes: {} },
+    'sensor.b_batt': { state: '10', attributes: {} },
+    'sensor.b_watch': { state: '100', attributes: {} },
+  }, (over && over.states) || {}) };
+  return sh;
+}
+
+check('a person with no step sensor keeps the avatar they always had',
+  (() => {
+    const h = psh()._hdrPeople();
+    return /data-person="0"/.test(h) && !/data-person="1"/.test(h) && /data-info="person.t"/.test(h);
+  })());
+check('the tracked avatar draws a ring and the untracked one does not',
+  (() => {
+    const h = psh()._hdrPeople();
+    return (h.match(/ps-pvr/g) || []).length === 1;
+  })());
+check('a tracked person with no reading gets the TRACK ALONE, never a zero arc',
+  (() => {
+    const sh = psh({ states: { 'sensor.b_steps': { state: 'unavailable', attributes: {} } } });
+    sh._people = {};
+    const ring = sh._pvRing(sh._personStats(sh._config.people[0]));
+    return /var\(--ps-track\)/.test(ring) && !/url\(#ps-aur\)/.test(ring);
+  })());
+check('an overshoot fills the ring rather than being clipped at the goal',
+  (() => {
+    const sh = psh({ states: { 'sensor.b_steps': { state: '20000', attributes: {} } } });
+    const st = sh._personStats(sh._config.people[0]);
+    return st.today === 20000 && st.goal < st.today;
+  })());
+check('the live state wins over the five-minute-old history sample',
+  (() => psh()._personStats(psh()._config.people[0]).today === 6676)());
+check('the marker says WHICH claim it makes — his average, not a target',
+  (() => /own 5-day average/.test(psh()._personBody(psh()._config.people[0])))());
+check('a configured goal is named as a goal, and only until there is an average',
+  (() => {
+    const sh = psh();
+    sh._config.people[0].goal = 10000;
+    sh._people = {};
+    return /goal set in config/.test(sh._personBody(sh._config.people[0]));
+  })());
+check('the chip compares against the same time yesterday, not a whole-day average',
+  (() => /this time yesterday/.test(psh()._personBody(psh()._config.people[0])))());
+check('no chip at all when there is nothing to compare against',
+  (() => {
+    const sh = psh();
+    sh._people = {};
+    return !/ps-ppchip/.test(sh._personBody(sh._config.people[0]));
+  })());
+check('a missing day is hatched in the week strip, never drawn as a short bar',
+  (() => {
+    const h = psh()._personBody(psh()._config.people[0]);
+    return /ps-ppb miss/.test(h) && (h.match(/ps-ppb miss/g) || []).length === 1;
+  })());
+check('metres are converted, and "Unknown" activity reads as not reported',
+  (() => {
+    const sh = psh({ states: { 'sensor.b_act': { state: 'Unknown', attributes: {} } } });
+    const h = sh._personBody(sh._config.people[0]);
+    return /3\.3<small>mi<\/small>/.test(h) && /Not reported/.test(h) && sh._pDoing(sh._config.people[0]) === null;
+  })());
+check('the device page the tap used to open is still reachable from the sheet',
+  (() => /ps-ppmore" data-info="person.b"/.test(psh()._personBody(psh()._config.people[0])))());
+check('the sheet renders nothing for a person who is not tracked',
+  (() => {
+    const sh = psh();
+    sh._sheet = 'person'; sh._personPick = 1;
+    return sh._sheetHtml([]) === '';
+  })());
+check('the sheet renders for the tracked person',
+  (() => {
+    const sh = psh();
+    sh._sheet = 'person'; sh._personPick = 0;
+    return /ps-ppbody/.test(sh._sheetHtml([]));
+  })());
+const peopleSrc = fs.readFileSync(new URL('../src/71b-shell-people.js', import.meta.url), 'utf8');
+const pCoreSrc = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+check('the week fetch sends end_time — without it it stops six days short',
+  /history\/period\/\$\{start\}[\s\S]{0,300}end_time=/.test(peopleSrc));
+check('the step entities are in the watched set, though there is no people SECTION',
+  /push\(p\.steps\); push\(p\.distance\)/.test(pCoreSrc));
+check('_bindPeople is CALLED, not merely defined',
+  /this\._bindPeople\(\);/.test(pCoreSrc) && /_bindPeople\(\) \{/.test(peopleSrc));
+check('the poller is nulled on disconnect so a return does not stack a second one',
+  /this\._peopleTimer = null;/.test(pCoreSrc) && /_startPeople\(\);/.test(pCoreSrc));
+check('no zero-hiding shape in the people source', !/\?\? 0\)/.test(peopleSrc));
+
 // double-define guard: a hSecond load must warn, not throw
 let warned = '';
 const realWarn = console.warn;

@@ -658,6 +658,36 @@ Until the day is over every load figure is low, and a dot near the bottom of a
 track reads as a deficit rather than as a morning. The load block states its
 numbers and claims nothing.
 
+## `purdy-shell-card` — the header avatars
+
+Presence lives in the chrome rather than in a section: two faces on the date line say who is home without a heading, a card and 105px, and a red pip marks a phone under 25%.
+
+Give a person a **step sensor** and the face earns a second job. A thin horseshoe around it is today's steps against **that person's own seven-day average**, and a tap opens a sheet with the rest of what a companion app already publishes — a week strip with their own ±1sd band, distance, floors, the current activity, and both batteries. A press-and-hold still opens the device page the tap used to.
+
+```yaml
+people:
+  - entity: person.alex
+    name: Alex
+    battery: sensor.alex_phone_battery_level
+    steps: sensor.alex_phone_steps          # the ring and the sheet
+    distance: sensor.alex_phone_distance
+    floors: sensor.alex_phone_floors_ascended
+    activity: sensor.alex_phone_activity
+    watch: sensor.alex_phone_watch_battery_level
+    goal: 10000                             # only until there is an average
+people_days: 7
+```
+
+A person **without** `steps:` is untouched — the same face, the same presence ring, the same tap for more-info. A bare track around a face that can never carry a reading is a ring that only ever means nothing.
+
+Three things this is careful about:
+
+- **The ring is allowed because the goal is theirs.** A ring showing a fraction of a goal somebody else picked is the thing the `health` mode exists to avoid; a seven-day average is not that. A configured `goal:` is the fallback until there is a week of history, and the sheet **says which of the two it is** rather than letting an average pose as a target. An overshoot fills the ring — the scale is `max(value, goal)`, never a clamp.
+- **A missing day is hatched, never a zero column.** iOS republishes `steps` as steps-so-far-today and resets it at local midnight, so a day's total is its **maximum** — not its last sample, and not a difference. A day nothing was reported is drawn as a dashed outline, because a short bar reads as a lazy day at a glance.
+- **The chip compares against the same clock time yesterday**, not against the average. An average is a whole day; holding a partial one against it says "3,000 short" at nine every morning. With nothing yet to compare, no chip is drawn at all.
+
+Two logged days is the floor for a band — below it the value stands alone with no rail, which is its own signal.
+
 ## `purdy-shell-card` — weather motion
 
 Condition-driven precipitation across the whole view. `weather_fx` is a **top-level** key, not a section: it paints over every section rather than living in one.

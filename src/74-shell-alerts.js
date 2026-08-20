@@ -498,6 +498,24 @@ Object.assign(PurdyShellCard.prototype, {
        somewhere else. A sheet for the same reason the correction sheet is one:
        it slides over the rings and the rail instead of pushing them down the
        screen while you count backwards to when he went down. */
+    /* One person, today. A sheet rather than a section for the reason the
+       section was deleted: this is a thing you go and look at, not a thing the
+       landing page owes you every time you unlock the phone — and a sheet
+       slides over the column instead of pushing the house down the screen. */
+    if (this._sheet === "person") {
+      const list = this._config.people || [];
+      const p = list[this._personPick];
+      if (!p || !p.steps) return "";
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet">
+          ${/* No title in the chrome: the body's first row is the person's own
+                name beside their face, which is a better label than the word
+                "Person" and is already the thing being identified. */""}
+          <div class="ps-sheeth"><span class="ps-lbl">Today</span>${close}</div>
+          <div class="ps-ppbody">${this._personBody(p)}</div>
+        </div>`;
+    }
+
     if (this._sheet === "joellog") {
       const body = this._nurseryLogHtml();
       if (!body) return "";

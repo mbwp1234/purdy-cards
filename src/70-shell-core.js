@@ -116,6 +116,13 @@ class PurdyShellCard extends PcBaseCard {
     this._nursery = null;
     this._nurseryErr = null;
     this._nurseryTimer = null;
+    /* Steps, a week of them, per person. null for the same reason: "the
+       recorder has not answered yet" and "nobody moved" must not be the same
+       picture. See 71b-shell-people.js. */
+    this._people = null;
+    this._peopleErr = null;
+    this._peopleTimer = null;
+    this._personPick = 0;
     /* Weather, and null for the same reason: the min–max rail has to tell "the
        recorder has not answered yet" from "the week was flat", and [] reads as
        the second. See 78b-shell-weather.js. */
@@ -199,6 +206,7 @@ class PurdyShellCard extends PcBaseCard {
     this._expandWatched();
     this._startHistory();
     this._startNursery();
+    this._startPeople();
     this._startWeather();
     this._fetchEvents();
     this._fetchSchedule();
@@ -233,6 +241,7 @@ class PurdyShellCard extends PcBaseCard {
     if (this._historyTimer) clearInterval(this._historyTimer);
     if (this._eventTimer) clearInterval(this._eventTimer);
     if (this._nurseryTimer) clearInterval(this._nurseryTimer);
+    if (this._peopleTimer) clearInterval(this._peopleTimer);
     if (this._wxTimer) clearInterval(this._wxTimer);
     clearTimeout(this._goalSend);
     this._goalSend = null;
@@ -262,6 +271,7 @@ class PurdyShellCard extends PcBaseCard {
        "running" by the handle, so leaving it set would stack a second poller
        on every return to the view. */
     this._nurseryTimer = null;
+    this._peopleTimer = null;
     this._wxTimer = null;
   }
 
@@ -316,7 +326,14 @@ class PurdyShellCard extends PcBaseCard {
        will never reach them, so a person coming home or the thermometer moving
        would not repaint until the 30s clock came round. */
     push(c.weather_temp);
-    (c.people || []).forEach((p) => { push(p.entity); push(p.battery); });
+    (c.people || []).forEach((p) => {
+      push(p.entity); push(p.battery);
+      /* The header avatars read these directly, so they belong in the watched
+         set even though no `people` SECTION exists any more — _collectWatched
+         walks sections: and knows nothing about top-level blocks unless it is
+         told. */
+      push(p.steps); push(p.distance); push(p.floors); push(p.activity); push(p.watch);
+    });
     (c.attention || []).forEach((r) => push(r.entity));
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
@@ -865,6 +882,7 @@ class PurdyShellCard extends PcBaseCard {
     this._bindLights();
     this._bindCrew();
     this._bindNapEdit();
+    this._bindPeople();
     this._bindNurseryLog();
     this._bindSystems();
     this._reserve();
@@ -1798,6 +1816,7 @@ class PurdyShellCard extends PcBaseCard {
       wokeAt: psWokeAt,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
+      stepDays: psStepDays, stepStats: psStepStats, stepsBy: psStepsBy,
       healthMeter: psHealthMeter, hmDur: psHmDur, hmDomain: psHmDomain, hmPos: psHmPos,
       /* Haptics come out here because `dev/shoot` cannot see them: a shot has
          no motor and no companion app, so the smoke test is the ONLY thing

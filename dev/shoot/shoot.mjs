@@ -45,6 +45,13 @@ const PRESETS = {
   "phone-sky-dusk":  [PHONE, SHELL + "&sky=dusk"],
   "phone-sky-night": [PHONE, SHELL + "&sky=night"],
   "phone-joel":   [PHONE, SHELL + "&open=joel"],
+  /* The header avatars and the sheet behind them. `patch=people` supplies the
+     step sensors, which are not deployed yet — a section that is not deployed
+     cannot be photographed, and deploying it to find out is the loop this
+     replaces. `sheet=person` opens the sheet on _personPick's default, 0. */
+  "phone-people":       [PHONE, SHELL + "&patch=people"],
+  "phone-person":       [PHONE, SHELL + "&patch=people&sheet=person"],
+  "phone-person-two":   [PHONE, SHELL + "&patch=people&sheet=person&person=1"],
   /* Correcting a session. The list with its long-press targets, then the sheet
      itself — which is opened by a press-and-hold, the one entry point a URL
      cannot express, so `napedit=` picks a session out of the card's own

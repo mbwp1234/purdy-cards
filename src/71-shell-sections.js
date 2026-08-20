@@ -61,20 +61,33 @@ Object.assign(PurdyShellCard.prototype, {
     const list = this._config.people || [];
     if (!list.length) return "";
     const h = this._hass;
-    return `<span class="ps-pav">${list.map((p) => {
+    return `<span class="ps-pav">${list.map((p, i) => {
       const st = pcState(h, p.entity);
       const home = st === "home";
       const batt = pcNum(h, p.battery);
       const nm = pcName(h, p.entity, p.name);
-      const pic = h.states[p.entity] && h.states[p.entity].attributes.entity_picture;
+      /* Only a person with a step sensor gets the horseshoe and the sheet.
+         Everyone else keeps the avatar exactly as it was — presence ring,
+         battery pip, tap for more-info — because a bare track around a face
+         that will never carry a reading is the zero-and-missing confusion in
+         its most useless form: a ring that can only ever mean nothing. */
+      const tracked = !!p.steps;
+      const s = tracked ? this._personStats(p) : null;
       const bits = [home ? "home" : (st || "").replace(/_/g, " ")];
+      if (s && s.today != null) bits.push(`${Math.round(s.today).toLocaleString()} steps`);
       if (batt != null) bits.push(`${Math.round(batt)}%`);
-      return `<span class="ps-pv ${home ? "home" : ""} ${batt != null && batt < 25 ? "low" : ""}"
-          data-info="${psEsc(p.entity)}" role="button" tabindex="0"
+      /* Presence moves from the ring to the FACE when the ring is carrying
+         steps: two coloured rings around a 21px photograph is one signal too
+         many in the space of a fingernail, and "lit or grey" is the reading
+         that survives at this size. */
+      const cls = `ps-pv ${home ? "home" : "away"} ${batt != null && batt < 25 ? "low" : ""} ${tracked ? "big" : ""}`;
+      const hooks = tracked
+        ? `data-person="${i}" data-entity="${psEsc(p.entity)}"`
+        : `data-info="${psEsc(p.entity)}"`;
+      return `<span class="${cls}" ${hooks} role="button" tabindex="0"
           title="${psEsc(`${nm} — ${bits.join(", ")}`)}"
-          aria-label="${psEsc(`${nm}, ${bits.join(", ")}`)}">${pic
-            ? `<img src="${psEsc(pic)}" alt="" />`
-            : psEsc((nm || "?").charAt(0).toUpperCase())}</span>`;
+          aria-label="${psEsc(`${nm}, ${bits.join(", ")}`)}">${
+            tracked ? this._pvRing(s) : ""}${this._pvFace(p, nm)}</span>`;
     }).join("")}</span>`;
   },
 

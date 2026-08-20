@@ -224,6 +224,10 @@ function buildHass(states) {
       if (P.get("hpage")) { el._hpage = P.get("hpage"); touched = true; }
       if (P.get("open")) { el._open = P.get("open"); touched = true; }
       if (P.get("sheet")) { el._sheet = P.get("sheet"); touched = true; }
+      /* WHICH person the sheet is showing. The sheet is opened by tapping an
+         avatar, and the index that tap carries is the one thing the URL has to
+         supply for the second person to be photographable at all. */
+      if (P.get("person")) { el._personPick = +P.get("person"); touched = true; }
       /* Which weather rail is showing. The card's own field, same as the four
          above — a preset drives the card rather than faking a tap on its tab. */
       if (P.get("wxrail")) { el._wxPick = P.get("wxrail"); touched = true; }
