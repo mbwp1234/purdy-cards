@@ -549,10 +549,19 @@ Object.assign(PurdyDeskCard.prototype, {
         stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", mark(night)),
       row("Put down / woke", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", mark(night)),
       night.manual ? "" : row("Left him", pdClock(night.settledAt), `${psHM(night.settleMinutes)} to settle`),
-      row("Went in", night.manual ? "—" : String(night.interventions),
-        night.manual ? "not measured" : (night.events || []).map((t) => pdClock(t)).join(" · ")),
-      row("Longest run", night.longestStretch == null ? "—" : psDur(night.longestStretch),
-        night.longestStretch == null ? "not measured"
+      /* A night the server went down through was a night nobody was watching
+         the door for those hours. The count is a LOWER BOUND and wears a `+`;
+         the longest undisturbed run is inflated by the whole outage and is not
+         reported at all. Same treatment as the phone's two meters. */
+      row("Went in", night.manual ? "—"
+        : night.blindMin ? `${night.interventions}+` : String(night.interventions),
+      night.manual ? "not measured"
+        : night.blindMin ? `server down ${psHM(night.blindMin)}`
+          : (night.events || []).map((t) => pdClock(t)).join(" · ")),
+      row("Longest run", night.blindMin || night.longestStretch == null
+        ? "—" : psDur(night.longestStretch),
+      night.blindMin ? `server down ${psHM(night.blindMin)}`
+        : night.longestStretch == null ? "not measured"
           : stats.avgStretch ? `7d ${psDur(stats.avgStretch)}` : ""),
     ].join("") : "";
 
