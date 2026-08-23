@@ -151,10 +151,20 @@ function psNurserySessions(hatch, door, opts) {
   if (dOpen != null) opens.push({ from: dOpen, to: now, held: true });
   const realOpens = opens.filter((op) => op.held || op.to - op.from >= doorMin);
 
-  /* 2 — raw playing spans */
+  /* 2 — raw playing spans, and the stretches where HA could not see the Hatch
+   * at all. `idle` and `unavailable` both end a playing span, but they are not
+   * the same claim: `idle` is the speaker saying it stopped, `unavailable` is
+   * us admitting we cannot hear it. The sound machine kept running through the
+   * server reset on 2026-08-22 — the recorder simply stopped writing — so the
+   * blind stretch has to be tracked separately from the states around it. */
   const spans = [];
+  const blind = [];
   let openAt = null;
+  let blindAt = null;
   (hatch || []).forEach((p) => {
+    const gone = p.s === "unavailable" || p.s === "unknown";
+    if (blindAt != null && !gone) { blind.push({ from: blindAt, to: p.t }); blindAt = null; }
+    if (gone && blindAt == null) blindAt = p.t;
     if (p.s === "playing") {
       if (openAt == null) openAt = p.t;
     } else if (openAt != null) {
@@ -162,6 +172,7 @@ function psNurserySessions(hatch, door, opts) {
       openAt = null;
     }
   });
+  if (blindAt != null) blind.push({ from: blindAt, to: now });
   if (openAt != null) spans.push({ from: openAt, to: now, active: true });
 
   /* 3 — merge across short gaps, but NEVER across a door event. Someone going
@@ -169,15 +180,34 @@ function psNurserySessions(hatch, door, opts) {
      one session interrupted, whereas a door open in the gap means he was got
      up. Judging the gap by time alone fused a nap, twelve minutes awake and
      the next nap into one session. */
+  /* A gap the recorder was BLIND through is bridged however long it is, up to
+   * `outage_max_min`. The server was reset at 21:23 on 2026-08-22, two hours
+   * into the night, and came back at 23:26 with the Hatch still playing; the
+   * gap is six times `merge_gap_min`, so the night split in two and the later
+   * half — starting after 18:00 — became the night. His bedtime was reported
+   * as 11:26 PM instead of 7:27 PM. Time alone cannot judge this gap, because
+   * the length of the gap is a fact about the SERVER, not about the room.
+   * The evidence is the same evidence the merge rule already trusts: the Hatch
+   * was playing before and playing after, and nobody opened the door in
+   * between, so nobody got him up and it never stopped. Beyond the cap there
+   * is too little night left either side to be claiming anything about it. */
+  const outageMax = (o.outage_max_min == null ? 240 : o.outage_max_min) * 60000;
+  const blindFor = (a, b) => {
+    const hole = blind.find((u) => u.from <= a + 1000 && u.to >= b - 1000);
+    return hole ? b - a : 0;
+  };
   const merged = [];
   spans.forEach((s) => {
     const last = merged[merged.length - 1];
     const gap = last ? s.from - last.to : Infinity;
     const entered = last && realOpens.some((op) => op.from >= last.to && op.from <= s.from);
-    if (last && gap < rule(s.from, "merge_gap_min") && !entered) {
+    const outage = last ? blindFor(last.to, s.from) : 0;
+    const bridged = outage > 0 && outage <= outageMax;
+    if (last && !entered && (gap < rule(s.from, "merge_gap_min") || bridged)) {
       last.to = s.to;
       if (s.active) last.active = true;
       last.splits = (last.splits || 1) + 1;
+      if (bridged) last.blind = (last.blind || 0) + outage;
     } else {
       merged.push({ from: s.from, to: s.to, active: s.active, splits: 1 });
     }
@@ -366,6 +396,12 @@ function psNurserySessions(hatch, door, opts) {
       active: !!s.active,
       splits: s.splits || 1,
       minutes: Math.max(0, Math.round((s.to - s.from) / 60000)),
+      /* Minutes of this session the recorder was blind through. The door was
+         unwatched for exactly as long, so `interventions` over a session with
+         a blind stretch is a LOWER BOUND and every surface that prints it has
+         to say so — a wake-up nobody recorded and a night nobody was needed
+         must not read the same. */
+      blindMin: s.blind ? Math.round(s.blind / 60000) : 0,
       night,
       day: psDayKey(anchor),
       interventions: events.length,
@@ -706,8 +742,12 @@ function psNurseryStats(sessions, opts) {
      went in is not, and neither is the longest undisturbed run. Averaging a
      null in gives NaN, and defaulting it to zero would be worse — it would pull
      his intervention average down every time the family goes away. So the two
-     door-derived averages are taken over the nights that HAD a door. */
-  const observed = nights.filter((s) => !s.manual);
+     door-derived averages are taken over the nights that HAD a door.
+
+     A night the server was down through is out for the same reason: the door
+     was unwatched for those hours, so its count is a lower bound and its
+     longest stretch is inflated by however long nobody was looking. */
+  const observed = nights.filter((s) => !s.manual && !s.blindMin);
   const avgNightMin = nights.length ? Math.round(mean(nights.map((s) => s.asleepMinutes))) : null;
   const avgIns = observed.length ? mean(observed.map((s) => s.interventions)) : null;
   const avgStretch = observed.length ? Math.round(mean(observed.map((s) => s.longestStretch))) : null;
@@ -816,7 +856,7 @@ function psNurseryStats(sessions, opts) {
 function psNurseryNorms(sessions, opts) {
   const o = opts || {};
   const nights = (sessions || []).filter((s) => s.night && !s.active).slice(-(o.days || 7));
-  const observed = nights.filter((s) => !s.manual);
+  const observed = nights.filter((s) => !s.manual && !s.blindMin);
 
   /* Bedtimes are shifted past midnight before anything is done with them, for
      the same reason `psNurseryStats` shifts them: a 00:20 bedtime is a late
@@ -848,6 +888,7 @@ function psNurseryNorms(sessions, opts) {
       ins: s.interventions,
       edited: !!s.edited,
       manual: !!s.manual,
+      blind: !!s.blindMin,
     })),
     asleep: band(nights.map((s) => s.asleepMinutes), 15),
     bed: band(nights.map(bedOf), 10),
@@ -856,6 +897,7 @@ function psNurseryNorms(sessions, opts) {
        measured cannot narrow it or widen it. */
     longest: band(observed.map((s) => s.longestStretch), 20),
     ins: band(observed.map((s) => s.interventions), 0.5),
+    blindNights: nights.filter((s) => s.blindMin).length,
   };
 }
 
@@ -1606,7 +1648,9 @@ Object.assign(PurdyShellCard.prototype, {
     : `<i style="background:var(--ps-light);opacity:.5"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep`}</span>
           ${/* A hand-logged night has no door behind it. "0 in" would be a
                 claim; naming the source is the honest thing in the same slot. */""}
-          <b>${night.manual ? "logged" : `${night.interventions} in`}</b>
+          <b>${night.manual ? "logged"
+    : night.blindMin ? `${night.interventions}+ in`
+      : `${night.interventions} in`}</b>
         </div>
         <div class="ps-railbox">
           <div class="ps-hypplot" data-scrub="night">
@@ -2009,14 +2053,22 @@ Object.assign(PurdyShellCard.prototype, {
        LONGEST RUN is hiOk and WENT IN is loOk: a long undisturbed run and an
        undisturbed night both sit on the good side of his band, and drawing
        either of them amber would call the best night of the week a fault. */
+    /* A stretch the recorder was blind through is not a stretch nobody went
+       in: the server was down and the door was unwatched. So the count keeps
+       its digits but wears a `+` and loses its rail — a lower bound has no
+       business being placed against a band — and the reason is named, because
+       a dash with no caption reads as a broken card. The longest undisturbed
+       run is worse than a lower bound, it is INFLATED by the outage, so it
+       goes to the missing-reading state outright. */
+    const blindWhy = nb && nb.blindMin ? `Server down ${psHM(nb.blindMin)}` : null;
     const meters = !nb ? "" : `<div class="ps-hmg g3 ps-jmet">
         ${psHealthMeter({
     label: "Bedtime", value: bedOf(nb), band: norms.bed, text: psClock(nb.from),
   })}
         ${psHealthMeter({
-    label: "Longest run", value: nb.longestStretch, band: norms.longest,
-    text: nb.longestStretch == null ? null : psHM(nb.longestStretch), hiOk: true,
-    why: "Not measured",
+    label: "Longest run", value: blindWhy ? null : nb.longestStretch, band: norms.longest,
+    text: blindWhy || nb.longestStretch == null ? null : psHM(nb.longestStretch), hiOk: true,
+    why: blindWhy || "Not measured",
   })}
         ${/* A hand-logged night has no door behind it, so both of these are
               NULL rather than zero, and psHealthMeter's missing-reading state
@@ -2024,9 +2076,10 @@ Object.assign(PurdyShellCard.prototype, {
               best night of the week on a night nobody measured. `text` has to
               go null with the value, or the dash never appears. */""}
         ${psHealthMeter({
-    label: "Went in", value: nb.interventions, band: norms.ins,
-    text: nb.interventions == null ? null : String(nb.interventions),
-    unit: "×", loOk: true, why: "Not measured",
+    label: "Went in", value: blindWhy ? null : nb.interventions, band: norms.ins,
+    text: nb.interventions == null ? null
+      : blindWhy ? `${nb.interventions}+` : String(nb.interventions),
+    unit: "×", loOk: true, why: blindWhy || "Not measured",
   })}
       </div>`;
 

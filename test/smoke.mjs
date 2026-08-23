@@ -3237,6 +3237,119 @@ check('a genuine gap longer than the merge window stays two sessions', (() => {
   return s.length === 2 && s.every((x) => x.night === false);
 })());
 
+/* ---- the server going down mid-night ----
+ *
+ * `idle` and `unavailable` both end a playing span and they are NOT the same
+ * claim: idle is the speaker saying it stopped, unavailable is us admitting we
+ * cannot hear it. Judging an outage by `merge_gap_min` judges the SERVER, not
+ * the room. The real night of 2026-08-22 is pinned below.
+ */
+const NU = (d, h, m, s) => new Date(2026, 7, d, h, m, s || 0).getTime();
+
+check('the 2026-08-22 server reset does not move his bedtime to 11:26 PM', (() => {
+  /* Recorded exactly: Hatch playing 19:27:31, unavailable 21:23:05 when the
+     box went down, playing again 23:26:34, idle at 06:22:48. The gap is 2h03m
+     against a 20-minute merge window, so the night split and the later half —
+     starting after 18:00 — was reported as the night. Nobody opened the door
+     in the gap, so nobody got him up and the sound machine never stopped. */
+  const hatch = [
+    { t: NU(22, 19, 27, 31), s: 'playing' },
+    { t: NU(22, 21, 23, 5), s: 'unavailable' },
+    { t: NU(22, 23, 26, 34), s: 'playing' },
+    { t: NU(23, 6, 22, 48), s: 'idle' },
+  ];
+  const door = [
+    { t: NU(22, 19, 15, 32), s: 'off' },
+    { t: NU(22, 19, 18, 13), s: 'on' }, { t: NU(22, 19, 18, 17), s: 'off' },
+    { t: NU(22, 19, 19, 50), s: 'on' }, { t: NU(22, 19, 20, 0), s: 'off' },
+    { t: NU(22, 19, 25, 13), s: 'on' }, { t: NU(22, 19, 25, 15), s: 'off' },
+    { t: NU(22, 19, 25, 29), s: 'on' }, { t: NU(22, 19, 25, 33), s: 'off' },
+    { t: NU(22, 19, 26, 44), s: 'on' }, { t: NU(22, 19, 26, 52), s: 'off' },
+    { t: NU(22, 19, 27, 8), s: 'on' }, { t: NU(22, 19, 27, 12), s: 'off' },
+    { t: NU(22, 19, 30, 58), s: 'on' }, { t: NU(22, 19, 31, 4), s: 'off' },
+    { t: NU(22, 19, 40, 47), s: 'on' }, { t: NU(22, 19, 40, 53), s: 'off' },
+    { t: NU(22, 21, 5, 51), s: 'on' }, { t: NU(22, 21, 5, 55), s: 'off' },
+    { t: NU(22, 21, 18, 42), s: 'on' }, { t: NU(22, 21, 18, 53), s: 'off' },
+    { t: NU(23, 2, 45, 55), s: 'on' }, { t: NU(23, 2, 46, 1), s: 'off' },
+    { t: NU(23, 3, 3, 35), s: 'on' }, { t: NU(23, 3, 3, 45), s: 'off' },
+    { t: NU(23, 6, 22, 41), s: 'on' },
+  ];
+  const out = nsess(hatch, door, { now: NU(23, 8, 0) });
+  const n = out[0];
+  return out.length === 1 && n.night === true && n.splits === 2
+    && new Date(n.from).getHours() === 19
+    && n.blindMin === 123;
+})());
+
+check('a bridged outage does not silently become an undisturbed night', (() => {
+  /* The door was unwatched for exactly as long as the Hatch was. The count is
+     a LOWER BOUND, so it is marked rather than reported flat, and the longest
+     undisturbed run is inflated by the whole outage. */
+  const out = nsess([
+    { t: NU(22, 19, 0), s: 'playing' },
+    { t: NU(22, 21, 0), s: 'unavailable' },
+    { t: NU(22, 23, 0), s: 'playing' },
+    { t: NU(23, 6, 0), s: 'idle' },
+  ], [{ t: NU(22, 19, 5), s: 'on' }, { t: NU(22, 19, 6), s: 'off' }],
+  { now: NU(23, 8, 0) });
+  return out.length === 1 && out[0].blindMin === 120;
+})());
+
+check('a door event inside the outage still splits the night', (() => {
+  /* Nobody being able to see the door is why the gap is bridged. If the door
+     DID report, somebody went in, and the same rule that governs every other
+     merge applies: he was got up, and that is two sessions. */
+  const out = nsess([
+    { t: NU(22, 19, 0), s: 'playing' },
+    { t: NU(22, 21, 0), s: 'unavailable' },
+    { t: NU(22, 23, 0), s: 'playing' },
+    { t: NU(23, 6, 0), s: 'idle' },
+  ], [{ t: NU(22, 22, 0), s: 'on' }, { t: NU(22, 22, 5), s: 'off' }],
+  { now: NU(23, 8, 0) });
+  return out.length === 2;
+})());
+
+check('an outage past outage_max_min is not bridged', (() => {
+  const arg = [
+    { t: NU(22, 19, 0), s: 'playing' },
+    { t: NU(22, 20, 0), s: 'unavailable' },
+    { t: NU(22, 23, 0), s: 'playing' },
+    { t: NU(23, 6, 0), s: 'idle' },
+  ];
+  const wide = nsess(arg, [], { now: NU(23, 8, 0) });
+  const tight = nsess(arg, [], { now: NU(23, 8, 0), outage_max_min: 60 });
+  return wide.length === 1 && tight.length === 2;
+})());
+
+check('a blind night is out of the door-derived band, like a hand-logged one', (() => {
+  /* A band is a claim about his normal. A lower-bound count cannot narrow it
+     and an outage-inflated stretch cannot widen it — the same argument that
+     keeps hand-logged nights out of these two. */
+  const nights = [
+    { night: true, day: '20260819', from: NU(19, 19, 0), asleepMinutes: 600, interventions: 2, longestStretch: 200 },
+    { night: true, day: '20260820', from: NU(20, 19, 0), asleepMinutes: 620, interventions: 3, longestStretch: 210 },
+    { night: true, day: '20260821', from: NU(21, 19, 0), asleepMinutes: 610, interventions: 2, longestStretch: 205 },
+    { night: true, day: '20260822', from: NU(22, 19, 0), asleepMinutes: 660, interventions: 9, longestStretch: 500, blindMin: 123 },
+  ];
+  const clean = SH.helpers.nurseryNorms(nights.slice(0, 3));
+  const withBlind = SH.helpers.nurseryNorms(nights);
+  return withBlind.blindNights === 1
+    && withBlind.ins.mean === clean.ins.mean
+    && withBlind.longest.mean === clean.longest.mean
+    /* the sleep band DOES take it — how long he slept is not door-derived */
+    && withBlind.asleep.mean !== clean.asleep.mean;
+})());
+
+check('a plain idle gap is still judged by merge_gap_min, not bridged', (() => {
+  /* The whole point of separating the two states: the speaker SAYING it
+     stopped is evidence, and an hour of it is a different session. */
+  const out = nsess([
+    { t: NU(22, 19, 0), s: 'playing' }, { t: NU(22, 21, 0), s: 'idle' },
+    { t: NU(22, 23, 0), s: 'playing' }, { t: NU(23, 6, 0), s: 'idle' },
+  ], [], { now: NU(23, 8, 0) });
+  return out.length === 2 && !out[0].blindMin;
+})());
+
 /* The real thing: mounting the sensor produced ten transitions in 34 seconds,
    five of them under 300ms. Counted raw that is ten interventions. */
 check('mounting chatter does not become ten interventions', (() => {
