@@ -502,6 +502,38 @@ function psWriteNapEdits(list) {
   return parts.join("|");
 }
 
+/* How far outside its own Hatch span a session's sleep window may be pushed,
+ * as absolute times. ONE function, read by the store's reader, the stepper's
+ * clamp and the sheet's rail alike — three separate reckonings of the same
+ * bound is how a control lets you set a value the reader then silently refuses.
+ *
+ * The neighbours win over `reach_min` wherever they are closer: a nap two
+ * hours after this one caps the reach at two hours whatever the config says,
+ * because minutes claimed by both sessions are counted twice by every total on
+ * the card. A running session cannot be extended past now, for the same reason
+ * nothing else here reports the future. */
+function psNapEditLimits(s, all, opts) {
+  const o = opts || {};
+  const kind = s.night ? "night" : "nap";
+  const scoped = o[kind] || {};
+  const reach = (scoped.reach_min != null ? scoped.reach_min
+    : o.reach_min != null ? o.reach_min : (s.night ? 180 : 60)) * 60000;
+  const list = all || [s];
+  let lo = s.from - reach;
+  let hi = s.to + reach;
+  list.forEach((x) => {
+    if (x === s) return;
+    const xEnd = x.wokeAt == null ? x.to : x.wokeAt;
+    const xFrom = Math.min(x.from, x.settledAt == null ? x.from : x.settledAt);
+    if (xEnd <= s.from) lo = Math.max(lo, xEnd);
+    else if (xFrom >= s.to) hi = Math.min(hi, xFrom);
+  });
+  if (o.now != null) hi = Math.min(hi, o.now);
+  lo = Math.min(lo, s.from);
+  hi = Math.max(hi, s.to);
+  return { lo, hi };
+}
+
 /* Apply the overrides on top of the derivation.
  *
  * An edited session keeps its Hatch span — that is measured and is not in
@@ -514,11 +546,32 @@ function psWriteNapEdits(list) {
  *
  * `edited` rides along on the session because a corrected number and a measured
  * one must not render identically — the same rule as a zero and a missing
- * reading. Every surface that shows an edited session marks it. */
-function psApplyNapEdits(sessions, edits, tolMin) {
+ * reading. Every surface that shows an edited session marks it.
+ *
+ * The window may run OUTSIDE the Hatch span, in both directions, and for a
+ * while it could not: the pair was clamped to [start, end], so a correction
+ * could only ever shorten a night. That is the wrong half of the problem to
+ * solve. The sound machine is the session boundary because switching it on is
+ * unambiguous sleep INTENT — it is not a claim about the minute he dropped off
+ * or the minute he woke. He goes down in the car and the Hatch goes on when he
+ * is carried in; the Hatch is switched off at the door while he sleeps another
+ * forty minutes. Both are ordinary, both make the derived figure too small,
+ * and a corrector that can only agree or subtract cannot say so.
+ *
+ * `minutes` still reports the measured Hatch span, untouched — that is the
+ * point of keeping the three durations apart. Only `asleepMinutes` grows.
+ *
+ * Two brakes, because an unbounded override is a typo away from a thirty-hour
+ * night: `reach_min` either side (180 for a night, 60 for a nap — a nap
+ * corrected by three hours is not a nap), and the NEIGHBOURING sessions, since
+ * a window that swallowed the next nap would count those minutes twice in
+ * every total on the card. */
+function psApplyNapEdits(sessions, edits, tolMin, opts) {
   const list = edits || [];
   if (!list.length) return sessions || [];
+  const o = opts || {};
   const tol = (tolMin == null ? 3 : tolMin) * 60000;
+  const all = (sessions || []).slice().sort((a2, b2) => a2.from - b2.from);
   const out = [];
   (sessions || []).forEach((s) => {
     let best = null;
@@ -529,8 +582,9 @@ function psApplyNapEdits(sessions, edits, tolMin) {
     if (!best) { out.push(s); return; }
     if (best.del) return;
 
-    const settledAt = Math.max(s.from, Math.min(s.to, s.from + best.from * 60000));
-    const wokeAt = Math.max(settledAt, Math.min(s.to, s.from + best.to * 60000));
+    const lim = psNapEditLimits(s, all, o);
+    const settledAt = Math.max(lim.lo, Math.min(lim.hi, s.from + best.from * 60000));
+    const wokeAt = Math.max(settledAt, Math.min(lim.hi, s.from + best.to * 60000));
     const events = (s.events || []).filter((t) => t > settledAt && t < wokeAt);
     const marks = [settledAt, ...events, wokeAt];
     let best2 = 0;
@@ -975,7 +1029,8 @@ Object.assign(PurdyShellCard.prototype, {
        from the phone. A log supersedes anything derived that overlaps it. */
     const manual = psManualSessions(this._manualEntries(sec), opts);
     return psApplyNapEdits(psMergeManual(derived, manual),
-      this._napEdits(sec), (sec.edits || {}).match_tolerance_min);
+      this._napEdits(sec), (sec.edits || {}).match_tolerance_min,
+      Object.assign({}, sec.edits || {}, { now: this._nowMs() }));
   },
 
   /* --- corrections --------------------------------------------------------
@@ -1310,8 +1365,31 @@ Object.assign(PurdyShellCard.prototype, {
      the sound machine stopped. */
   _napEditDefaults(s) {
     const span = Math.max(1, Math.floor((s.to - s.from) / 60000));
-    const clamp = (t) => Math.max(0, Math.min(span, Math.round((t - s.from) / 60000)));
-    return { span, from: clamp(s.settledAt), to: clamp(s.wokeAt == null ? s.to : s.wokeAt) };
+    /* NOT clamped to the span any more. A session already corrected outwards
+       carries a `settledAt` before the Hatch went on or a `wokeAt` after it
+       stopped, and clamping here would open the sheet showing a window the
+       card is not actually using — the editor disagreeing with the row that
+       opened it. `lo`/`hi` carry the reach instead, as offsets on the same
+       scale as everything else in this sheet. */
+    const off = (t) => Math.round((t - s.from) / 60000);
+    const lim = this._napEditLimits(s);
+    return {
+      span,
+      from: off(s.settledAt),
+      to: off(s.wokeAt == null ? s.to : s.wokeAt),
+      lo: Math.floor((lim.lo - s.from) / 60000),
+      hi: Math.ceil((lim.hi - s.from) / 60000),
+    };
+  },
+
+  /* The stepper's clamp and the reader's clamp are the SAME function — see
+     psNapEditLimits. A control that lets you set a value the reader then
+     silently pulls back is worse than one that stops: the number on screen at
+     Save is not the number the card goes on to report. */
+  _napEditLimits(s) {
+    const sec = this._nurserySection() || {};
+    return psNapEditLimits(s, this._nurserySessions(sec),
+      Object.assign({}, sec.edits || {}, { now: this._nowMs() }));
   },
 
   _napEditSpan() {
@@ -1328,15 +1406,15 @@ Object.assign(PurdyShellCard.prototype, {
     const e = this._napEdit;
     const s = this._napEditSpan();
     if (!e || !s) return;
-    const span = this._napEditDefaults(s).span;
+    const d = this._napEditDefaults(s);
     const next = Object.assign({}, e);
-    next[field] = Math.max(0, Math.min(span, e[field] + delta));
+    next[field] = Math.max(d.lo, Math.min(d.hi, e[field] + delta));
     /* Woke can never precede fell-asleep. Pushing one past the other carries
        the other with it rather than refusing the tap, so the control keeps
        answering the thumb. */
     if (field === "from" && next.from > next.to) next.to = next.from;
     if (field === "to" && next.to < next.from) next.from = next.to;
-    /* Only a step that MOVED gets a tick. Both fields clamp to the session, so
+    /* Only a step that MOVED gets a tick. Both fields clamp to the reach, so
        pressing on at either end is a control that has run out of room — and a
        buzz there would say the value changed when it did not. */
     if (next.from !== e.from || next.to !== e.to) pcHaptic("selection");
@@ -1436,10 +1514,21 @@ Object.assign(PurdyShellCard.prototype, {
     const derived = Math.max(0, d.to - d.from);
     const now = Math.max(0, e.to - e.from);
 
+    /* The axis is the UNION of the measured span and the window being set, so
+       pushing the window past either end of the Hatch span WIDENS the rail
+       rather than running the block off the edge of the viewBox. The measured
+       span keeps its own track inside that axis — which is the whole picture
+       the correction is making: this is where the sound machine ran, and this
+       is where he was actually asleep. */
     const PAD = 3;
-    const x = (m) => PAD + (Math.max(0, Math.min(span, m)) / span) * (100 - PAD * 2);
+    const dLo = Math.min(0, e.from);
+    const dHi = Math.max(span, e.to);
+    const dSpan = Math.max(1, dHi - dLo);
+    const x = (m) => PAD + ((Math.max(dLo, Math.min(dHi, m)) - dLo) / dSpan) * (100 - PAD * 2);
     const fx = x(e.from);
     const tx = x(e.to);
+    const hx = x(0);
+    const hw = x(span) - hx;
     const ticks = (s.doorAt || s.events || []).map((t) => {
       const gx = x(Math.round((t - s.from) / 60000));
       return `<rect x="${(gx - 0.32).toFixed(2)}" y="4" width="0.64" height="26" rx="0.3"
@@ -1454,14 +1543,20 @@ Object.assign(PurdyShellCard.prototype, {
                 sheet is not inside. */""}
           <svg viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true"
             style="width:100%;height:34px;display:block">
-            <rect x="${PAD}" y="11" width="${(100 - PAD * 2).toFixed(2)}" height="12" rx="2"
-              fill="rgba(255,255,255,.06)"/>
+            <rect x="${PAD}" y="13" width="${(100 - PAD * 2).toFixed(2)}" height="8" rx="2"
+              fill="rgba(255,255,255,.04)"/>
+            ${/* the Hatch span, named by the labels underneath */""}
+            <rect x="${hx.toFixed(2)}" y="11" width="${Math.max(0.5, hw).toFixed(2)}" height="12"
+              rx="2" fill="rgba(255,255,255,.08)"/>
             <rect x="${fx.toFixed(2)}" y="9" width="${Math.max(0.5, tx - fx).toFixed(2)}"
               height="16" rx="2" fill="var(--ps-deep)" opacity="0.9"/>
             ${ticks}
           </svg>
-          <div class="ps-railticks"><span>${psEsc(psClock(s.from))}</span>
-            <span>${psEsc(psClock(s.to))}</span></div>
+          ${/* The labels name the AXIS, which is the span plus whatever reach
+                has been used — not the Hatch span, which no longer always
+                reaches the ends. */""}
+          <div class="ps-railticks"><span>${psEsc(at(dLo))}</span>
+            <span>${psEsc(at(dHi))}</span></div>
         </div>
       </div>
 
@@ -1598,20 +1693,29 @@ Object.assign(PurdyShellCard.prototype, {
     }
 
     const PAD = 3;
-    const from = night.from;
-    const to = night.to;
+    /* The axis is the Hatch span UNION the corrected sleep window. A hand
+       correction may put him asleep before the sound machine went on or after
+       it stopped, and an axis fixed to the span alone would run the asleep bar
+       off the end of the viewBox — the rail silently disagreeing with the
+       number printed above it. */
+    const woke = night.wokeAt == null ? night.to : night.wokeAt;
+    const from = Math.min(night.from, night.settledAt);
+    const to = Math.max(night.to, woke);
     const span = Math.max(60000, to - from);
     const x = (t) => PAD + ((t - from) / span) * (100 - PAD * 2);
     this._nightData = { from, to, settledAt: night.settledAt, events: night.events };
 
     const sx = x(night.settledAt);
-    /* The asleep bar ends where he WOKE, which is the end of the Hatch span
-       unless a correction moved it in. Time in the room after that is left as
+    /* The asleep bar ends where he WOKE. Time in the room after that is left as
        bare track rather than coloured asleep — drawing it as sleep is the same
-       lie as reporting the minutes. */
-    const wx = x(night.wokeAt == null ? night.to : night.wokeAt);
-    let bars = `<rect x="${PAD}" y="14" width="${Math.max(0.4, sx - PAD).toFixed(2)}"
-        height="18" rx="2" fill="var(--ps-light)" opacity="0.5"/>
+       lie as reporting the minutes. Settling is drawn only when there IS any:
+       corrected outwards, he was already asleep when the Hatch went on, and a
+       settling bar of no width would still have painted a sliver. */
+    const wx = x(woke);
+    const hx = x(night.from);
+    let bars = `${sx > hx + 0.2 ? `<rect x="${hx.toFixed(2)}" y="14"
+        width="${(sx - hx).toFixed(2)}" height="18" rx="2"
+        fill="var(--ps-light)" opacity="0.5"/>` : ""}
       <rect x="${sx.toFixed(2)}" y="10" width="${Math.max(0.4, wx - sx).toFixed(2)}"
         height="26" rx="2" fill="var(--ps-deep)" opacity="${night.active ? 0.95 : 0.8}"/>`;
 
@@ -1817,8 +1921,11 @@ Object.assign(PurdyShellCard.prototype, {
     let bars = "";
     (sessions || []).forEach((s) => {
       const end = psWokeAt(s);
-      if (end < t0 || s.from > t1) return;
-      const a = x(s.from);
+      /* A correction can put the start of sleep before the Hatch went on, and
+         the bar is the SLEEP, so it starts at whichever came first. */
+      const begin = Math.min(s.from, s.settledAt == null ? s.from : s.settledAt);
+      if (end < t0 || begin > t1) return;
+      const a = x(begin);
       const b = x(end);
       const short = !s.night && s.asleepMinutes < 30;
       bars += `<rect x="${a.toFixed(2)}" y="6" width="${Math.max(0.5, b - a).toFixed(2)}"
@@ -2149,16 +2256,34 @@ Object.assign(PurdyShellCard.prototype, {
               care the numbers already take: settledAt is when the PARENT LEFT,
               a lower bound on when he dropped off, and no wording here is
               allowed to claim the card knows the moment. */""}
+        ${/* A correction can put him asleep BEFORE the sound machine went on —
+              he went down in the car and was carried in. The sequence then
+              starts with the sleep, because "Put down 7:27 → left him 7:10"
+              is the card telling the story backwards. And on a corrected
+              session the middle step is "fell asleep", not "left him": a
+              person typed that time in, so the lower-bound hedge the
+              derivation needs would be a hedge about their own answer. */""}
         <div class="ps-jstory"${editable ? ` data-napedit="${nightSession.from}"` : ""}>
-          ${edd(nightSession)}Put down <b>${psClock(nightSession.from)}</b>
-          ${nightSession.hadExit ? `<i>→</i> left him <b>${psClock(nightSession.settledAt)}</b>` : ""}
+          ${nightSession.settledAt < nightSession.from
+    ? `${edd(nightSession)}Asleep <b>${psClock(nightSession.settledAt)}</b>
+          <i>→</i> put down <b>${psClock(nightSession.from)}</b>`
+    : `${edd(nightSession)}Put down <b>${psClock(nightSession.from)}</b>
+          ${nightSession.hadExit ? `<i>→</i> ${nightSession.edited && !nightSession.manual
+      ? "fell asleep" : "left him"} <b>${psClock(nightSession.settledAt)}</b>` : ""}`}
           ${nightSession.active ? "" : `<i>→</i> woke <b>${psClock(psWokeAt(nightSession))}</b>`}
         </div>
         <div class="ps-jstoryn">${nightSession.manual
           ? "Logged by hand"
-          : nightSession.hadExit
-            ? `${psEsc(psHM(nightSession.settleMinutes))} to settle him`
-            : "still settling — nobody has left the room yet"}${
+          : nightSession.settledAt < nightSession.from
+            ? "already asleep when the Hatch went on"
+            : nightSession.hadExit
+              ? `${psEsc(psHM(nightSession.settleMinutes))} to settle him`
+              : "still settling — nobody has left the room yet"}${
+          /* Where the correction runs past the measurement, say where the
+             measurement stopped. The card is reporting a time the recorder
+             does not hold, and the row that shows it should say so. */
+          !nightSession.manual && psWokeAt(nightSession) > nightSession.to
+            ? ` · Hatch stopped ${psEsc(psClock(nightSession.to))}` : ""}${
           nightSession.manual ? " · hand-logged, so wake-ups are not known"
             : nightSession.events.length
               ? ` · went in at ${psEsc(nightSession.events.map((t) => psClock(t)).join(", "))}`
