@@ -5073,12 +5073,73 @@ check('a deleted session disappears entirely', (() => {
   return out.length === 0;
 })());
 
-check('an override can never invert or escape the Hatch span', (() => {
+check('an override can never invert, and never escapes the REACH', (() => {
+  /* It may now leave the Hatch span — see below — but not without limit, and
+     woke can still never precede fell-asleep. A nap's reach is 60 minutes. */
   const base = failedNap();
   const out = napEdits(base, [{ start: base[0].from, from: 900, to: -50 }]);
-  const span = Math.round((base[0].to - base[0].from) / 60000);
-  return out[0].settledAt <= base[0].to && out[0].wokeAt >= out[0].settledAt
-    && out[0].settleMinutes <= span && out[0].asleepMinutes >= 0;
+  return out[0].wokeAt >= out[0].settledAt
+    && out[0].settledAt <= base[0].to + 60 * 60000
+    && out[0].settledAt >= base[0].from - 60 * 60000
+    && out[0].asleepMinutes >= 0;
+})());
+
+/* ---- correcting a session OUTWARDS ----
+ *
+ * The clamp used to be [start, end], so a correction could only ever shorten a
+ * night — which is the wrong half of the problem. The Hatch is unambiguous
+ * sleep INTENT; it is not a claim about the minute he dropped off or the minute
+ * he woke. He goes down in the car and the machine goes on when he is carried
+ * in; the machine is switched off at the door while he sleeps another forty
+ * minutes. Reported 2026-08-23: "I cannot expand Joel night sleep, only
+ * shorten."
+ */
+check('a night can be corrected LONGER than the Hatch ran', (() => {
+  const base = nsess(
+    [{ t: NU(21, 19, 30), s: 'playing' }, { t: NU(22, 5, 30), s: 'idle' }],
+    [{ t: NU(21, 19, 40), s: 'on' }, { t: NU(21, 19, 45), s: 'off' }],
+    { now: NU(22, 9, 0) });
+  const span = base[0].minutes;
+  /* asleep from 30 minutes BEFORE the Hatch went on until 60 after it stopped */
+  const out = napEdits(base, [{ start: base[0].from, from: -30, to: span + 60 }]);
+  return out[0].asleepMinutes === span + 90
+    /* the measured span is untouched — that is why the three durations are
+       kept apart in the first place */
+    && out[0].minutes === span
+    /* already asleep when the machine went on, so there was no settling */
+    && out[0].settleMinutes === 0
+    && out[0].settledAt < base[0].from
+    && out[0].wokeAt > base[0].to;
+})());
+
+check('a correction cannot swallow the neighbouring session', (() => {
+  /* Minutes claimed by two sessions are counted twice by every total on the
+     card, so a neighbour caps the reach wherever it is closer than reach_min. */
+  const base = nsess([
+    { t: NT(10, 0), s: 'playing' }, { t: NT(10, 40), s: 'idle' },
+    { t: NT(11, 10), s: 'playing' }, { t: NT(11, 50), s: 'idle' },
+  ], [], { now: NT(14, 0) });
+  const out = napEdits(base, [{ start: base[0].from, from: 0, to: 600 }]);
+  return base.length === 2 && out[0].wokeAt === base[1].from;
+})());
+
+check('reach_min is configurable, per kind and flat', (() => {
+  const base = nsess(
+    [{ t: NU(21, 19, 30), s: 'playing' }, { t: NU(22, 5, 30), s: 'idle' }], [],
+    { now: NU(22, 9, 0) });
+  const span = base[0].minutes;
+  const tight = napEdits(base, [{ start: base[0].from, from: 0, to: span + 300 }],
+    null, { night: { reach_min: 10 } });
+  const flat = napEdits(base, [{ start: base[0].from, from: 0, to: span + 300 }],
+    null, { reach_min: 45 });
+  return tight[0].asleepMinutes === span + 10 && flat[0].asleepMinutes === span + 45;
+})());
+
+check('a running session cannot be corrected into the future', (() => {
+  const base = nsess([{ t: NU(22, 20, 0), s: 'playing' }], [], { now: NU(22, 22, 0) });
+  const out = napEdits(base, [{ start: base[0].from, from: 0, to: 600 }],
+    null, { now: NU(22, 22, 0) });
+  return base[0].active === true && out[0].wokeAt === NU(22, 22, 0);
 })());
 
 check('wokeAt is present on an underived session so every surface can read it',
@@ -5193,6 +5254,89 @@ check('the corrected wake window (not the raw Hatch span) drives "Awake for"', (
   /* Awake since 9:22 to now (9:45) is 23m; since the Hatch's 10:33 it would
      be negative and the chip would have to fall back to something else. */
   return /Awake 23m/.test(html) && /since 9:22/.test(html);
+})());
+
+/* ---- a correction that runs PAST the measurement ----
+ *
+ * The Hatch is switched off at the door while he sleeps another half hour; he
+ * goes down in the car and the machine goes on when he is carried in. Both make
+ * the derived figure too small, and until 2026-08-23 the sheet could only ever
+ * agree or subtract.
+ */
+const outwardCard = (edit) => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
+    edits: { store: 'input_text.napedits' } }] });
+  s._testNow = NU(22, 9, 0);
+  const start = Math.round(NU(21, 19, 30) / 60000);
+  s._hass = { states: {
+    'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'input_text.napedits': { state: `${start}~${edit}`, attributes: {} } } };
+  s._nursery = {
+    'media_player.h': [{ t: NU(21, 19, 30), s: 'playing' }, { t: NU(22, 5, 30), s: 'idle' }],
+    'binary_sensor.d': [{ t: NU(21, 19, 40), s: 'on' }, { t: NU(21, 19, 45), s: 'off' }] };
+  return s;
+};
+
+check('a wake time past the Hatch stop reaches the section, and names where the measurement ended', (() => {
+  /* asleep 19:45 -> 06:20, half an hour after the machine stopped at 05:30 */
+  const card = outwardCard('15~650');
+  const html = card._secNursery(card._config.sections[0]);
+  return /woke <b>6:20 AM/.test(html) && /Hatch stopped 5:30 AM/.test(html)
+    && /10h 35m/.test(html);
+})());
+
+check('asleep before the Hatch went on tells the story in that order', (() => {
+  /* asleep from 19:00, half an hour before the machine */
+  const card = outwardCard('-30~600');
+  const html = card._secNursery(card._config.sections[0]);
+  return /Asleep <b>7:00 PM<\/b>\s*<i>→<\/i> put down <b>7:30 PM/.test(html)
+    && /already asleep when the Hatch went on/.test(html)
+    /* and never the backwards version */
+    && !/left him/.test(html);
+})());
+
+check('"left him" is the DERIVED wording and "fell asleep" the corrected one', (() => {
+  /* settledAt is when the parent LEFT — a lower bound, and no derived wording
+     may claim the card knows the moment he dropped off. A correction is a
+     person answering that question directly, so hedging their own answer back
+     at them is the mistake in the other direction. */
+  const plain = new SH();
+  plain.setConfig(outwardCard('0~600')._config);
+  plain._testNow = NU(22, 9, 0);
+  plain._hass = { states: {
+    'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'input_text.napedits': { state: '', attributes: {} } } };
+  plain._nursery = outwardCard('0~600')._nursery;
+  const derived = plain._secNursery(plain._config.sections[0]);
+  const fixed = outwardCard('20~600')._secNursery(outwardCard('20~600')._config.sections[0]);
+  return /left him/.test(derived) && !/fell asleep/.test(derived)
+    && /fell asleep/.test(fixed) && !/left him/.test(fixed);
+})());
+
+check('the sheet widens its axis instead of running the block off the viewBox', (() => {
+  const card = outwardCard('15~650');
+  card._openNapEdit(card._nurserySessions(card._config.sections[0])[0].from);
+  const html = card._sheetHtml([]);
+  /* the right-hand label is the AXIS end, which is now the corrected wake */
+  const labels = html.match(/ps-railticks"><span>([^<]+)<\/span>\s*<span>([^<]+)</);
+  const rects = [...html.matchAll(/<rect x="([\d.]+)"[^>]*width="([\d.]+)"/g)]
+    .map((m) => Number(m[1]) + Number(m[2]));
+  return labels && labels[2].indexOf('6:20') === 0
+    && rects.length && Math.max(...rects) <= 100.01;
+})());
+
+check('the stepper stops at the reach rather than at the Hatch span', (() => {
+  const card = outwardCard('0~600');
+  const sess = card._nurserySessions(card._config.sections[0]);
+  card._openNapEdit(sess[0].from);
+  const span = sess[0].minutes;
+  /* a night's reach is 180 minutes; 60 steps of five is 300 */
+  for (let i = 0; i < 60; i += 1) card._napEditStep('to', 5);
+  return card._napEdit.to === span + 180 && span + 180 > span;
 })());
 
 check('the rows are long-press targets only where there is somewhere to write', (() => {

@@ -548,7 +548,13 @@ Object.assign(PurdyDeskCard.prototype, {
       row("Slept", psDur(night.asleepMinutes),
         stats.avgNightMin ? `7d ${psDur(stats.avgNightMin)}` : "no average yet", mark(night)),
       row("Put down / woke", `${pdClock(night.from)} – ${pdClock(psWokeAt(night))}`, "", mark(night)),
-      night.manual ? "" : row("Left him", pdClock(night.settledAt), `${psHM(night.settleMinutes)} to settle`),
+      /* On a corrected session a person typed that time in, so it is "fell
+         asleep" rather than the derivation's deliberately hedged "left him" —
+         and if the correction put him asleep before the Hatch went on, the
+         settling figure is not a duration, it is the absence of one. */
+      night.manual ? "" : row(night.edited ? "Fell asleep" : "Left him", pdClock(night.settledAt),
+        night.settledAt < night.from ? "already asleep when the Hatch went on"
+          : `${psHM(night.settleMinutes)} to settle`),
       /* A night the server went down through was a night nobody was watching
          the door for those hours. The count is a LOWER BOUND and wears a `+`;
          the longest undisturbed run is inflated by the whole outage and is not
