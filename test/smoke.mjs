@@ -3321,6 +3321,109 @@ check('an outage past outage_max_min is not bridged', (() => {
   return wide.length === 1 && tight.length === 2;
 })());
 
+/* ---- the sound machine left running ----
+ *
+ * Switching the Hatch ON is unambiguous sleep intent. Switching it OFF is a
+ * chore, and the nanny — or a parent — forgets. The door is the witness: an
+ * open that STAYS open is him being got up, whatever the speaker is doing.
+ * The real day of 2026-08-27 is pinned below, along with the two longest
+ * genuine in-session door opens of that week, which must NOT split anything.
+ */
+check('2026-08-27 is two naps, not one 5h54m nap, when the Hatch is left on', (() => {
+  /* Recorded exactly. Hatch playing 09:51:50 straight through to 15:45:39 —
+     one session by the old rule. The door: shut at 09:51:46 (put-down), a
+     five-second check at 10:01, then OPEN at 11:34:51 and left open until
+     14:09:43 (he was up), a seven-second check at 14:11, and open again at
+     15:45:17 seconds before the Hatch finally stopped. */
+  const hatch = [
+    { t: NU(27, 9, 51, 50), s: 'playing' },
+    { t: NU(27, 15, 45, 39), s: 'idle' },
+  ];
+  const door = [
+    { t: NU(27, 9, 51, 46), s: 'off' },
+    { t: NU(27, 10, 1, 0), s: 'on' }, { t: NU(27, 10, 1, 5), s: 'off' },
+    { t: NU(27, 11, 34, 51), s: 'on' }, { t: NU(27, 14, 9, 43), s: 'off' },
+    { t: NU(27, 14, 11, 25), s: 'on' }, { t: NU(27, 14, 11, 32), s: 'off' },
+    { t: NU(27, 15, 45, 17), s: 'on' }, { t: NU(27, 15, 49, 15), s: 'off' },
+  ];
+  const out = nsess(hatch, door, { now: NU(27, 16, 0) });
+  return out.length === 2
+    && out.every((x) => x.night === false)
+    /* 1h43m and 1h36m — both inside his observed nap range of 1h26m to 1h56m */
+    && out[0].minutes === 103 && out[1].minutes === 96
+    /* the session ends WHEN THE DOOR OPENED, not when the Hatch stopped */
+    && out[0].to === NU(27, 11, 34, 51)
+    /* and the next begins when it shut again, which is the second put-down */
+    && out[1].from === NU(27, 14, 9, 43);
+})());
+
+check('getting him up is not also counted as an intervention', (() => {
+  /* The open that ends the session is the get-up. The retrieval rule already
+     drops an open within 'retrieval_window_min' of the end, and a door-ended
+     session puts its end exactly on that open — so the two agree rather than
+     the split conjuring a wake-up out of the same event. */
+  const out = nsess(
+    [{ t: NU(27, 9, 51, 50), s: 'playing' }, { t: NU(27, 15, 45, 39), s: 'idle' }],
+    [{ t: NU(27, 9, 51, 46), s: 'off' },
+      { t: NU(27, 11, 34, 51), s: 'on' }, { t: NU(27, 14, 9, 43), s: 'off' },
+      { t: NU(27, 15, 45, 17), s: 'on' }, { t: NU(27, 15, 49, 15), s: 'off' }],
+    { now: NU(27, 16, 0) });
+  return out.length === 2 && out[0].interventions === 0 && out[1].interventions === 0;
+})());
+
+check('a 21-minute propped door at 4am does not end the night', (() => {
+  /* 2026-08-25, the longest genuine in-session open of the week: in at
+     04:52:41, door held open while he was settled, out at 05:14:00 — and he
+     slept on until 07:19. A night threshold under this would call the middle
+     of the night a wake-for-the-day. */
+  const out = nsess(
+    [{ t: NU(24, 19, 4, 24), s: 'playing' }, { t: NU(25, 7, 19, 9), s: 'idle' }],
+    [{ t: NU(24, 19, 16, 10), s: 'on' }, { t: NU(24, 19, 16, 18), s: 'off' },
+      { t: NU(25, 4, 52, 41), s: 'on' }, { t: NU(25, 5, 14, 0), s: 'off' },
+      { t: NU(25, 7, 19, 2), s: 'on' }],
+    { now: NU(25, 8, 0) });
+  return out.length === 1 && out[0].night === true;
+})());
+
+check('a nine-minute visit during a nap does not end the nap', (() => {
+  /* 2026-08-23, the longest genuine in-nap open of the week: 09:26:19 to
+     09:35:44. The nap threshold is 30, so this has three times the margin. */
+  const out = nsess(
+    [{ t: NU(23, 9, 26, 8), s: 'playing' }, { t: NU(23, 11, 5, 51), s: 'idle' }],
+    [{ t: NU(23, 9, 26, 19), s: 'on' }, { t: NU(23, 9, 35, 44), s: 'off' },
+      { t: NU(23, 9, 36, 39), s: 'on' }, { t: NU(23, 9, 37, 0), s: 'off' },
+      { t: NU(23, 11, 5, 45), s: 'on' }],
+    { now: NU(23, 12, 0) });
+  return out.length === 1 && out[0].minutes === 100;
+})());
+
+check('a door standing open NOW leaves no phantom nap in progress', (() => {
+  /* The Hatch is still playing and the door has been open an hour. That is a
+     speaker running in an empty room, not a nap that started the moment
+     somebody carried him out — a zero-minute active session would be the card
+     reading a get-up as a put-down. */
+  const out = nsess(
+    [{ t: NU(27, 9, 51, 50), s: 'playing' }],
+    [{ t: NU(27, 9, 51, 46), s: 'off' }, { t: NU(27, 11, 34, 51), s: 'on' }],
+    { now: NU(27, 12, 40) });
+  return out.length === 1 && out[0].active !== true
+    && out[0].to === NU(27, 11, 34, 51);
+})());
+
+check('wake_open_min resolves per kind, then flat, then default', (() => {
+  const hatch = [{ t: NU(27, 9, 51, 50), s: 'playing' },
+    { t: NU(27, 15, 45, 39), s: 'idle' }];
+  /* a ten-minute open: under the 30-minute nap default, over a configured 5 */
+  const door = [{ t: NU(27, 9, 51, 46), s: 'off' },
+    { t: NU(27, 12, 0, 0), s: 'on' }, { t: NU(27, 12, 10, 0), s: 'off' }];
+  const dflt = nsess(hatch, door, { now: NU(27, 16, 0) });
+  const flat = nsess(hatch, door, { now: NU(27, 16, 0), wake_open_min: 5 });
+  const kind = nsess(hatch, door, { now: NU(27, 16, 0), nap: { wake_open_min: 5 } });
+  const other = nsess(hatch, door, { now: NU(27, 16, 0), night: { wake_open_min: 5 } });
+  return dflt.length === 1 && flat.length === 2 && kind.length === 2
+    && other.length === 1;
+})());
+
 check('a blind night is out of the door-derived band, like a hand-logged one', (() => {
   /* A band is a claim about his normal. A lower-bound count cannot narrow it
      and an outage-inflated stretch cannot widen it — the same argument that
