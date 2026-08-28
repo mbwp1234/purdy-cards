@@ -85,6 +85,12 @@ function psClock(t) {
  *                    start — a put-down is several trips, not one exit.
  *  - settle_max_min  The brake on that chain. Without a ceiling, a visit every
  *                    twenty minutes would make a whole night read as settling.
+ *  - wake_open_min   A door that opens and STAYS open is him being got up, and
+ *                    it ends the session whether or not anyone remembered the
+ *                    sound machine. Switching the Hatch on is unambiguous
+ *                    intent; switching it off is a chore that gets forgotten,
+ *                    and one forgotten nap read as 5h54m. See step 3b for the
+ *                    measured gap the threshold sits in.
  */
 function psNurserySessions(hatch, door, opts) {
   const o = opts || {};
@@ -120,9 +126,9 @@ function psNurserySessions(hatch, door, opts) {
      have been swallowed as the put-down and a short nap could never report an
      intervention at all. One set of thresholds cannot serve both. */
   const NAP = { min_session_min: 8, exit_window_min: 25, merge_gap_min: 5,
-    settle_max_min: 30, visit_max_min: 20 };
+    settle_max_min: 30, visit_max_min: 20, wake_open_min: 30 };
   const NIGHT = { min_session_min: 20, exit_window_min: 30, merge_gap_min: 20,
-    settle_max_min: 60, visit_max_min: 30 };
+    settle_max_min: 60, visit_max_min: 30, wake_open_min: 45 };
   const isNight = (t) => {
     const hr = new Date(t).getHours();
     return hr >= nightAfter || hr < morning;
@@ -204,19 +210,84 @@ function psNurserySessions(hatch, door, opts) {
     const outage = last ? blindFor(last.to, s.from) : 0;
     const bridged = outage > 0 && outage <= outageMax;
     if (last && !entered && (gap < rule(s.from, "merge_gap_min") || bridged)) {
+      /* Recorded as an interval, not just a total, because step 3b can split
+         this span again and the blind minutes have to follow the piece they
+         actually fell in — a lower-bound wake-up count attached to the wrong
+         half is worse than none. */
+      if (bridged) {
+        last.blind = (last.blind || 0) + outage;
+        last.holes = (last.holes || []).concat({ from: last.to, to: s.from });
+      }
       last.to = s.to;
       if (s.active) last.active = true;
       last.splits = (last.splits || 1) + 1;
-      if (bridged) last.blind = (last.blind || 0) + outage;
     } else {
       merged.push({ from: s.from, to: s.to, active: s.active, splits: 1 });
     }
   });
 
+  /* 3b — a door left OPEN ends the session, even while the Hatch plays on.
+   *
+   * The sound machine is the boundary because switching it ON is unambiguous
+   * sleep intent. Switching it OFF is not the mirror of that: it is a chore,
+   * and a chore gets forgotten. On 2026-08-27 the Hatch ran 09:51 to 15:45 and
+   * the card reported one 5h54m nap. The door says what actually happened —
+   * shut at 09:51, opened at 11:34 and left open for two and a half hours,
+   * shut again at 14:09 — which is two ordinary naps of 1h43m and 1h36m with
+   * him awake in between. The nightlight agrees, coming back on 79 seconds
+   * after that second door close. Nobody stands in a doorway for two hours.
+   *
+   * So: an open that STAYS open past `wake_open_min` is him being got up. The
+   * session ends at the moment the door opened — the same instant the
+   * retrieval rule already treats as the get-up — and a new session begins
+   * when the door next shuts, which is when he was put down again.
+   *
+   * The threshold is not a guess. Across 2026-08-19..27, 82 door-opens fell
+   * inside a session: 73 under 25 seconds, and the longest genuine one was
+   * 21.3 minutes (04:52 on 08-25, propped while settling him; he slept on
+   * until 07:19). During a NAP the longest was 9.4 minutes. Then nothing at
+   * all until 154.9. So 30 for a nap and 45 for a night sit in an empty band
+   * with a factor of three and a factor of two of margin respectively — and
+   * the night number has to be the looser of the two, because a propped door
+   * at four in the morning is a real thing and forgetting the machine at
+   * bedtime is not: every night in that window ended cleanly, door open then
+   * Hatch idle within fifteen seconds.
+   *
+   * A break that is STILL OPEN yields no trailing session. The Hatch playing
+   * to a room whose door is standing open is not a nap in progress, and
+   * reporting a zero-minute one that started the moment the door opened would
+   * be the card inventing a put-down out of a get-up. */
+  const splitAt = [];
+  merged.forEach((s) => {
+    const holes = s.holes || [];
+    const piece = (from, to, extra) => {
+      const blindIn = holes.reduce((n, u) =>
+        n + Math.max(0, Math.min(u.to, to) - Math.max(u.from, from)), 0);
+      splitAt.push(Object.assign({ from, to, splits: 1 }, extra,
+        blindIn > 0 ? { blind: blindIn } : {}));
+    };
+    let from = s.from;
+    let held = false;
+    /* Bounded rather than `while (true)`: a run of breaks can only ever be
+       as many as there are door opens, and a loop in the render path that
+       depends on data is a loop that eventually meets data it did not expect. */
+    for (let n = 0; n < realOpens.length + 1; n += 1) {
+      const brk = realOpens.find((op) => op.from > from
+        && op.from < s.to
+        && Math.min(op.to, s.to) - op.from >= rule(from, "wake_open_min"));
+      if (!brk) break;
+      piece(from, brk.from);
+      from = Math.min(brk.to, s.to);
+      held = !!brk.held;
+    }
+    if (held) return;
+    piece(from, s.to, { active: s.active, splits: s.splits || 1 });
+  });
+
   /* 4 — drop strays, never drop a run in progress; then anything before the
      commissioning cut. A session STILL RUNNING is kept regardless — it is
      happening now, whatever the cut says about history. */
-  const kept = merged
+  const kept = splitAt
     .filter((s) => s.active || s.to - s.from >= rule(s.from, "min_session_min"))
     .filter((s) => s.active || cut == null || s.from >= cut);
 
