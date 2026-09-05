@@ -5534,6 +5534,77 @@ check('a stepper cannot push woke before fell-asleep', (() => {
   return ok;
 })());
 
+/* ---- the door trips are the stepper's detents ----
+ *
+ * The judgement this sheet exists to make is WHICH TRIP ended the put-down,
+ * and the trips are drawn on its rail. A five-minute grid anchored to whenever
+ * the Hatch went on walks straight past them: the 9:08 trip on this fixture
+ * sits at minute 16, between two grid stops, so the stepper offered 9:05 and
+ * 9:10 and never the time anybody actually knows.
+ */
+check('a step that would cross a door trip stops ON it', (() => {
+  const s = editedCard;
+  s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
+  /* the trips on this fixture are at +16 (9:08), +30 (9:22) and +50 (9:42) */
+  s._napEdit = { start: s._napEdit.start, from: 20, to: 61 };
+  s._napEditStep('from', -5);
+  const snapped = s._napEdit.from;
+  const html = s._sheetHtml([]);
+  s._sheet = null; s._napEdit = null;
+  /* 15 is where the bare grid lands, and it is past the trip */
+  return snapped === 16 && /Fell asleep[\s\S]{0,400}?<b>9:08/.test(html);
+})());
+
+check('leaving a detent re-aligns to the grid rather than carrying its odd minute', (() => {
+  const s = editedCard;
+  s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
+  s._napEdit = { start: s._napEdit.start, from: 16, to: 61 };
+  s._napEditStep('from', -5);
+  const back = s._napEdit.from;
+  s._napEdit = { start: s._napEdit.start, from: 16, to: 61 };
+  s._napEditStep('from', 5);
+  const fwd = s._napEdit.from;
+  s._sheet = null; s._napEdit = null;
+  /* not 11 and 21 — one snap must not offset every step after it */
+  return back === 15 && fwd === 20;
+})());
+
+check('a step with no trip in the way is the plain five minutes it always was', (() => {
+  const s = editedCard;
+  s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
+  s._napEdit = { start: s._napEdit.start, from: 40, to: 61 };
+  s._napEditStep('from', -5);
+  const a = s._napEdit.from;
+  s._napEditStep('from', 5);
+  const b = s._napEdit.from;
+  s._sheet = null; s._napEdit = null;
+  return a === 35 && b === 40;
+})());
+
+/* The detent must be rounded exactly as the tick is DRAWN, or the window comes
+   to rest a hair off the marker it is meant to be sitting on — the card
+   contradicting itself, on one screen, about a time it snapped to on purpose. */
+check('the snapped window edge lands exactly on the drawn tick', (() => {
+  const s = editedCard;
+  s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
+  s._napEdit = { start: s._napEdit.start, from: 20, to: 61 };
+  s._napEditStep('from', -5);
+  const html = s._sheetHtml([]);
+  s._sheet = null; s._napEdit = null;
+  const tickX = [...html.matchAll(/<rect x="([\d.-]+)" y="4" width="0.64"/g)]
+    .map((m) => Number(m[1]) + 0.32);
+  const win = html.match(/<rect x="([\d.-]+)" y="9"/);
+  const fx = Number(win && win[1]);
+  /* four: the put-down trip clamped to the session start, then 9:08, 9:22, 9:42 */
+  return tickX.length === 4 && Math.abs(tickX[1] - fx) < 0.005;
+})());
+
+check('the snap reads the raw door trips, so the put-down trips are detents too',
+  /_napSnap\(s, cur, raw, d\)/.test(
+    fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8'))
+  && /pts = \(s\.doorAt \|\| \[\]\)/.test(
+    fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8')));
+
 check('the napdel arm is routed, not merely rendered',
   /k === "napdel"/.test(fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8')));
 

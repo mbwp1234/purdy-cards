@@ -1476,6 +1476,26 @@ Object.assign(PurdyShellCard.prototype, {
     return s || null;
   },
 
+  /* The door trips the rail draws are the STEPPER'S DETENTS, because they are
+     the only minutes in this sheet anybody actually knows. Five-minute steps
+     are the right grain for a judgement made from a door magnet and a speaker,
+     but the whole judgement is *which trip ended the put-down* — and a grid
+     that starts wherever the Hatch happened to go on walks straight past the
+     9:42 one and offers 9:40 and 9:45 instead. So a step that would cross a
+     marker stops ON it.
+
+     Rounded exactly as the tick is drawn, or the block would come to rest a
+     hair off a marker it is meant to be sitting on. */
+  _napSnap(s, cur, target, d) {
+    const pts = (s.doorAt || []).map((t) => Math.round((t - s.from) / 60000))
+      .filter((m) => m >= d.lo && m <= d.hi);
+    const between = target > cur
+      ? pts.filter((m) => m > cur && m < target)
+      : pts.filter((m) => m < cur && m > target);
+    if (!between.length) return null;
+    return target > cur ? Math.min(...between) : Math.max(...between);
+  },
+
   /* One step is five minutes. A finer step would be false precision — the
      inputs are a door magnet and a speaker, and nobody remembers the minute. */
   _napEditStep(field, delta) {
@@ -1483,8 +1503,15 @@ Object.assign(PurdyShellCard.prototype, {
     const s = this._napEditSpan();
     if (!e || !s) return;
     const d = this._napEditDefaults(s);
+    const cur = e[field];
+    /* Leaving a detent RE-ALIGNS to the grid rather than carrying the marker's
+       odd minute along with it — otherwise one snap offsets every step after
+       it, and the sheet spends the rest of the correction on :42s. */
+    const grid = delta > 0 ? Math.ceil(cur / 5) * 5 : Math.floor(cur / 5) * 5;
+    const raw = Math.max(d.lo, Math.min(d.hi, grid === cur ? cur + delta : grid));
+    const snap = this._napSnap(s, cur, raw, d);
     const next = Object.assign({}, e);
-    next[field] = Math.max(d.lo, Math.min(d.hi, e[field] + delta));
+    next[field] = snap == null ? raw : snap;
     /* Woke can never precede fell-asleep. Pushing one past the other carries
        the other with it rather than refusing the tap, so the control keeps
        answering the thumb. */
