@@ -105,8 +105,8 @@ const PS_STYLES = `
         background:
           radial-gradient(130% 52% at 78% -10%, rgba(94,168,216,.34), transparent 64%),
           radial-gradient(110% 40% at 8% -4%, rgba(86,212,228,.20), transparent 60%),
-          radial-gradient(140% 34% at 50% 100%, rgba(62,127,184,.26), transparent 72%),
-          linear-gradient(178deg, #0A101C 0%, #080C15 52%, #0A111C 100%);
+          radial-gradient(140% 30% at 50% 86%, rgba(62,127,184,.28), transparent 68%),
+          linear-gradient(178deg, #0A101C 0%, #080C15 52%, #0B121E 86%, #080C15 100%);
       }
       /* The hem. Every sky puts its warmest colour at the BOTTOM, and the only
          thing covering that strip was the DOCK's fade — a layer anchored to
@@ -116,33 +116,38 @@ const PS_STYLES = `
          full scroll the dock lands that far up and the dusk horizon paints
          raw underneath it as an orange smear across the foot of the page.
          So the ground carries its own hem, which cannot desync from the sky
-         because it IS the sky's own node. It is entirely inside the dock's
-         188px fade in the normal case, so it changes nothing where the dock
-         already covers — it only stops the strip below the dock going warm. */
+         because it IS the sky's own node.
+
+         It is SHORTER than the horizon is high, and that is the point. The
+         first version was 150px of fade over a warm band sitting at 100-108%,
+         which is a layer built to hide the very thing the sky is for. Now the
+         horizon sits at ~86% — behind the dock and the column's foot, where it
+         is meant to be read — and the hem only has to keep the last ~90px cool
+         so the strip HA leaves under the card has nothing warm to smear. */
       .ps-ground::before {
-        content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 150px;
-        background: linear-gradient(180deg, transparent, rgba(6,7,14,.26) 58%, rgba(6,7,14,.60));
+        content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 92px;
+        background: linear-gradient(180deg, transparent, rgba(6,7,14,.42) 40%, rgba(6,7,14,.86));
       }
       .ps-ground.sky-dawn {
         background:
           radial-gradient(120% 44% at 70% -8%, rgba(122,100,255,.28), transparent 62%),
-          radial-gradient(150% 52% at 50% 100%, rgba(247,178,103,.34), transparent 70%),
-          radial-gradient(110% 26% at 50% 98%, rgba(255,214,150,.24), transparent 74%),
-          linear-gradient(178deg, #090B16 0%, #0A0C14 44%, #171017 100%);
+          radial-gradient(150% 34% at 50% 86%, rgba(247,178,103,.36), transparent 66%),
+          radial-gradient(110% 18% at 50% 82%, rgba(255,214,150,.26), transparent 70%),
+          linear-gradient(178deg, #090B16 0%, #0A0C14 44%, #140F16 88%, #0A0910 100%);
       }
       .ps-ground.sky-dusk {
         background:
           radial-gradient(120% 46% at 78% -6%, rgba(139,124,255,.40), transparent 62%),
           radial-gradient(100% 38% at 12% -2%, rgba(86,212,228,.18), transparent 60%),
-          radial-gradient(140% 46% at 50% 100%, rgba(255,120,80,.26), transparent 68%),
-          radial-gradient(120% 28% at 50% 97%, rgba(255,158,94,.26), transparent 72%),
-          linear-gradient(178deg, #0A0C18 0%, #07080F 46%, #0B0812 78%, #120A10 100%);
+          radial-gradient(140% 36% at 50% 86%, rgba(255,120,80,.28), transparent 64%),
+          radial-gradient(120% 20% at 50% 82%, rgba(255,158,94,.28), transparent 68%),
+          linear-gradient(178deg, #0A0C18 0%, #07080F 46%, #0F0912 82%, #07070D 100%);
       }
       .ps-ground.sky-night {
         background:
           radial-gradient(120% 40% at 80% -8%, rgba(96,84,200,.26), transparent 60%),
-          radial-gradient(120% 30% at 50% 100%, rgba(70,110,140,.18), transparent 74%),
-          linear-gradient(178deg, #05060E 0%, #04050B 55%, #060810 100%);
+          radial-gradient(120% 26% at 50% 86%, rgba(70,110,140,.20), transparent 70%),
+          linear-gradient(178deg, #05060E 0%, #04050B 55%, #070911 86%, #04050A 100%);
       }
       /* A faint grain of stars, dusk and night only — top 60% of the screen,
          drawn as a pseudo so the ground stays one node the renderer keys. */
