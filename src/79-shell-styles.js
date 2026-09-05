@@ -103,9 +103,9 @@ const PS_STYLES = `
       .ps-ground {
         position: fixed; inset: 0; z-index: -1; pointer-events: none;
         background:
-          radial-gradient(130% 52% at 78% -10%, rgba(94,168,216,.30), transparent 64%),
-          radial-gradient(110% 40% at 8% -4%, rgba(86,212,228,.18), transparent 60%),
-          radial-gradient(140% 26% at 50% 106%, rgba(62,127,184,.22), transparent 70%),
+          radial-gradient(130% 52% at 78% -10%, rgba(94,168,216,.34), transparent 64%),
+          radial-gradient(110% 40% at 8% -4%, rgba(86,212,228,.20), transparent 60%),
+          radial-gradient(140% 34% at 50% 100%, rgba(62,127,184,.26), transparent 72%),
           linear-gradient(178deg, #0A101C 0%, #080C15 52%, #0A111C 100%);
       }
       /* The hem. Every sky puts its warmest colour at the BOTTOM, and the only
@@ -121,27 +121,27 @@ const PS_STYLES = `
          already covers — it only stops the strip below the dock going warm. */
       .ps-ground::before {
         content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 150px;
-        background: linear-gradient(180deg, transparent, rgba(6,7,14,.55) 58%, rgba(6,7,14,.88));
+        background: linear-gradient(180deg, transparent, rgba(6,7,14,.26) 58%, rgba(6,7,14,.60));
       }
       .ps-ground.sky-dawn {
         background:
-          radial-gradient(120% 44% at 70% -8%, rgba(122,100,255,.22), transparent 62%),
-          radial-gradient(150% 40% at 50% 108%, rgba(247,178,103,.30), transparent 68%),
-          radial-gradient(110% 20% at 50% 104%, rgba(255,214,150,.20), transparent 72%),
+          radial-gradient(120% 44% at 70% -8%, rgba(122,100,255,.28), transparent 62%),
+          radial-gradient(150% 52% at 50% 100%, rgba(247,178,103,.34), transparent 70%),
+          radial-gradient(110% 26% at 50% 98%, rgba(255,214,150,.24), transparent 74%),
           linear-gradient(178deg, #090B16 0%, #0A0C14 44%, #171017 100%);
       }
       .ps-ground.sky-dusk {
         background:
-          radial-gradient(120% 46% at 78% -6%, rgba(139,124,255,.34), transparent 62%),
-          radial-gradient(100% 38% at 12% -2%, rgba(86,212,228,.16), transparent 60%),
-          radial-gradient(140% 34% at 50% 106%, rgba(255,120,80,.20), transparent 66%),
-          radial-gradient(120% 22% at 50% 103%, rgba(255,158,94,.22), transparent 70%),
+          radial-gradient(120% 46% at 78% -6%, rgba(139,124,255,.40), transparent 62%),
+          radial-gradient(100% 38% at 12% -2%, rgba(86,212,228,.18), transparent 60%),
+          radial-gradient(140% 46% at 50% 100%, rgba(255,120,80,.26), transparent 68%),
+          radial-gradient(120% 28% at 50% 97%, rgba(255,158,94,.26), transparent 72%),
           linear-gradient(178deg, #0A0C18 0%, #07080F 46%, #0B0812 78%, #120A10 100%);
       }
       .ps-ground.sky-night {
         background:
-          radial-gradient(120% 40% at 80% -8%, rgba(96,84,200,.20), transparent 60%),
-          radial-gradient(120% 22% at 50% 105%, rgba(70,110,140,.14), transparent 72%),
+          radial-gradient(120% 40% at 80% -8%, rgba(96,84,200,.26), transparent 60%),
+          radial-gradient(120% 30% at 50% 100%, rgba(70,110,140,.18), transparent 74%),
           linear-gradient(178deg, #05060E 0%, #04050B 55%, #060810 100%);
       }
       /* A faint grain of stars, dusk and night only — top 60% of the screen,
@@ -302,11 +302,11 @@ const PS_STYLES = `
       .ps-col {
         position: relative;
         border-radius: var(--pc-r-2xl); overflow: clip;
-        background: linear-gradient(180deg, rgba(16,20,34,.62), rgba(10,12,22,.55));
-        border: 1px solid rgba(255,255,255,.09);
-        box-shadow: 0 24px 60px -18px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.09);
-        backdrop-filter: blur(26px) saturate(1.25);
-        -webkit-backdrop-filter: blur(26px) saturate(1.25);
+        background: linear-gradient(180deg, rgba(14,18,32,.34), rgba(9,11,20,.28));
+        border: 1px solid rgba(255,255,255,.10);
+        box-shadow: 0 24px 60px -18px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.10);
+        backdrop-filter: blur(30px) saturate(1.5);
+        -webkit-backdrop-filter: blur(30px) saturate(1.5);
       }
       /* the sky reflecting on the top of the glass */
       .ps-col::before {
@@ -1286,10 +1286,10 @@ const PS_STYLES = `
         bottom: calc(-12px - env(safe-area-inset-bottom, 0px));
         background:
           radial-gradient(120% 90% at 50% 118%, var(--ps-sky-glow), transparent 70%),
-          linear-gradient(180deg, transparent, rgba(6,7,14,.72) 46%, rgba(6,7,14,.94)); }
+          linear-gradient(180deg, transparent, rgba(6,7,14,.38) 46%, rgba(6,7,14,.68)); }
       .ps-mini { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--pc-r-xl);
-                 background: var(--pc-fill-2); border: 1px solid var(--pc-edge); cursor: pointer;
-                 backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
+                 background: rgba(14,17,30,.42); border: 1px solid var(--pc-edge); cursor: pointer;
+                 backdrop-filter: blur(28px) saturate(1.5); -webkit-backdrop-filter: blur(28px) saturate(1.5);
                  box-shadow: 0 12px 30px -8px rgba(0,0,0,.6); }
       .ps-mart { width: 32px; height: 32px; border-radius: var(--pc-r-sm); background: var(--pc-fill-2);
                  display: grid; place-items: center; color: var(--ps-dim); flex: 0 0 auto; overflow: hidden; }
@@ -1302,10 +1302,10 @@ const PS_STYLES = `
       /* the lit shelf — the strongest chrome on the screen */
       .ps-dock { display: flex; align-items: center; justify-content: space-between; gap: 2px;
                  padding: 9px 10px; border-radius: var(--pc-r-2xl);
-                 background: linear-gradient(180deg, rgba(14,17,30,.78), rgba(8,10,18,.85));
-                 border: 1px solid rgba(255,255,255,.10);
-                 backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3);
-                 box-shadow: 0 18px 40px -14px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.08); }
+                 background: linear-gradient(180deg, rgba(14,17,30,.42), rgba(8,10,18,.50));
+                 border: 1px solid rgba(255,255,255,.12);
+                 backdrop-filter: blur(28px) saturate(1.5); -webkit-backdrop-filter: blur(28px) saturate(1.5);
+                 box-shadow: 0 18px 40px -14px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.10); }
       .ps-db { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
                padding: 5px 0; border-radius: var(--pc-r-lg); color: var(--ps-dim); position: relative; }
       .ps-db ha-icon { --mdc-icon-size: 20px; }
