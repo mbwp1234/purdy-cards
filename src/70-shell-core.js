@@ -882,6 +882,7 @@ class PurdyShellCard extends PcBaseCard {
     this._bindLights();
     this._bindCrew();
     this._bindNapEdit();
+    this._bindNapOpen();
     this._bindPeople();
     this._bindNurseryLog();
     this._bindSystems();

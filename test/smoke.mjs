@@ -5455,6 +5455,63 @@ check('the rows are long-press targets only where there is somewhere to write', 
     && !/data-napedit=/.test(without) && !/Press and hold/.test(without);
 })());
 
+/* A ring IS a nap. Tapping one opened the Hatch's more-info — a media player
+   dialog, in answer to a tap on "1h 19m" — so the destination is now the
+   session, and the hold keeps the sound machine reachable rather than
+   orphaning it. */
+check('a ring opens its own session, not the sound machine', (() => {
+  const sec = editedCard._config.sections[0];
+  const html = editedCard._secNursery(sec);
+  const rings = [...html.matchAll(/<div class="ps-ring"[^>]*>/g)].map((m) => m[0]);
+  const opens = [...html.matchAll(/data-napopen="(\d+)"/g)].map((m) => Number(m[1]));
+  const naps = editedCard._nurserySessions(sec);
+  return rings.length === 2
+    /* not one of them still leads to the media player dialog */
+    && !/<div class="ps-ring"[^>]*data-info=/.test(html)
+    /* the hold still has somewhere to go, on every ring */
+    && rings.every((r) => /data-entity="media_player\.h"/.test(r))
+    /* one nap today and no night yet: the nap ring names the nap, and the
+       night ring — which has no session behind it — carries no tap at all */
+    && opens.length === 1 && opens[0] === naps[0].from;
+})());
+
+/* The night ring is the one that was tapped most and the one the media player
+   made least sense on. */
+check('the night ring opens the night', (() => {
+  const card = outwardCard('15~650');
+  const html = card._secNursery(card._config.sections[0]);
+  const night = card._nurserySessions(card._config.sections[0])[0];
+  return new RegExp(`<div class="ps-ring" style="width:120px;height:120px"`
+    + `[^>]*data-napopen="${night.from}"`).test(html);
+})());
+
+check('a ring with nowhere to write carries no tap at all', (() => {
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
+  s._testNow = NT(12, 0);
+  s._hass = editedCard._hass;
+  s._nursery = editedCard._nursery;
+  return !/data-napopen=/.test(s._secNursery(s._config.sections[0]));
+})());
+
+check('the tap opens the sheet on the session the ring names', (() => {
+  const sec = editedCard._config.sections[0];
+  const html = editedCard._secNursery(sec);
+  const start = Number(html.match(/data-napopen="(\d+)"/)[1]);
+  editedCard._openNapEdit(start);
+  const open = editedCard._sheet === 'napedit' && editedCard._napEdit
+    && editedCard._napEdit.start === start;
+  editedCard._sheet = null; editedCard._napEdit = null;
+  return open;
+})());
+
+check('_bindNapOpen is CALLED, not merely defined',
+  /this\._bindNapOpen\(\);/.test(
+    fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8'))
+  && /_bindNapOpen\(\) \{/.test(
+    fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8')));
+
 check('the correction sheet draws the session, both steppers and the door trips', (() => {
   const s = editedCard;
   s._openNapEdit(s._nurserySessions(s._config.sections[0])[0].from);
