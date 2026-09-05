@@ -435,7 +435,9 @@ const PS_STYLES = `
       /* Correcting a session. The press-and-hold target must not also be a
          text selection or a callout target, or a long press on iOS raises the
          magnifier over the row it is meant to open. */
-      [data-napedit] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+      [data-napedit], [data-napopen] { -webkit-touch-callout: none; -webkit-user-select: none;
+        user-select: none; }
+      [data-napopen] { cursor: pointer; }
       /* A corrected reading is marked wherever it shows. It is deliberately the
          accent colour rather than a warning one: an edit is not a fault, it is
          a fact the sensors could not reach. */

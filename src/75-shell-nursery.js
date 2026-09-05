@@ -1411,9 +1411,14 @@ Object.assign(PurdyShellCard.prototype, {
 
   _openNapEdit(start) {
     const sec = this._nurserySection();
-    if (!sec || !this._napEditStore(sec)) return;
+    if (!sec) return;
     const s = this._nurserySessions(sec).find((x) => x.from === start);
     if (!s) return;
+    /* A hand-logged session is corrected and removed in its OWN store, so the
+       corrections helper is not what gates it. Asking for the wrong one here
+       was invisible while the only way in was a long press on a row the same
+       `editable` flag drew — a ring is drawn for every nap there is. */
+    if (!(s.manual ? this._manualStore(sec) : this._napEditStore(sec))) return;
     /* The editor holds offsets in minutes from the session start, which is what
        the store holds too — so Save is a write and not a second derivation. */
     const d = this._napEditDefaults(s);
@@ -1685,6 +1690,44 @@ Object.assign(PurdyShellCard.prototype, {
      light row, so there is exactly one press-and-hold on the card.
      Eight pixels of movement cancels it — a hold that starts a scroll is a
      scroll. */
+  /* The rings are the naps and the night as OBJECTS, not as a list you scroll
+     past, so here the gesture is a plain tap — and what it opens is the
+     session it draws. It used to open the Hatch's more-info: a media player
+     dialog, answering a question nobody asked of a ring that says "1h 19m".
+
+     The hold keeps that route rather than orphaning it. Choosing a sound and
+     setting the volume live nowhere else on this card, and the section's own
+     button only starts and stops. Same 380ms and the same tap/hold split the
+     avatars use, for the same reason. */
+  _bindNapOpen() {
+    this._each("[data-napopen]", (el) => {
+      let hold = null, x0 = 0, y0 = 0, fired = false;
+      const cancel = () => { if (hold) { clearTimeout(hold); hold = null; } };
+      el.addEventListener("pointerdown", (ev) => {
+        x0 = ev.clientX; y0 = ev.clientY; fired = false;
+        cancel();
+        if (!el.dataset.entity) return;
+        hold = setTimeout(() => {
+          hold = null; fired = true;
+          pcHaptic("medium");
+          pcMoreInfo(this, el.dataset.entity);
+        }, 380);
+      });
+      el.addEventListener("pointermove", (ev) => {
+        if (hold && (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8)) cancel();
+      });
+      el.addEventListener("pointerup", cancel);
+      el.addEventListener("pointercancel", cancel);
+      el.addEventListener("click", (ev) => {
+        if (fired) { fired = false; return; }
+        ev.stopPropagation();
+        pcHaptic("light");
+        this._openNapEdit(+el.dataset.napopen);
+      });
+      el.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    });
+  },
+
   _bindNapEdit() {
     this._each("[data-napedit]", (el) => {
       let hold = null, x0 = 0, y0 = 0;
@@ -2058,6 +2101,11 @@ Object.assign(PurdyShellCard.prototype, {
     /* A corrected figure must never look like a measured one — the same rule
        that keeps a zero apart from a missing reading, one level up. Every
        surface that can show an edited session carries the mark. */
+    /* Which store answers depends on the session: a hand-logged one is
+       corrected in the manual store, a derived one in the corrections store.
+       One flag for both drew a gesture on every session an install had only
+       half the helpers for, and the tap did nothing at all. */
+    const canEdit = (s) => !!(s && s.manual ? this._manualStore(sec) : this._napEditStore(sec));
     const editable = !!this._napEditStore(sec) || !!this._manualStore(sec);
     /* Two marks, one rule. A CORRECTED figure is a filled dot; a HAND-LOGGED
        one is the same dot hollowed out. Both are the accent rather than a
@@ -2193,7 +2241,8 @@ Object.assign(PurdyShellCard.prototype, {
       const val = psHM(s.asleepMinutes).replace(" ", "");
       const fit = val.length >= 5 ? " sm5" : val.length === 4 ? " sm4" : "";
       return `<div class="ps-napr">
-          <div class="ps-ring" style="width:${ringPx}px;height:${ringPx}px" data-info="${psEsc(sec.hatch)}">
+          <div class="ps-ring" style="width:${ringPx}px;height:${ringPx}px"${
+  canEdit(s) ? ` data-napopen="${s.from}"` : ""} data-entity="${psEsc(sec.hatch)}">
             ${this._ringSvg(ringPx, stroke, [[s.asleepMinutes / napTarget, col]], null)}
             <div class="ps-rv sm${fit}"><b>${psEsc(val)}</b></div>
             ${s.manual ? `<span class="ps-edd ring hand" title="Hand-logged"></span>`
@@ -2264,7 +2313,9 @@ Object.assign(PurdyShellCard.prototype, {
     return `
       ${this._head(sec, `<span class="ps-chip ${chipCls}"><span class="ps-dot"></span>${psEsc(chipTxt)}</span>`)}
       <div class="ps-jtop">
-        <div class="ps-ring" style="width:120px;height:120px" data-info="${psEsc(sec.hatch)}">
+        <div class="ps-ring" style="width:120px;height:120px"${
+  !nightNoData && canEdit(nightSession) ? ` data-napopen="${nightSession.from}"` : ""
+} data-entity="${psEsc(sec.hatch)}">
           ${ring}
           <div class="ps-rv">${nightNoData
             ? `<b class="ps-nodata">—</b><small>${loaded ? "NO NIGHT YET" : "LOADING"}</small>`
@@ -2334,7 +2385,7 @@ Object.assign(PurdyShellCard.prototype, {
               session the middle step is "fell asleep", not "left him": a
               person typed that time in, so the lower-bound hedge the
               derivation needs would be a hedge about their own answer. */""}
-        <div class="ps-jstory"${editable ? ` data-napedit="${nightSession.from}"` : ""}>
+        <div class="ps-jstory"${canEdit(nightSession) ? ` data-napedit="${nightSession.from}"` : ""}>
           ${nightSession.settledAt < nightSession.from
     ? `${edd(nightSession)}Asleep <b>${psClock(nightSession.settledAt)}</b>
           <i>→</i> put down <b>${psClock(nightSession.from)}</b>`
@@ -2368,7 +2419,7 @@ Object.assign(PurdyShellCard.prototype, {
         ${this._nurseryDayRail(sessions, todayKey, stats.bedMean)}
         <div class="ps-jrs">
           ${todayNaps.length ? todayNaps.map((s) => `
-            <div class="ps-jr"${editable ? ` data-napedit="${s.from}"` : ""}>
+            <div class="ps-jr"${canEdit(s) ? ` data-napedit="${s.from}"` : ""}>
               <span class="ps-l">${edd(s)}${psClock(s.from)} – ${s.active ? "now" : psClock(psWokeAt(s))}</span>
               <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " so far" : ""}</span>
               <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
@@ -2388,7 +2439,7 @@ Object.assign(PurdyShellCard.prototype, {
               without the store the gesture does nothing, and inviting it would
               be worse than not offering it. */""}
         ${editable && (todayNaps.length || nightSession)
-          ? `<div class="ps-note">Press and hold a session to correct when he actually slept.</div>` : ""}
+          ? `<div class="ps-note">Press and hold a row to correct when he actually slept — or tap a ring.</div>` : ""}
       </div>`;
   },
 });
