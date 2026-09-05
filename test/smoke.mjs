@@ -1127,7 +1127,7 @@ check('every sky band names its own horizon glow', (() => {
   return bands.length === 4 && bands.every((b) => /^rgba\(/.test(glow[b] || '')) &&
     new Set(bands.map((b) => glow[b])).size === 4 &&
     /--ps-sky-glow/.test(shs) &&
-    /radial-gradient\(120% 90% at 50% 118%, var\(--ps-sky-glow\)/.test(shs);
+    /radial-gradient\([^)]*var\(--ps-sky-glow\)/.test(shs);
 })());
 
 /* Modes are an instrument panel, not a window: they take the day sky whatever
@@ -1167,7 +1167,32 @@ check('the dock active slot is an aurora underline, not a filled pill',
 check('the dock horizon glow cannot be measured or tapped', (() => {
   const m = shs.replace(/\n/g, ' ').match(/\.ps-dockwrap::before \{[^}]*\}/);
   return !!m && /position: absolute/.test(m[0]) && /pointer-events: none/.test(m[0]) &&
-    /radial-gradient\(120% 90% at 50% 118%/.test(m[0]);
+    /radial-gradient\([^)]*var\(--ps-sky-glow\)/.test(m[0]);
+})());
+/* The fade behind the dock must not read as a BOX. It is wider than the card
+   and is therefore cut by overflow-x: clip, and its foot sits exactly on the
+   card's bottom padding edge — so if it is still opaque when it gets to either
+   one, the dock ends up as its own fill on top of a second dark background.
+   Assert it dissolves rather than ending: transparent at the bottom of the
+   linear ramp, and masked at the left and right. */
+check('the dock fade dissolves on every side rather than ending at an edge', (() => {
+  const m = shs.replace(/\n/g, ' ').match(/\.ps-dockwrap::before \{[^}]*\}/);
+  if (!m) return false;
+  const lin = m[0].match(/linear-gradient\(180deg,[^;]*?\)(?=;|\s*;)/);
+  return !!lin && /transparent\s*\)$/.test(lin[0]) &&
+    /mask-image: linear-gradient\(90deg, transparent,/.test(m[0]) &&
+    /-webkit-mask-image:/.test(m[0]);
+})());
+/* The column is glass over the horizon and still has to be readable. --ps-dim
+   measured 3.92:1 over the ember at the column's foot against 5.40:1
+   mid-column, so the foot carries a scrim — sized in PIXELS, because the
+   column's height changes with every expansion and a percentage would spread
+   it over a third of an open column. */
+check('the column foot scrim is length-based, not a percentage', (() => {
+  const m = shs.replace(/\n/g, ' ').match(/\.ps-col \{[^}]*\}/);
+  if (!m) return false;
+  const scrim = m[0].match(/linear-gradient\(0deg, rgba\([^)]*\), transparent (\d+)(px|%)\)/);
+  return !!scrim && scrim[2] === 'px' && Number(scrim[1]) >= 80;
 })());
 /* Lever 06: nothing the Skyline pass introduced may animate. A blanket ban on
    the whole sheet would be wrong — the chevron's rotate predates this and is
