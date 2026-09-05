@@ -1907,6 +1907,55 @@ check('an identical slot write is skipped', slot.writes === w1);
 shrec._patch('ps-stat', '<b>y</b>');
 check('a differing slot write lands', slot.writes === w1 + 1 && slot._html === '<b>y</b>');
 
+/* The sheet slot is the one that has to give something back after the write.
+   `.ps-sheet` IS the scroll container, so replacing the slot's innerHTML puts
+   an open sheet back at the top — which is how arming the deep clean scrolled
+   its own confirming tap off the screen. */
+const mkSheetSlot = () => {
+  const sl = new MiniNode();
+  let sheet = null;
+  Object.defineProperty(sl, 'innerHTML', {
+    get() { return this._html; },
+    /* A fresh node each write, exactly as innerHTML gives one. */
+    set(v) { this._html = v; this.writes++; sheet = v ? { scrollTop: 0 } : null; },
+  });
+  sl.querySelector = (sel) => (sel === '.ps-sheet' ? sheet : null);
+  return sl;
+};
+const shsl = mkSheetSlot();
+shrec.shadowRoot = { getElementById: (id) => (id === 'ps-sheetslot' ? shsl : null), querySelectorAll: () => [] };
+shrec._sheet = 'crew';
+shrec._patchSheet('<div class="ps-sheet">A</div>');
+const w2 = shsl.writes;
+shrec._patchSheet('<div class="ps-sheet">A</div>');
+check('an identical sheet write is skipped', shsl.writes === w2);
+shsl.querySelector('.ps-sheet').scrollTop = 240;
+shrec._patchSheet('<div class="ps-sheet">B</div>');
+check('the sheet keeps its scroll position across a patch',
+  shsl.writes === w2 + 1 && shsl.querySelector('.ps-sheet').scrollTop === 240);
+shsl.querySelector('.ps-sheet').scrollTop = 180;
+shrec._sheet = 'lights';
+shrec._patchSheet('<div class="ps-sheet">C</div>');
+check('a DIFFERENT sheet opens at the top, not at its predecessor\'s offset',
+  shsl.querySelector('.ps-sheet').scrollTop === 0);
+shrec._sheet = null;
+shrec._patchSheet('');
+check('closing the sheet does not throw looking for a node that is gone',
+  shsl.querySelector('.ps-sheet') === null);
+
+/* A method can be complete and never called. There are FOUR render paths that
+   write the sheet slot — the column, Systems, Health and the desk — and one of
+   them still calling _patch directly would keep the bug alive on that surface
+   with everything else fixed. */
+check('every render path writes the sheet through _patchSheet', (() => {
+  const files = ['70-shell-core.js', '77-shell-systems.js', '78c-shell-health.js', '80-desk-core.js'];
+  return files.every((f) => {
+    const body = fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf8');
+    if (/_patch\("p[sd]-sheetslot", this\._sheetHtml/.test(body)) return false;
+    return body.includes('this._patchSheet(this._sheetHtml(faults));');
+  });
+})());
+
 globalThis.document = savedDoc;
 /* A horizontal scroller inside a vertical page always loses the axis lock, so
    there should be none left: everything wraps or grids instead. */

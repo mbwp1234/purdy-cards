@@ -313,7 +313,7 @@ Object.assign(PurdyShellCard.prototype, {
        and an unchanged page is left entirely alone between state changes. */
     this._patchSections([{ key: "sys-" + page.key, html, open: false, cls: "ps-sypage" }]);
 
-    this._patch("ps-sheetslot", this._sheetHtml(faults));
+    this._patchSheet(this._sheetHtml(faults));
     this._mountSheetCard();
 
     const pages = this._sysPages();

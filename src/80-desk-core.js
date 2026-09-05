@@ -440,7 +440,7 @@ class PurdyDeskCard extends PcBaseCard {
     }
 
     this._patch("pd-dock", this._dockHtml());
-    this._patch("pd-sheetslot", this._sheetHtml(faults));
+    this._patchSheet(this._sheetHtml(faults));
     this._mountSheetCard();
 
     this._bind();
@@ -606,6 +606,26 @@ class PurdyDeskCard extends PcBaseCard {
    * the name twice, the retry without `bare` for a card entitled not to know
    * our conventions, and an in-place error instead of a throw out of render.
    */
+  /* The sheet slot, with the sheet body's scroll offset carried across.
+   *
+   * `.pd-sheet-body` is a scroll container inside a slot that _patch replaces
+   * wholesale, so any state change inside an open sheet threw it back to the
+   * top. The phone had it worse and it was caught there first — a two-tap arm
+   * rewrites its own button's label, so arming a control near the bottom of a
+   * tall sheet scrolled the confirming tap off the screen. Scroll offset is
+   * state the markup does not carry; only within the SAME sheet, or opening a
+   * different one would land at a stranger's offset. */
+  _patchSheet(html) {
+    const slot = this.shadowRoot.getElementById("pd-sheetslot");
+    if (!slot || slot._psHtml === html) return;
+    const old = slot.querySelector(".pd-sheet-body");
+    const top = old && slot._psSheetKey === this._sheet ? old.scrollTop : 0;
+    this._patch("pd-sheetslot", html);
+    slot._psSheetKey = this._sheet;
+    const next = top ? slot.querySelector(".pd-sheet-body") : null;
+    if (next) next.scrollTop = top;
+  }
+
   _sheetHtml(faults) {
     if (!this._sheet) return "";
     const spec = (this._config.sheets || {})[this._sheet];
