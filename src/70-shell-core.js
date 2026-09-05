@@ -633,6 +633,32 @@ class PurdyShellCard extends PcBaseCard {
     el.innerHTML = html;
   }
 
+  /* The sheet slot, with the sheet's own scroll position carried across.
+   *
+   * `.ps-sheet` IS the scroll container and _patch replaces it wholesale, so
+   * every state change inside a sheet threw it back to the top — reported as
+   * "when you click deep clean it scrolls up and away from the confirmation
+   * button", which is the worst version of it: the two-tap arm rewrites the
+   * button's own label, so arming a control near the bottom of a tall sheet
+   * scrolled the second tap off the screen. Scroll offset is state the markup
+   * does not carry, so nothing else was going to restore it.
+   *
+   * Only within ONE sheet: opening a different sheet at the previous one's
+   * offset would be a worse bug than the one being fixed, and the media sheet
+   * counts its two faces as two sheets for the same reason _mountSheetCard
+   * does. */
+  _patchSheet(html) {
+    const slot = this.shadowRoot.getElementById("ps-sheetslot");
+    if (!slot || slot._psHtml === html) return;
+    const key = this._sheet === "media" ? `media:${this._mediaFace()}` : this._sheet;
+    const old = slot.querySelector(".ps-sheet");
+    const top = old && slot._psSheetKey === key ? old.scrollTop : 0;
+    this._patch("ps-sheetslot", html);
+    slot._psSheetKey = key;
+    const next = top ? slot.querySelector(".ps-sheet") : null;
+    if (next) next.scrollTop = top;
+  }
+
   /* Sections are keyed so a self-hiding one can come and go without disturbing
      its neighbours, and so an unchanged section is left entirely alone. */
   _patchSections(list) {
@@ -870,7 +896,7 @@ class PurdyShellCard extends PcBaseCard {
 
     this._patchSections(sections);
 
-    this._patch("ps-sheetslot", this._sheetHtml(faults));
+    this._patchSheet(this._sheetHtml(faults));
     this._mountSheetCard();
 
     this._patch("ps-dockwrap", `${this._miniHtml()}<div class="ps-dock">${dock}</div>`);

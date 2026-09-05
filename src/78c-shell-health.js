@@ -822,7 +822,7 @@ Object.assign(PurdyShellCard.prototype, {
        switching pages swaps the node rather than rewriting a shared one. */
     this._patchSections([{ key: "hl-" + page.key, html, open: false, cls: "ps-sypage" }]);
 
-    this._patch("ps-sheetslot", this._sheetHtml(faults));
+    this._patchSheet(this._sheetHtml(faults));
     this._mountSheetCard();
 
     const pages = this._hlPages();
