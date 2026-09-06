@@ -460,19 +460,12 @@ const PS_STYLES = `
       .ps-edd { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
                 background: var(--ps-cool); margin-right: 6px; vertical-align: middle; }
       .ps-edd.ring { position: absolute; top: 1px; right: 1px; margin: 0; }
-      .ps-edd.wk { position: absolute; left: 50%; margin: 0; transform: translateX(-50%); }
       /* Hand-logged: the same dot, hollowed out. Same hue on purpose — neither
          a correction nor a log is a fault, and a card already spending five
          semantic colours does not need a sixth to say "a person put this here".
          Hollow reads as "nothing measured inside this" on its own. */
       .ps-edd.hand { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ps-cool); }
 
-      /* A night he spent somewhere else. Quieter than the hatch a missing night
-         gets, because it is not a fault: the frame says the slot exists and is
-         deliberately empty, where the hatch says something should be here. */
-      .ps-jwb.away i { top: 0; height: auto; border-radius: var(--pc-r-xs);
-                       border: 1px dashed rgba(255,255,255,.055); background: none; }
-      .ps-jwx span.away { color: var(--ps-cool); opacity: .75; }
 
       /* The log sheet. Start/Stop on top, the past-session steppers under it,
          and the away days last — the order they are reached for. */
@@ -492,41 +485,114 @@ const PS_STYLES = `
       .ps-jlday.on { background: rgba(96,208,255,.14); }
       .ps-jlday.on b { color: var(--ps-cool); }
 
-      /* The week of nights. A column per night, HIS OWN band behind them, and a
-         hatched slot where a night is missing — a short column reads as a bad
-         night at a glance, so a zero here is the most convincing lie the card
-         could tell. */
-      .ps-jwk { position: relative; height: 66px; }
-      /* The band is NEUTRAL, not another purple. Tinted with the bars' own hue
-         it read as one more bar lying on its side, and the week — the thing the
-         plot is for — came out muddy at a glance. His normal is context; the
-         nights are the data, and only one of them gets the colour. */
-      .ps-jwband { position: absolute; left: 0; right: 0; background: rgba(255,255,255,.045);
-                   border-top: 1px solid rgba(255,255,255,.14);
-                   border-bottom: 1px solid rgba(255,255,255,.14); }
-      .ps-jwavg { position: absolute; left: 0; right: 0; height: 1px; background: rgba(255,255,255,.30); }
-      .ps-jwbars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 6px; }
-      .ps-jwb { flex: 1; position: relative; height: 100%; min-width: 0; }
-      .ps-jwb i { position: absolute; left: 0; right: 0; bottom: 0; display: block;
-                  background: rgba(170,120,255,.42); border-radius: var(--pc-r-xs) var(--pc-r-xs) 0 0; }
-      .ps-jwb.last i { background: var(--ps-deep); }
-      /* A missing night keeps its full height — a short hatch would read as a
-         low value, which is the whole thing this is here to prevent — but it is
-         drawn QUIETLY. At the weight it first shipped, three absent nights were
-         the loudest thing in the plot and the four real ones looked like the
-         footnote. */
-      .ps-jwb.miss i { top: 0; height: auto; border-radius: var(--pc-r-xs);
-                       border: 1px dashed rgba(255,255,255,.07); background:
-                       repeating-linear-gradient(135deg, rgba(255,255,255,.035) 0 4px, transparent 4px 8px); }
-      .ps-jwx { display: flex; gap: 6px; margin-top: 5px; }
-      .ps-jwx span { flex: 1; min-width: 0; text-align: center; font-size: var(--pc-fs-micro);
-                     color: var(--ps-dim); font-weight: 650; letter-spacing: .06em; }
-      .ps-jwx span.last { color: var(--ps-text); }
 
-      /* The roll-up under the strip: a comparison, never a restatement. */
-      .ps-jvd { font-size: var(--pc-fs-sm); color: var(--ps-muted); line-height: 1.5; margin-top: 9px; }
-      .ps-jvd em { font-style: normal; font-weight: 650; color: var(--ps-good); }
-      .ps-jvd em.w { color: var(--ps-warn); }
+      /* The week as a RASTER: one row per day on a 9am-to-9am clock, so a whole
+         day of his life is contiguous on one line. The band behind every row is
+         his usual bedtime — the one comparison every row can be read against
+         vertically, which is what a column chart could never offer. */
+      .ps-jrsw { position: relative; display: flex; flex-direction: column; gap: 4px; }
+      /* Neutral would disappear against eight rows of blocks, so this one takes
+         the night's hue at low alpha — it is behind the thing it describes
+         rather than beside it, which is the case the week strip's band could
+         not make. */
+      .ps-jrsband { position: absolute; top: 0; bottom: 0; background: rgba(170,120,255,.13);
+                    border-radius: var(--pc-r-hair); pointer-events: none; }
+      .ps-jrsg { position: absolute; top: 0; bottom: 0; width: 1px;
+                 background: rgba(255,255,255,.07); pointer-events: none; }
+      .ps-jrsr { display: flex; align-items: center; gap: 7px; position: relative; }
+      .ps-jrsd { width: 24px; flex: 0 0 auto; font-size: var(--pc-fs-micro); font-weight: 700;
+                 letter-spacing: .04em; color: var(--ps-dim); }
+      .ps-jrsr.today .ps-jrsd { color: var(--ps-cool); }
+      .ps-jrsl { position: relative; flex: 1; min-width: 0; height: 15px; }
+      .ps-jrsl::before { content: ""; position: absolute; left: 0; right: 0; top: 7px; height: 2px;
+                         border-radius: 1px; background: rgba(255,255,255,.055); }
+      /* A day with NOTHING recorded keeps its full lane and is hatched, exactly
+         as the week strip's missing night was: a lane drawn short reads as a
+         low value, which is the one thing this is here to prevent. A day he
+         spent away is quieter still — a dashed frame, because it is not a
+         fault. A day with a night but no naps is drawn as it is, empty: the
+         sensors were plainly working, so that is an observation, not a gap. */
+      .ps-jrsl.miss { border-radius: var(--pc-r-xs); border: 1px dashed rgba(255,255,255,.07);
+                      background: repeating-linear-gradient(135deg,
+                        rgba(255,255,255,.035) 0 4px, transparent 4px 8px); }
+      .ps-jrsl.away { border-radius: var(--pc-r-xs); border: 1px dashed rgba(86,212,228,.20); }
+      .ps-jrsl.miss::before, .ps-jrsl.away::before { display: none; }
+      .ps-jrsb { position: absolute; top: 1px; height: 13px; border-radius: 3px; overflow: hidden; }
+      .ps-jrsb.n { background: var(--ps-deep); }
+      .ps-jrsb.d { background: var(--ps-light); }
+      .ps-jrsb.s { background: var(--ps-warn); }
+      .ps-jrsb.live { box-shadow: 0 0 0 1px rgba(255,255,255,.25) inset; }
+      /* Settling, drawn on the front of the block — this is the mark that lets
+         "23m to settle him" stop being written underneath. */
+      .ps-jrss { position: absolute; left: 0; top: 0; bottom: 0; display: block;
+                 background: rgba(255,255,255,.42); }
+      .ps-jrst { position: absolute; top: 0; bottom: 0; width: 1.6px; display: block;
+                 background: var(--ps-awake); transform: translateX(-50%); }
+      .ps-edd.rs { position: absolute; right: 2px; top: 4px; margin: 0; width: 4px; height: 4px; }
+      .ps-jrsnow { position: absolute; top: -2px; bottom: -2px; width: 1.5px;
+                   background: var(--ps-cool); transform: translateX(-50%); }
+      .ps-jrsgh { position: absolute; top: 1px; height: 13px; width: 7px; border-radius: 2px;
+                  border: 1px dashed rgba(170,120,255,.55); }
+      /* The axis, positioned rather than spread: these hours are not evenly
+         divided across the row, so a flex row would point every caption at the
+         wrong time. The 31px offset is the day column plus its gap — the label
+         track has to start exactly where the lane does. */
+      .ps-jrsx { position: relative; height: 13px; margin: 6px 0 0 31px;
+                 font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                 font-variant-numeric: tabular-nums; }
+      .ps-jrsx i { position: absolute; top: 0; font-style: normal;
+                   transform: translateX(-50%); }
+      .ps-jrsx i.first { transform: none; }
+      .ps-jrslg { display: flex; flex-wrap: wrap; gap: 4px 11px; margin-top: 7px;
+                  font-size: var(--pc-fs-micro); color: var(--ps-dim); }
+      .ps-jrslg span { display: inline-flex; align-items: center; gap: 5px; }
+      .ps-jrslg i { width: 9px; height: 7px; border-radius: var(--pc-r-hair); flex: 0 0 auto; }
+      .ps-jrslg i.n { background: var(--ps-deep); }
+      .ps-jrslg i.d { background: var(--ps-light); }
+      .ps-jrslg i.st { background: rgba(255,255,255,.42); }
+      .ps-jrslg i.tk { width: 2px; background: var(--ps-awake); }
+      .ps-jrslg i.bd { background: rgba(170,120,255,.30); }
+
+      /* The moments on the night rail, labelled where they happened. HTML over
+         the plot, never SVG text: the rail's viewBox is 100 wide with
+         preserveAspectRatio="none", so text drawn inside it is stretched by
+         whatever width the card happens to be. */
+      .ps-jnls { position: relative; height: 13px; margin-top: 3px; pointer-events: none; }
+      /* Positioned by its LEFT edge, because the renderer reserves the span a
+         label occupies so the next one can be dropped if it would overlap —
+         and a translated element does not sit where its left offset says it
+         does. (No backticks in here: this comment is in raw template text.) */
+      .ps-jnl { position: absolute; top: 0; white-space: nowrap;
+                font-size: var(--pc-fs-micro); font-variant-numeric: tabular-nums; font-weight: 650; }
+      .ps-jnl.in { color: var(--ps-awake); }
+      .ps-jnl.exit { color: var(--ps-muted); }
+
+      /* A nap: when it was, how long, and how long that is FOR HIM. The clock
+         span leads — it is what the row has always been read for and the one
+         thing the track cannot say. The track is the meters' own unit, pointed
+         at his per-slot band. */
+      .ps-jnaps { display: flex; flex-direction: column; gap: 4px; }
+      .ps-jnap { background: var(--ps-fill); border-radius: var(--pc-r-sm);
+                 padding: 8px 11px 9px; cursor: pointer; }
+      .ps-jnaph { display: flex; align-items: baseline; gap: 7px;
+                  font-size: var(--pc-fs-sm); font-variant-numeric: tabular-nums; }
+      .ps-jnapk { font-size: var(--pc-fs-micro); letter-spacing: .1em; text-transform: uppercase;
+                  color: var(--ps-dim); font-weight: 700; }
+      .ps-jnapt { color: var(--ps-muted); }
+      .ps-jnapv { font-weight: 650; }
+      .ps-jnapv.short { color: var(--ps-warn); }
+      .ps-jnap .ps-hmt { margin-top: 5px; }
+      .ps-jnapnone { background: var(--ps-fill); border-radius: var(--pc-r-sm);
+                     padding: 9px 11px; font-size: var(--pc-fs-sm); color: var(--ps-muted); }
+      /* An awake window is the SPACE between two sleeps, so it is drawn as the
+         space rather than as another row. */
+      .ps-jgap { display: flex; align-items: center; gap: 8px; padding: 1px 4px;
+                 font-size: var(--pc-fs-micro); color: var(--ps-dim);
+                 font-variant-numeric: tabular-nums; }
+      .ps-jgap i { display: block; height: 1px; background: var(--ps-awake); opacity: .38; }
+      .ps-jgap i:first-child { width: 13px; flex: 0 0 auto; }
+      .ps-jgap i:last-child { flex: 1; }
+
       .ps-jmet { margin-top: 13px; }
 
       /* The night in the words a person would use, replacing five labelled

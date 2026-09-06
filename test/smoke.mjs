@@ -4907,6 +4907,70 @@ const jweek = (() => {
     norms: NORMS(sess, { days: 7 }), HR, MIN };
 })();
 
+
+/* A week WITH NAPS in it, so the per-slot bands have something to be built
+   from. The nights are here because a nap only counts towards a band on a day
+   whose night is on record — which is also what keeps today's naps out of the
+   band they are about to be measured against. */
+const napweek = (() => {
+  const MIN = 60000;
+  const hatch = [];
+  const door = [];
+  const nap = (d, h, m, mins, settle) => {
+    const start = new Date(2026, 7, d, h, m).getTime();
+    hatch.push({ t: start, s: 'playing' }, { t: start + mins * MIN, s: 'idle' });
+    door.push({ t: start + settle * MIN, s: 'on' },
+      { t: start + (settle + 1) * MIN, s: 'off' });
+  };
+  [[3, 60, 45], [4, 70, 40], [5, 55, 50], [6, 65, 42]].forEach(([d, am, pm], i) => {
+    nap(d, 9, 0, am, 5);
+    nap(d, 13, 30, pm, 6);
+    const night = new Date(2026, 7, d, 19, 10).getTime();
+    hatch.push({ t: night, s: 'playing' }, { t: night + (700 - i * 5) * MIN, s: 'idle' });
+    door.push({ t: night + 5 * MIN, s: 'on' }, { t: night + 6 * MIN, s: 'off' });
+  });
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7 }] });
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} } } };
+  s._testNow = new Date(2026, 7, 7, 15, 0).getTime();
+  /* ...and TODAY's two naps on top of it, which is the only way to render a nap
+     row that has a band behind it: a nap only joins a band on a day whose night
+     is on record, so today's are measured against the week and never against
+     themselves. */
+  nap(7, 9, 0, 60, 5);
+  nap(7, 13, 0, 50, 6);
+  s._nursery = { 'media_player.h': hatch, 'binary_sensor.d': door };
+  return { s, sess: s._nurserySessions(s._config.sections[0]),
+    html: s._secNursery(s._config.sections[0]) };
+})();
+
+/* TODAY, two naps and nothing else — the shape the naps block is read in.
+   With one gap there is no prediction to make, so the chip falls back to the
+   awake time and the trailing gap must then NOT be drawn under the naps. */
+const napday = (() => {
+  const MIN = 60000;
+  const hatch = [];
+  const door = [];
+  [[9, 0, 60, 5], [12, 10, 50, 6]].forEach(([h, m, mins, settle]) => {
+    const start = new Date(2026, 7, 7, h, m).getTime();
+    hatch.push({ t: start, s: 'playing' }, { t: start + mins * MIN, s: 'idle' });
+    door.push({ t: start + settle * MIN, s: 'on' },
+      { t: start + (settle + 1) * MIN, s: 'off' });
+  });
+  const s = new SH();
+  s.setConfig({ sections: [{ type: 'nursery', key: 'j', title: 'Joel', name: 'Joel',
+    hatch: 'media_player.h', door: 'binary_sensor.d', days: 7,
+    edits: { store: 'input_text.joel_nap_edits' } }] });
+  s._hass = { states: { 'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'input_text.joel_nap_edits': { state: '', attributes: {} } } };
+  s._testNow = new Date(2026, 7, 7, 15, 0).getTime();
+  s._nursery = { 'media_player.h': hatch, 'binary_sensor.d': door };
+  return { s, html: s._secNursery(s._config.sections[0]) };
+})();
+
 check('the week fixture really is four nights', () => jweek.norms.nights.length === 4);
 check('a band comes from his own nights', () => {
   const b = jweek.norms.asleep;
@@ -4943,41 +5007,40 @@ check('the bedtime band counts after-midnight as late', () => {
   return n.bed && Math.round(n.bed.mean) === 1445;
 });
 
-/* A missing night is HATCHED, never a zero column. A strip is the surface where
-   a zero is most convincing — a short bar reads as a bad night at a glance, so
-   the recorder falling over for a day would look like one. */
-/* The delimiter matters: a bare `class="ps-jwb` also matches the band and the
-   bar wrapper, and would count nine slots in a seven-day week. */
-check('the week strip draws one slot per day, whatever was recorded', () =>
-  (jweek.html.match(/class="ps-jwb[ "]/g) || []).length === 7);
-check('a night with no data is hatched, not drawn as zero', () => {
-  const miss = (jweek.html.match(/ps-jwb miss/g) || []).length;
-  return miss === 3 && !/height:0\.0%/.test(jweek.html);
+/* THE WEEK IS A RASTER: one row per day on a 9am-to-9am clock, which is the
+   boundary that keeps a whole day of his life on one line. */
+check('the raster draws a row per day and ends TODAY', () =>
+  (jweek.html.match(/class="ps-jrsr/g) || []).length === 7
+  && /class="ps-jrsr today"/.test(jweek.html));
+/* A day with nothing recorded is hatched, never an empty lane. A lane drawn
+   short or blank reads as a day he did not sleep, which is the same convincing
+   lie the week strip's zero column would have told. */
+check('a day with nothing recorded is hatched, not left blank', () => {
+  const miss = (jweek.html.match(/ps-jrsl miss/g) || []).length;
+  return miss === 2;
 });
-check('the hatched slot has a style of its own to be drawn with',
-  /\.ps-jwb\.miss i \{/.test(SH.styles));
-check('the most recent night is the one picked out',
-  (jweek.html.match(/ps-jwb last/g) || []).length === 1);
-check('his own band is drawn behind the week', () => /ps-jwband/.test(jweek.html)
-  && /ps-jwavg/.test(jweek.html));
-
-/* The roll-up is a COMPARISON, not a restatement — and with no band there is
-   nothing to compare against, so it is dropped rather than hedged. */
-check('the verdict names the run of normal nights',
-  /3 nights running inside his usual range/.test(jweek.html));
-check('the verdict is dropped when there is no band to judge against',
-  !/ps-jvd/.test(nurseryRendered.html));
-check('a short night is named as a shortfall, not a streak', () => {
-  const b = { lo: 600, hi: 700, mean: 650 };
-  const h = jweek.s._nurseryVerdict({ asleep: b,
-    nights: [{ asleep: 660 }, { asleep: 500 }] });
-  return /2h 30m short/.test(h) && /em class="w"/.test(h);
+check('the hatched lane has a style of its own to be drawn with',
+  /\.ps-jrsl\.miss \{/.test(SH.styles));
+/* Today is in progress, not missing. Hatching it would open every morning
+   claiming the recorder had fallen over. */
+check('today is never hatched', () => {
+  const rows = jweek.html.split('class="ps-jrsr');
+  return /today/.test(rows[rows.length - 1]) && !/ps-jrsl miss/.test(rows[rows.length - 1]);
 });
-check('a long night is named too, and is not a warning', () => {
-  const b = { lo: 600, hi: 700, mean: 650 };
-  const h = jweek.s._nurseryVerdict({ asleep: b, nights: [{ asleep: 800 }] });
-  return /2h 30m longer/.test(h) && !/em class="w"/.test(h);
-});
+check('today carries the now line', () => /ps-jrsnow/.test(jweek.html));
+check('his usual bedtime is the band behind the week', () => /ps-jrsband/.test(jweek.html));
+/* Settling and the trips are DRAWN on the block — that is what lets the
+   sentence that used to spell them out go away. */
+check('settling is drawn on the block, not written underneath',
+  /ps-jrss/.test(jweek.html));
+check('the trips in are ticked onto the night block', () =>
+  /ps-jrst/.test(nurseryRendered.html));
+/* The verdict sentence is gone: the raster draws bedtime, nap timing and the
+   spread of the wake-ups, and the collapsed ring is still duration against his
+   own average, so the line had nothing left that was not already drawn. */
+check('the verdict line is gone from the section', () => !/ps-jvd/.test(jweek.html));
+check('the week strip it replaced is gone too',
+  !/ps-jwb/.test(jweek.html) && !/ps-jwk/.test(SH.styles));
 
 /* Three meters, not four. "Slept" is the strip already; a meter beside it would
    be the chip restating the line next to it for the sixth time. */
@@ -4995,12 +5058,14 @@ check('without loOk, below the band is still a fault', () => {
   return /ps-hmd out/.test(h);
 });
 
-/* The words. A stranger could not tell "Down" from "Settled", and the fix is
-   not a definition but the sequence — and "left him" rather than "fell asleep",
-   because settledAt is when the PARENT LEFT and nothing here may claim the card
-   knows the moment he dropped off. */
-check('the night is told in plain words', () => /Put down/.test(jweek.html)
-  && /left him/.test(jweek.html) && /woke/.test(jweek.html));
+/* The words went onto the plot. "Put down 7:36 PM -> left him 7:48 PM -> woke
+   6:51 AM" was four points already drawn on the night rail; the tick row
+   captions both ends, so only the exit and the trips needed a mark, and the
+   spread of the trips comes free with them. */
+check('the night rail labels the moments where they happened', () =>
+  /ps-jnls/.test(jweek.html) && /ps-jnl exit/.test(jweek.html));
+check('the prose sequence is gone', () => !/ps-jstory"/.test(jweek.html)
+  && !/left him <b>/.test(jweek.html));
 check('the old labels are gone from the section', () =>
   !/>Down \//.test(jweek.html) && !/ps-l">Settled</.test(jweek.html)
   && !/Interventions/.test(jweek.html));
@@ -5008,8 +5073,63 @@ check('the collapsed status line speaks the same dialect as the block below', ()
   const src = fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8');
   return /statusL = live \? `Put down /.test(src) && /left him \$\{psClock\(live\.settledAt\)\}/.test(src);
 });
-check('the story is still a correction target', () =>
-  /ps-jstory"[^>]*data-napedit=/.test(jweek.html));
+/* A label that would overprint the one before it is DROPPED and its tick left
+   standing. Two overprinted times are a number nobody can read at all. */
+check('a colliding label is dropped, never overprinted', () => {
+  /* Guarding on the gap between two MARKS is not enough: an edge-anchored
+     label grows rightwards from zero, so "left 7:48p" ran straight into a trip
+     twenty percent away — a gap the old guard was perfectly happy with. A
+     label reserves the span it occupies and the next one is dropped if it
+     would land inside it. */
+  const src = fs.readFileSync(new URL('../src/75-shell-nursery.js', import.meta.url), 'utf8');
+  return /const w = text\.length \* 1\.65;/.test(src)
+    && /if \(left < lastRight \+ 1\.5\) return;/.test(src)
+    && /lastRight = left \+ w;/.test(src);
+});
+/* Five trips inside twenty minutes would otherwise overprint into one smear. */
+check('a run of close trips keeps its ticks and drops the extra labels', () => {
+  const at = (h, m) => new Date(2026, 7, 6, h, m).getTime();
+  const night = { from: at(19, 0), to: at(31, 0), settledAt: at(19, 10),
+    hadExit: true, interventions: 5, active: false, manual: false,
+    edited: false, blindMin: 0,
+    events: [4, 8, 12, 16, 20].map((m) => at(23, m)) };
+  const h = jweek.s._nurseryRail(night, true, null);
+  const ticks = (h.match(/fill="var\(--ps-warn\)"/g) || []).length;
+  const shown = (h.match(/ps-jnl in/g) || []).length;
+  return ticks === 5 && shown === 1;
+});
+/* Replacing a surface orphans whatever was only reachable through it: the story
+   line was a correction target, so the night has to stay reachable somewhere. */
+check('the night is still a correction target after the story went away',
+  /ps-ring[^>]*data-napopen=/.test(jweek.html));
+
+/* The naps answer WHEN first — that is what the row has always been read for,
+   and it is the one thing a bar cannot say. */
+check('a nap row leads with its clock span', () => /ps-jnapt/.test(napday.html)
+  && /9:00 AM – 10:00 AM/.test(napday.html));
+check('a nap is drawn against HIS band for that time of day', () =>
+  /ps-jnap[^]*?ps-hmb/.test(napweek.html));
+/* The band is split by when the nap FALLS, not by its index in the day — one
+   rule decides the bucket and the word, so the label always names the band
+   drawn under it. */
+check('the nap bands are split morning from afternoon', () => {
+  const n = NORMS(napweek.sess, { days: 7 });
+  return n.naps && n.naps.am && n.naps.pm && Math.round(n.naps.am.mean) !== Math.round(n.naps.pm.mean);
+});
+check('a nap band needs two of its own, like every other band', () => {
+  const n = NORMS(napweek.sess.filter((s) => s.night || new Date(s.from).getHours() < 12),
+    { days: 7 });
+  return n.naps.pm === null;
+});
+/* The wake window between two naps is what decided the second put-down, and it
+   is written nowhere else on the card. */
+check('the gap between two naps is drawn as a gap', () =>
+  /ps-jgap/.test(napday.html) && /awake 2h/.test(napday.html));
+/* ...and the TRAILING gap only when the chip is not already carrying it. */
+check('the trailing awake gap is dropped when the chip carries it', () => {
+  const gaps = (napday.html.match(/ps-jgap/g) || []).length;
+  return /Awake /.test(napday.html) && gaps === 1;
+});
 
 /* The expected-bedtime ghost is placed on the axis it is drawn on. It was a
    position on a midnight-to-midnight axis dropped onto a rail that runs 6am to
@@ -5461,18 +5581,23 @@ check('a wake time past the Hatch stop reaches the section, and names where the 
   /* asleep 19:45 -> 06:20, half an hour after the machine stopped at 05:30 */
   const card = outwardCard('15~650');
   const html = card._secNursery(card._config.sections[0]);
-  return /woke <b>6:20 AM/.test(html) && /Hatch stopped 5:30 AM/.test(html)
+  /* The wake is the rail's own right-hand caption now, not a bolded word in a
+     sentence — but the claim is unchanged, and the caption that names where the
+     measurement stopped is still the thing that keeps the card honest. */
+  return /6:20 AM/.test(html) && /Hatch stopped 5:30 AM/.test(html)
     && /10h 35m/.test(html);
 })());
 
-check('asleep before the Hatch went on tells the story in that order', (() => {
-  /* asleep from 19:00, half an hour before the machine */
+check('asleep before the Hatch went on is drawn in that order', (() => {
+  /* asleep from 19:00, half an hour before the machine. The axis starts at the
+     SLEEP, so the put-down is what needs a mark of its own — and the rail draws
+     it where it happened rather than a sentence telling the story backwards. */
   const card = outwardCard('-30~600');
   const html = card._secNursery(card._config.sections[0]);
-  return /Asleep <b>7:00 PM<\/b>\s*<i>→<\/i> put down <b>7:30 PM/.test(html)
-    && /already asleep when the Hatch went on/.test(html)
-    /* and never the backwards version */
-    && !/left him/.test(html);
+  return /ps-jnl exit[^"]*"[^>]*>down 7:30p</.test(html)
+    && /Already asleep when the Hatch went on/.test(html)
+    /* and never the exit label, which would be the backwards version */
+    && !/>left 7/.test(html);
 })());
 
 check('"left him" is the DERIVED wording and "fell asleep" the corrected one', (() => {
@@ -5490,8 +5615,10 @@ check('"left him" is the DERIVED wording and "fell asleep" the corrected one', (
   plain._nursery = outwardCard('0~600')._nursery;
   const derived = plain._secNursery(plain._config.sections[0]);
   const fixed = outwardCard('20~600')._secNursery(outwardCard('20~600')._config.sections[0]);
-  return /left him/.test(derived) && !/fell asleep/.test(derived)
-    && /fell asleep/.test(fixed) && !/left him/.test(fixed);
+  /* Shortened to fit a plot label, kept apart in the same two words the prose
+     used: the derivation says he was LEFT, the correction says he was ASLEEP. */
+  return /ps-jnl exit[^"]*"[^>]*>left /.test(derived) && !/>asleep /.test(derived)
+    && /ps-jnl exit[^"]*"[^>]*>asleep /.test(fixed) && !/>left /.test(fixed);
 })());
 
 check('the sheet widens its axis instead of running the block off the viewBox', (() => {
@@ -5930,7 +6057,7 @@ check('an away day names itself where the naps would have been', (() => {
 check('a logged night reports no wake-ups rather than an undisturbed one', (() => {
   const s = travelCard({ now: NT(9, 0), log: `${Math.round(new Date(2026, 7, 6, 19, 30).getTime() / 60000)}~600` });
   const html = s._secNursery(s._config.sections[0]);
-  return /hand-logged, so wake-ups are not known/.test(html)
+  return /Logged by hand · wake-ups are not known/.test(html)
     /* The "Went in" meter draws its missing-reading state, not a zero. */
     && /Not measured/.test(html) && !/>0<\/div>/.test(html);
 })());
@@ -9340,6 +9467,55 @@ try { eval(src); } catch (e) { threw = true; }
 console.warn = realWarn;
 check('hSecond load does not throw', !threw);
 check('hSecond load warns about duplicate', /already defined by another resource/.test(warned));
+
+
+/* The raster's hours are NOT evenly divided across the row — 9a, 12p, 6p, 12a,
+   6a sit at 0/12.5/37.5/62.5/87.5% — so the axis has to be positioned rather
+   than spread. Flexed with space-between they land at 0/25/50/75/100 and every
+   caption points at the wrong time, which reads as the bedtime band sitting an
+   hour and a half before his actual bedtime. The night rail's tick row is
+   allowed to flex because its marks really are evenly divided. */
+check('the raster is labelled at the hours its gridlines fall on', () => {
+  const m = [...jweek.html.matchAll(/<i class="[^"]*" style="left:([\d.]+)%">(\d+[ap])</g)]
+    .map((x) => [Number(x[1]), x[2]]);
+  const want = [[0, '9a'], [12.5, '12p'], [37.5, '6p'], [62.5, '12a'], [87.5, '6a']];
+  return m.length === 5 && want.every(([at, t], i) =>
+    m[i][1] === t && Math.abs(m[i][0] - at) < 0.01);
+});
+
+/* The rows are `days`, never days + 1. An eighth row begins before the fetch
+   does, so its morning naps are not in the history at all and it drew as a
+   night with no naps beside it every single day — a missing reading wearing a
+   zero's clothes, at the one surface built to keep those two apart. */
+check('the raster never draws a row the fetch does not reach', () => {
+  const rows = (jweek.html.match(/class="ps-jrsr/g) || []).length;
+  return rows === 7;
+});
+/* The count describes the PLOT. norms.nights holds seven and only six of them
+   are drawn, so quoting the fetch would claim a night the reader cannot find —
+   and today is out of the denominator, or the caption reports a shortfall every
+   day until bedtime. */
+check('the raster counts the nights it actually drew', () =>
+  /<b>4 of 6 nights<\/b>/.test(jweek.html));
+
+/* The raster has to carry the three states the week strip carried, or the
+   plot that replaced it quietly drops them. A day away is a dashed frame — not
+   the hatch, which says something should be here and is not — and a
+   hand-logged session keeps the hollow pip it wears on every other surface. */
+check('an away day draws a frame on the raster, not a hatch', (() => {
+  const yday = new Date(NT(15, 0));
+  yday.setDate(yday.getDate() - 1);
+  /* The STORE is eight digits; psParseAway is what turns it into a day key. */
+  const s = travelCard({ away: SH.helpers.dayKey(yday).replace(/-/g, '') });
+  const html = s._secNursery(s._config.sections[0]);
+  return /ps-jrsl away/.test(html) && (html.match(/ps-jrsl miss/g) || []).length > 0;
+})());
+check('a hand-logged session is marked on the raster too', (() => {
+  const s = travelCard({ log: `${Math.round(NT(13, 0) / 60000)}~50` });
+  const html = s._secNursery(s._config.sections[0]);
+  return /ps-jrsb[^>]*>.*?ps-edd rs hand/.test(html);
+})());
+
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);

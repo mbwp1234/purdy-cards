@@ -1017,6 +1017,24 @@ function psNurseryNorms(sessions, opts) {
     })),
     asleep: band(nights.map((s) => s.asleepMinutes), 15),
     bed: band(nights.map(bedOf), 10),
+    /* His naps, split by WHEN THEY FALL rather than by their index in the day.
+       A band keyed to "the first nap" and a label reading "Morning" are two
+       different rules answering the same question, and they disagree the first
+       day he only naps once — the single afternoon nap becomes slot 0 and is
+       judged against a week of morning naps. One rule: the clock decides both
+       the bucket and the word, so the label always names the band behind it.
+       The floor is 10 minutes because these are short — a band narrower than
+       that claims a precision two contact sensors do not have. */
+    naps: (() => {
+      const keys = {};
+      nights.forEach((s) => { keys[s.day] = 1; });
+      const naps = (sessions || []).filter((s) => !s.night && !s.active && keys[s.day]);
+      const at = (s) => new Date(s.from).getHours();
+      return {
+        am: band(naps.filter((s) => at(s) < 12).map((s) => s.asleepMinutes), 10),
+        pm: band(naps.filter((s) => at(s) >= 12).map((s) => s.asleepMinutes), 10),
+      };
+    })(),
     /* Door-derived, so hand-logged nights are not in these two — see
        psNurseryStats. A band is a claim about his normal, and a night nobody
        measured cannot narrow it or widen it. */
@@ -1886,6 +1904,71 @@ Object.assign(PurdyShellCard.prototype, {
     }
     marks.push(night.active ? "now" : fmt(to));
     const hourLabels = marks.map((m) => `<span>${psEsc(m)}</span>`).join("");
+
+    /* THE MOMENTS, LABELLED WHERE THEY HAPPENED (v1.79.0).
+     *
+     * "Put down 7:36 PM → left him 7:48 PM → woke 6:51 AM · went in at 10:22
+     * PM, 2:56 AM" was two lines of prose restating four points that are all
+     * already drawn on this axis. The ends are captioned by the tick row
+     * underneath, so only the exit and the trips need a mark of their own —
+     * and putting the time under the tick answers "were they spread or bunched"
+     * in the same glance, which the sentence never could.
+     *
+     * The labels are HTML over the plot, not SVG text: the rail's viewBox is
+     * 100 wide with preserveAspectRatio="none", so anything drawn as text in it
+     * is stretched by whatever width the card happens to be.
+     *
+     * A label is dropped when it would collide with the one before it — the
+     * tick stays, and the count in the caption above is what does not go away.
+     * Losing a time is better than two overprinted times, which is a number
+     * nobody can read at all. */
+    /* A plot label takes the COMPACT meridiem — "7:48p", not "7:48 PM". It is
+       four characters narrower on a rail where the labels are already fighting
+       each other, and it cannot be misread: every one of them sits between two
+       ends the tick row spells out in full, on an axis it is positioned on.
+       The tick row keeps the long form, because those two are the only times
+       here with nothing either side of them to place them. */
+    const tiny = (t) => psClock(t).replace(/ (AM|PM)$/, (m, a) => a[0].toLowerCase());
+
+    /* Collision is a question about WIDTH, not about position. Guarding on the
+       gap between two marks alone let "left 7:48 PM" — anchored to the left
+       edge, so growing rightwards from zero — run straight into the 10:22 trip
+       twenty percent away, which is a gap the guard was perfectly happy with.
+       So a label reserves the span it actually occupies, estimated from its
+       length at the micro size, and the next one is dropped if it would land
+       inside that. Dropping is right: the tick stays, and the count in the
+       caption above is the thing that never goes away. */
+    let lastRight = -99;
+    let labels = "";
+    const lbl = (t, text, cls) => {
+      const at = x(t);
+      const w = text.length * 1.65;
+      const edge0 = at < 12;
+      const left = edge0 ? 0 : at > 88 ? 100 - w : at - w / 2;
+      if (left < lastRight + 1.5) return;
+      lastRight = left + w;
+      /* Centred on its mark everywhere but the ends, where half of it would sit
+         outside the plot and anchoring to the edge keeps it readable. */
+      labels += `<span class="ps-jnl${cls ? ` ${cls}` : ""}" style="left:${
+        Math.max(0, Math.min(100 - w, left)).toFixed(2)}%">${psEsc(text)}</span>`;
+    };
+    /* A correction can put him asleep BEFORE the sound machine went on — he
+       went down in the car and was carried in. The axis then starts at the
+       sleep, so the PUT-DOWN is the thing that needs a mark of its own, and it
+       is drawn in that order rather than the sentence telling the story
+       backwards. */
+    if (night.settledAt < night.from) lbl(night.from, `down ${tiny(night.from)}`, "exit");
+    else if (!night.manual && night.hadExit && night.settledAt > night.from) {
+      /* "left him" is the DERIVED wording and "fell asleep" the corrected one,
+         shortened to fit a plot label but kept apart: settledAt is when the
+         PARENT LEFT, a lower bound, and no derived wording may claim the card
+         knows the moment he dropped off — while a correction IS a person
+         answering that question, so hedging their own answer back at them is
+         the same mistake pointing the other way. */
+      lbl(night.settledAt, `${night.edited ? "asleep" : "left"} ${tiny(night.settledAt)}`, "exit");
+    }
+    night.events.forEach((t) => lbl(t, tiny(t), "in"));
+
     return `<div class="ps-hyp">
         <div class="ps-hypt" data-readout="night">
           <span class="ps-lbl">${night.active ? "Tonight" : "Last night"}</span>
@@ -1904,152 +1987,183 @@ Object.assign(PurdyShellCard.prototype, {
             </svg>
             <div class="ps-cross" hidden></div>
           </div>
+          ${labels ? `<div class="ps-jnls">${labels}</div>` : ""}
           <div class="ps-railticks">${hourLabels}</div>
         </div>
       </div>`;
   },
 
-  /* The week of nights, as a column per night with HIS OWN BAND behind them.
+  /* ONE ROW PER DAY, ON A CLOCK — the week strip's successor.
    *
-   * A meter answers "is this normal" for one night at one moment; it cannot
-   * answer "is it trending", and the two together were the whole ask. So the
-   * headline metric — how long he slept — gets the plot, and the supporting
-   * facts get meters underneath. "Slept" is deliberately NOT also a meter: the
-   * strip already is one, and a meter beside it would be the chip repeating the
-   * line next to it for the sixth time.
+   * The strip answered one question well (how long, against his band) and was
+   * mute on every other: when he went down, whether that is drifting, when the
+   * naps fell, whether the wake-ups were spread or bunched. All of those are
+   * positions on a time axis, and a column chart has no time axis.
    *
-   * A night with no data draws HATCHED, never as a zero column. A missing night
-   * and a night of no sleep are different facts, and a strip is the surface
-   * where a zero is most convincing — a short column reads as a bad night at a
-   * glance, and the recorder falling over for a day would look like one.
+   * The row runs 9am to 9am, which is the boundary that makes a day of his life
+   * CONTIGUOUS: morning nap, afternoon nap, night, and the morning wake lands
+   * comfortably before the next row starts. Midnight-to-midnight splits every
+   * night across two rows and the eye reads the split as two sleeps.
    *
-   * The domain is padded BELOW the minimum, the lesson the hourly weather strip
-   * taught: his worst night sitting exactly on the baseline draws as a hairline
-   * and reads as no data, which is the one thing the hatching exists to keep
-   * apart from a real reading.
+   * The band behind the whole plot is his usual BEDTIME, because bedtime is the
+   * one thing every row can be read against vertically — a night that starts
+   * left of the band started early, and the eye does that comparison across
+   * eight rows without a single number.
    *
-   * It does not scrub. The night rail does, because a night has a shape you
-   * read along; this has seven values and they are each one number, already
-   * captioned by the day underneath. The day rail beside it is non-interactive
-   * for the same reason, so a plain railbox is established here as a plot you
-   * read rather than one you press — which is what keeps it off the affordance
-   * sweep's list. */
-  _nurseryWeek(norms, sec, awayDays) {
-    const b = norms.asleep;
-    const nights = norms.nights;
-    if (!nights.length) return "";
+   * A day with NOTHING recorded is hatched, exactly as the strip's missing
+   * night was. A day with a night but no naps is drawn as it is, empty — the
+   * sensors were plainly working, so "he did not nap here" is an observation
+   * rather than a gap, and hatching it would invent a claim the card cannot
+   * support. Zero versus missing, at an axis instead of a column.
+   *
+   * It does not scrub, for the reason the strip did not: the night rail below
+   * is the plot with a shape you read along. */
+  _nurseryRaster(sessions, norms, sec, awayDays) {
+    if (!this._nursery) return "";
+    const days = sec.days || 7;
     const isAway = (k) => (awayDays || []).indexOf(k) !== -1;
 
-    const days = sec.days || 7;
-    const byDay = {};
-    nights.forEach((n) => { byDay[n.day] = n; });
-
-    /* Slots END YESTERDAY, not at the most recent night on record. Sliding the
-       strip up to the last night he actually has would quietly redraw a gap as
-       a full week and hide the very thing the hatching is for. */
+    /* Rows END TODAY, not yesterday. The strip stopped at yesterday because a
+       part-day column is a short bar and reads as a bad night; a row on a clock
+       has no such failure mode — today is drawn as far as it has got, and the
+       now line says where that is.
+       And there are `days` of them, NOT days + 1. An eighth row reaches back
+       past the start of the fetch: `_fetchNursery` asks for `days` × 24h from
+       now, so a row beginning at 09:00 that many days ago starts BEFORE the
+       history does, and its naps — which happen in the morning — are simply not
+       in the data. It drew as a night with no naps beside it, every single day,
+       which is a missing reading wearing a zero's clothes at the one surface
+       built to keep those two apart. At `days` rows the earliest one begins a
+       clear 24 hours inside the window however early in the day it is read. */
     const midnight = new Date(this._nowMs());
     midnight.setHours(0, 0, 0, 0);
-    const slots = [];
-    for (let i = days; i >= 1; i -= 1) {
+    const rows = [];
+    for (let i = days - 1; i >= 0; i -= 1) {
       const d = new Date(midnight);
       d.setDate(d.getDate() - i);
-      slots.push({ key: psDayKey(d), date: d });
+      rows.push({ key: psDayKey(d), date: d, t0: d.getTime() + 9 * 3600000 });
     }
+    const span = 24 * 3600000;
+    const x = (t, t0) => Math.max(0, Math.min(100, ((t - t0) / span) * 100));
 
-    const vals = nights.map((n) => n.asleep);
-    let lo = Math.min(...vals);
-    let hi = Math.max(...vals);
-    if (b) { lo = Math.min(lo, b.lo); hi = Math.max(hi, b.hi); }
-    const pad = Math.max(20, (hi - lo) * 0.18);
-    lo = Math.max(0, lo - pad);
-    hi += pad;
-    const y = (v) => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+    const catnapUnder = sec.catnap_under_min == null ? 30 : sec.catnap_under_min;
+    const now = this._nowMs();
+    const todayKey = psDayKey(new Date(now));
 
-    const lastKey = slots.length ? slots[slots.length - 1].key : null;
-    const cols = slots.map((sl) => {
-      const n = byDay[sl.key];
-      /* A night away and a night the recorder lost are both empty and are not
-         the same fact. The hatch says "this should be here and is not"; the
-         away slot is quieter still and says "he was not here", which is the
-         one thing that stops a fortnight of travel reading as two weeks of
-         broken sensors. */
-      if (!n) {
-        return isAway(sl.key)
-          ? `<div class="ps-jwb away" title="${psEsc(this._awayLabel(sec))}"><i></i></div>`
-          : `<div class="ps-jwb miss"><i></i></div>`;
+    /* The bedtime band arrives in SHIFTED minutes (psNurseryNorms pushes an
+       after-midnight bedtime past 24h) and the row axis starts at 09:00, so
+       both ends come off the same subtraction. Drawn once, behind every row. */
+    const bed = norms.bed;
+    const bx = (m) => Math.max(0, Math.min(100, ((m - 540) / 1440) * 100));
+    const bandEl = !bed ? "" : `<div class="ps-jrsband" style="left:${
+      bx(bed.lo).toFixed(2)}%;width:${Math.max(0.6, bx(bed.hi) - bx(bed.lo)).toFixed(2)}%"></div>`;
+
+    const grid = [12, 18, 24, 30].map((h) => `<div class="ps-jrsg" style="left:${
+      (((h - 9) / 24) * 100).toFixed(2)}%"></div>`).join("");
+
+    const body = rows.map((r) => {
+      const t1 = r.t0 + span;
+      const mine = (sessions || []).filter((s) => {
+        const begin = Math.min(s.from, s.settledAt == null ? s.from : s.settledAt);
+        const end = s.active ? now : psWokeAt(s);
+        return end > r.t0 && begin < t1;
+      });
+      const away = isAway(r.key);
+      const dow = psEsc(r.date.toLocaleDateString([], { weekday: "short" }));
+      /* Nothing at all, on a day he was here: the recorder has a hole in it and
+         the row says so rather than drawing a day he never slept.
+         TODAY IS NEVER HATCHED. A day still in progress has nothing missing
+         from it — at nine in the morning every row would open hatched and read
+         as a broken sensor. It draws its empty lane with the now line on it,
+         which says the same thing honestly. */
+      if (!mine.length && r.key !== todayKey) {
+        return `<div class="ps-jrsr${r.key === todayKey ? " today" : ""}">
+            <span class="ps-jrsd">${dow}</span>
+            <div class="ps-jrsl ${away ? "away" : "miss"}" title="${psEsc(away
+    ? this._awayLabel(sec) : "Nothing recorded")}"></div></div>`;
       }
-      const last = sl.key === lastKey;
-      const hgt = y(n.asleep);
-      /* The corrected pip rides on the BAR, not on the column. Pinned to the
-         column it sat at the top of the plot with nothing under it — two of
-         them floating over the middle of the week, attached to nothing a reader
-         could connect them to. */
-      const pip = n.manual ? ` hand` : n.edited ? "" : null;
-      return `<div class="ps-jwb${last ? " last" : ""}${n.manual ? " logged" : ""}" title="${
-        psEsc(psHM(n.asleep))}${n.manual ? " · hand-logged" : ""}">
-          <i style="height:${hgt.toFixed(1)}%"></i>${
-        pip == null ? "" : `<span class="ps-edd wk${pip}" style="bottom:calc(${
-          hgt.toFixed(1)}% + 4px)" title="${n.manual ? "Hand-logged" : "Corrected"}"></span>`}</div>`;
+      const blocks = mine.map((s) => {
+        const begin = Math.min(s.from, s.settledAt == null ? s.from : s.settledAt);
+        const end = s.active ? now : psWokeAt(s);
+        const a = x(begin, r.t0);
+        const b = x(end, r.t0);
+        const w = Math.max(0.7, b - a);
+        const short = !s.night && !s.active && s.asleepMinutes < catnapUnder;
+        const cls = s.night ? "n" : short ? "s" : "d";
+        /* Settling is DRAWN — the pale head on the front of the block — which
+           is what lets "23m to settle him" stop being typed underneath. */
+        const sx = s.settledAt > begin ? Math.min(b, x(s.settledAt, r.t0)) : null;
+        const inner = (v) => (((v - a) / w) * 100).toFixed(2);
+        const ticks = (s.events || []).filter((t) => t >= r.t0 && t <= t1)
+          .map((t) => `<i class="ps-jrst" style="left:${inner(x(t, r.t0))}%"></i>`).join("");
+        return `<div class="ps-jrsb ${cls}${s.active ? " live" : ""}" style="left:${
+          a.toFixed(2)}%;width:${w.toFixed(2)}%" title="${psEsc(psHM(s.asleepMinutes))}">${
+          sx == null ? "" : `<i class="ps-jrss" style="width:${Math.max(0, Number(inner(sx))).toFixed(2)}%"></i>`
+}${ticks}${s.manual ? `<i class="ps-edd rs hand"></i>`
+    : s.edited ? `<i class="ps-edd rs"></i>` : ""}</div>`;
+      }).join("");
+      /* Today carries the two things only today has: where we are, and where
+         bedtime is expected to land. The ghost is the ONLY forecast in this
+         section, and it is drawn as a ghost so it cannot be read as a record. */
+      const live = r.key !== todayKey ? "" : `${bed ? `<div class="ps-jrsgh" style="left:${
+        bx(bed.mean).toFixed(2)}%"></div>` : ""}<div class="ps-jrsnow" style="left:${
+        x(now, r.t0).toFixed(2)}%"></div>`;
+      return `<div class="ps-jrsr${r.key === todayKey ? " today" : ""}">
+          <span class="ps-jrsd">${dow}</span>
+          <div class="ps-jrsl">${blocks}${live}</div></div>`;
     }).join("");
 
-    const labels = slots.map((sl) => `<span class="${sl.key === lastKey ? "last" : ""}${
-      isAway(sl.key) && !byDay[sl.key] ? " away" : ""}">${
-      psEsc(sl.date.toLocaleDateString([], { weekday: "narrow" }))}</span>`).join("");
-
-    /* A week with three days away is not a week with three nights missing, and
-       the count line was the loudest place that lie was told. Away days with no
-       night come out of the denominator and are named separately. */
-    const awayN = slots.filter((sl) => isAway(sl.key) && !byDay[sl.key]).length;
-
-    const bandEl = !b ? "" : `<div class="ps-jwband" style="bottom:${y(b.lo).toFixed(1)}%;height:${
-      Math.max(1, y(b.hi) - y(b.lo)).toFixed(1)}%"></div>
-      <div class="ps-jwavg" style="bottom:${y(b.mean).toFixed(1)}%"></div>`;
+    /* The count describes THE PLOT, not the fetch. `norms.nights` holds the
+       last seven nights on record and is what the bands are built from, but a
+       night older than the first row is not drawn here — quoting it would have
+       the caption claiming a night the reader cannot find. Today is out of the
+       denominator too: its night has not happened yet, and counting it as
+       missing would report a shortfall every day until bedtime.
+       A week with days away is not a week with nights missing — the same
+       correction the strip's count line carried, and for the same reason. */
+    const nights = norms.nights;
+    const past = rows.filter((r) => r.key !== todayKey);
+    const drawn = past.filter((r) => nights.some((n) => n.day === r.key)).length;
+    const awayN = past.filter((r) => isAway(r.key)
+      && !nights.some((n) => n.day === r.key)).length;
 
     return `<div class="ps-hyp">
         <div class="ps-hypt">
-          <span class="ps-lbl">How the week is going</span>
+          <span class="ps-lbl">His week</span>
           <span class="ps-grow"></span>
-          <b>${nights.length} of ${days - awayN} nights${awayN ? ` · ${awayN} away` : ""}</b>
+          <b>${drawn} of ${past.length - awayN} nights${awayN ? ` · ${awayN} away` : ""}</b>
         </div>
         <div class="ps-railbox">
-          <div class="ps-jwk">${bandEl}<div class="ps-jwbars">${cols}</div></div>
-          <div class="ps-jwx">${labels}</div>
+          <div class="ps-jrsw">${bandEl}${grid}${body}</div>
+          ${/* Labelled at the hours the gridlines actually fall on. Spread
+                evenly with space-between — which is what the night rail's tick
+                row does, correctly, because its marks ARE evenly divided — the
+                five captions here land at 0/25/50/75/100% on an axis whose
+                gridlines sit at 12.5/37.5/62.5/87.5, so every one of them
+                points at the wrong time and the bedtime band appears to sit an
+                hour and a half before his actual bedtime. */""}
+          <div class="ps-jrsx">${[[9, "9a"], [12, "12p"], [18, "6p"], [24, "12a"], [30, "6a"]]
+    .map(([hh, t], i) => `<i class="${i ? "" : "first"}" style="left:${
+      (((hh - 9) / 24) * 100).toFixed(2)}%">${t}</i>`).join("")}</div>
+          <div class="ps-jrslg">
+            <span><i class="n"></i>night</span><span><i class="d"></i>nap</span>
+            <span><i class="st"></i>settling</span><span><i class="tk"></i>went in</span>
+            ${bed ? `<span><i class="bd"></i>usual bedtime</span>` : ""}
+          </div>
         </div>
       </div>`;
   },
-
-  /* One line, and only where it can say something the plot above it cannot.
-   *
-   * The plot shows last night's column against the band; this says what that
-   * MEANS as a comparison — the distance from his usual, or how long the good
-   * run has been going. Both are arithmetic you would otherwise do by eye, which
-   * is the test a roll-up has to pass to earn a line at all. With no band there
-   * is nothing to compare against and the line is DROPPED rather than filled
-   * with a hedge. */
-  _nurseryVerdict(norms) {
-    const b = norms.asleep;
-    const ns = norms.nights;
-    if (!b || !ns.length) return "";
-    const last = ns[ns.length - 1];
-
-    if (last.asleep < b.lo) {
-      return `<div class="ps-jvd">Last night ran <em class="w">${
-        psEsc(psHM(Math.round(b.mean - last.asleep)))} short</em> of his usual.</div>`;
-    }
-    if (last.asleep > b.hi) {
-      return `<div class="ps-jvd">Last night ran <em>${
-        psEsc(psHM(Math.round(last.asleep - b.mean)))} longer</em> than his usual.</div>`;
-    }
-    let streak = 0;
-    for (let i = ns.length - 1; i >= 0 && ns[i].asleep >= b.lo && ns[i].asleep <= b.hi; i -= 1) streak += 1;
-    return `<div class="ps-jvd"><em>Normal for him</em>${
-      streak > 1 ? ` — ${streak} nights running inside his usual range` : ""}.</div>`;
-  },
-
   /* Today at a glance: the tail of last night, each nap where it fell, now,
      and tonight's expected bedtime as a ghost. Answers "are we on schedule"
-     without a single number. */
-  _nurseryDayRail(sessions, todayKey, bedMean) {
+     without a single number.
+
+     It moved to the COLLAPSED face (v1.79.0). The rings answer how much; this
+     is the only thing on that face that answers WHEN, which is the question it
+     actually gets asked in the afternoon — and it took the place of a sentence
+     rather than adding a row. It is the same picture as one row of the week
+     raster below, deliberately: the two faces then read as one language instead
+     of two charts of the same day. */
+  _nurseryDayRail(sessions, todayKey, bedMean, norms) {
     /* 6am to 10pm, not midnight to midnight: a whole-day axis spends a third
        of its width on hours nothing ever happens in, which squeezes the naps
        into slivers. The tail of last night and the head of tonight still land
@@ -2061,18 +2175,42 @@ Object.assign(PurdyShellCard.prototype, {
 
     let bars = "";
     (sessions || []).forEach((s) => {
-      const end = psWokeAt(s);
+      const end = s.active ? this._nowMs() : psWokeAt(s);
       /* A correction can put the start of sleep before the Hatch went on, and
          the bar is the SLEEP, so it starts at whichever came first. */
       const begin = Math.min(s.from, s.settledAt == null ? s.from : s.settledAt);
       if (end < t0 || begin > t1) return;
       const a = x(begin);
       const b = x(end);
-      const short = !s.night && s.asleepMinutes < 30;
+      const short = !s.night && !s.active && s.asleepMinutes < 30;
       bars += `<rect x="${a.toFixed(2)}" y="6" width="${Math.max(0.5, b - a).toFixed(2)}"
         height="6" rx="2" fill="${s.night ? "var(--ps-deep)" : short ? "var(--ps-warn)" : "var(--ps-light)"}"
         opacity="${s.night ? 0.75 : 1}"/>`;
+      /* The settling head, drawn on the front of the block. It is the same mark
+         the raster carries, and it is what lets the settling minutes stop being
+         written out in a sentence underneath. A session corrected to start
+         before the Hatch has no head to draw — he was already asleep. */
+      if (s.settledAt > begin) {
+        const sx = Math.min(b, x(s.settledAt));
+        if (sx > a + 0.15) {
+          bars += `<rect x="${a.toFixed(2)}" y="6" width="${(sx - a).toFixed(2)}"
+            height="6" rx="2" fill="rgba(255,255,255,.42)"/>`;
+        }
+      }
     });
+
+    /* His usual bedtime as a band, so the ghost reads as the middle of a range
+       rather than as a time the card is promising. Both come off this rail's
+       own x(), for the reason spelled out under the ghost. A band arrives in
+       SHIFTED minutes, so a bedtime past midnight lands off the right-hand end
+       and clamps there rather than wrapping back to breakfast. */
+    const band = !norms || !norms.bed ? "" : (() => {
+      const a = x(day.getTime() + norms.bed.lo * 60000);
+      const b = x(day.getTime() + norms.bed.hi * 60000);
+      if (b <= a) return "";
+      return `<rect x="${a.toFixed(2)}" y="3.5" width="${(b - a).toFixed(2)}" height="11"
+        rx="1.6" fill="rgba(170,120,255,.13)"/>`;
+    })();
 
     /* The ghost is placed on the SAME axis as everything else on this rail.
        It was `(bedMean / 1440) * 100`, which is a position on a midnight-to-
@@ -2093,7 +2231,7 @@ Object.assign(PurdyShellCard.prototype, {
           <svg viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true"
             style="width:100%;height:18px;display:block">
             <rect x="0" y="6" width="100" height="6" rx="2" fill="rgba(255,255,255,.05)"/>
-            ${bars}${ghost}
+            ${band}${bars}${ghost}
             <line x1="${nx.toFixed(2)}" y1="1.5" x2="${nx.toFixed(2)}" y2="16.5"
               stroke="var(--ps-text)" stroke-width="0.8"/>
           </svg>
@@ -2104,6 +2242,95 @@ Object.assign(PurdyShellCard.prototype, {
       </div>`;
   },
 
+  /* THE NAPS: when, how long, and how long that is FOR HIM.
+   *
+   * The rows used to be three facts on one line — a clock span, a duration, and
+   * the word "short" past a fixed threshold. The threshold was the weak part:
+   * 30 minutes is a catnap for any baby, and says nothing about whether a
+   * 66-minute morning nap is normal for THIS one. His own bands were already
+   * being computed a few lines up for the meters, so the row gets the same
+   * treatment the night gets — a track, his band, and a dot on it.
+   *
+   * The clock span leads, because that is what the row has always been read
+   * for, and it is the one thing a bar cannot say. The bands are split by WHEN
+   * the nap falls rather than by its index in the day; psNurseryNorms explains
+   * why, and the label is taken from the same clock so it always names the band
+   * drawn under it.
+   *
+   * THE GAPS ARE ROWS TOO. The wake window between two naps is what decided the
+   * second put-down and it is written nowhere else on the card. The TRAILING
+   * gap is drawn only when the chip is not already carrying it — the chip says
+   * "Awake 1h 16m · since 3:43 PM" when it has no nap prediction to make, and
+   * printing it again here is the chip repeating the line beside it. */
+  _nurseryNaps(sec, naps, norms, stats, o) {
+    const catnapUnder = sec.catnap_under_min == null ? 30 : sec.catnap_under_min;
+    const canEdit = o.canEdit;
+    const edd = o.edd;
+
+    if (!naps.length) {
+      const line = o.away
+        ? `${o.awayLabel} — he was out, so no naps were recorded`
+        : "No naps yet today";
+      return `<div class="ps-jnaps"><div class="ps-jnapnone">${psEsc(line)}</div>${
+        o.showAwake ? this._nurseryGap(stats.wakeWindowMin,
+          `since ${psClock(stats.wakeSince)}`) : ""}</div>`;
+    }
+
+    let out = "";
+    naps.forEach((s, i) => {
+      const hour = new Date(s.from).getHours();
+      const slot = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening";
+      const band = (norms.naps || {})[hour < 12 ? "am" : "pm"];
+      const short = !s.active && s.asleepMinutes < catnapUnder;
+      const dom = s.asleepMinutes == null ? null : psHmDomain(band);
+      /* A nap is a metric where MORE is better, so a nap past his usual sits
+         above the band and must not draw amber — the same mirror `loOk` is for
+         the wake-up count, pointing the other way. A running nap keeps its dot
+         and its band (seeing that he is already past his usual is the reason to
+         look mid-nap) but wears the unsettled grey, because the number is still
+         a lower bound. */
+      let track = "";
+      if (dom) {
+        const at = psHmPos(s.asleepMinutes, dom.lo, dom.hi);
+        const bl = psHmPos(Number(band.lo), dom.lo, dom.hi);
+        const bh = psHmPos(Number(band.hi), dom.lo, dom.hi);
+        const cls = s.active ? "q" : s.asleepMinutes > band.hi ? "high"
+          : s.asleepMinutes < band.lo ? "out" : "";
+        track = `<div class="ps-hmt"><div class="ps-hmb" style="left:${bl.toFixed(1)}%;width:${
+          Math.max(1, bh - bl).toFixed(1)}%"></div><div class="ps-hmd ${cls}" style="left:${
+          at.toFixed(1)}%"></div></div>`;
+      }
+      out += `<div class="ps-jnap"${canEdit(s) ? ` data-napedit="${s.from}"` : ""}>
+          <div class="ps-jnaph">
+            <span class="ps-jnapk">${psEsc(slot)}</span>
+            <span class="ps-jnapt">${edd(s)}${psClock(s.from)} – ${
+        s.active ? "now" : psClock(psWokeAt(s))}</span>
+            <span class="ps-grow"></span>
+            <span class="ps-jnapv${short ? " short" : ""}">${psHM(s.asleepMinutes)}${
+        s.active ? " so far" : ""}</span>
+          </div>${track}</div>`;
+      /* The gap to the NEXT nap. Measured from when he woke, not from when the
+         Hatch stopped, so a session corrected past the machine reports the
+         window a person would have felt. */
+      const next = naps[i + 1];
+      if (next && !s.active) {
+        out += this._nurseryGap(Math.round((next.from - psWokeAt(s)) / 60000));
+      }
+    });
+    if (o.showAwake) {
+      out += this._nurseryGap(stats.wakeWindowMin, `since ${psClock(stats.wakeSince)}`);
+    }
+    return `<div class="ps-jnaps">${out}</div>`;
+  },
+
+  /* One awake window, drawn as a connector rather than a row: it is the space
+     between two sleeps, and it should read as the space. A null is DROPPED —
+     "awake 0m" between two naps would be a claim, and there is no such gap. */
+  _nurseryGap(mins, note) {
+    if (mins == null || !Number.isFinite(mins) || mins <= 0) return "";
+    return `<div class="ps-jgap"><i></i><span>awake ${psEsc(psHM(mins))}${
+      note ? ` · ${psEsc(note)}` : ""}</span><i></i></div>`;
+  },
   _secNursery(sec) {
     const h = this._hass;
     const playing = pcState(h, sec.hatch) === "playing";
@@ -2165,6 +2392,11 @@ Object.assign(PurdyShellCard.prototype, {
      * due, so that is what the chip carries. */
     let chipCls = "";
     let chipTxt = "Awake";
+    /* Whether the CHIP ended up carrying the wake window. The naps block draws
+       the trailing awake gap only when it did not — the chip has three readings
+       and only one of them is the awake time, so "the chip already says it" is
+       a fact to be read off the branch that ran, never assumed. */
+    let chipAwake = false;
     if (playing && live) {
       chipCls = live.hadExit ? "deep" : "lt";
       /* During the NIGHT the ring under this chip already reads the same
@@ -2227,6 +2459,7 @@ Object.assign(PurdyShellCard.prototype, {
       const due = dueIsNight ? null : stats.napDueInMin;
       if (due == null) {
         chipTxt = `Awake ${psHM(stats.wakeWindowMin)} · since ${psClock(stats.wakeSince)}`;
+        chipAwake = true;
       } else if (due <= -10) {
         chipCls = "warn"; chipTxt = `Nap overdue ${psHM(-due)}`;
       } else if (due <= 10) {
@@ -2355,6 +2588,15 @@ Object.assign(PurdyShellCard.prototype, {
               : away ? psEsc(`${awayLabel.toLowerCase()} — not recorded today`) : "none yet"}</span>`}</div>
         </div>
       </div>
+      ${/* THE DAY, on the collapsed face (v1.79.0).
+            The rings answer how much; nothing here answered WHEN, and when is
+            what decides whether the next nap is due and whether bedtime is
+            drifting. It replaced a sentence rather than adding a row: the
+            status line under it now carries only what the picture cannot.
+            Drawn only once there is something to draw — an axis with no marks
+            on it is a plot claiming a day nothing happened in. */""}
+      ${!loaded || (!sessions.length && stats.bedMean == null) ? ""
+    : this._nurseryDayRail(sessions, todayKey, stats.bedMean, norms)}
       ${/* The one thing done in this room every single day, and the card could
             not do it: start the Hatch to put him down, stop it to get him up.
             Both meant leaving for the media page. The sound machine IS the
@@ -2392,81 +2634,70 @@ Object.assign(PurdyShellCard.prototype, {
               and still below, but aimed at a reader who does not trust the
               figure yet. The question asked of this section each morning is
               whether the night was normal for him and whether the week is going
-              the right way, so that is what it opens with now. */""}
-        ${this._nurseryWeek(norms, sec, this._awayDays(sec))}
-        ${this._nurseryVerdict(norms)}
-        ${meters}
-        ${nightSession ? `
-        ${/* Five rows became two lines, in the words a person would use.
-              A stranger reading the old block could not tell "Down" from
-              "Settled" — and the honest gloss is not a definition, it is the
-              sequence: he went in the cot, somebody left the room, he woke.
-              "Left him" rather than "fell asleep" is deliberate and is the same
-              care the numbers already take: settledAt is when the PARENT LEFT,
-              a lower bound on when he dropped off, and no wording here is
-              allowed to claim the card knows the moment. */""}
-        ${/* A correction can put him asleep BEFORE the sound machine went on —
-              he went down in the car and was carried in. The sequence then
-              starts with the sleep, because "Put down 7:27 → left him 7:10"
-              is the card telling the story backwards. And on a corrected
-              session the middle step is "fell asleep", not "left him": a
-              person typed that time in, so the lower-bound hedge the
-              derivation needs would be a hedge about their own answer. */""}
-        <div class="ps-jstory"${canEdit(nightSession) ? ` data-napedit="${nightSession.from}"` : ""}>
-          ${nightSession.settledAt < nightSession.from
-    ? `${edd(nightSession)}Asleep <b>${psClock(nightSession.settledAt)}</b>
-          <i>→</i> put down <b>${psClock(nightSession.from)}</b>`
-    : `${edd(nightSession)}Put down <b>${psClock(nightSession.from)}</b>
-          ${nightSession.hadExit ? `<i>→</i> ${nightSession.edited && !nightSession.manual
-      ? "fell asleep" : "left him"} <b>${psClock(nightSession.settledAt)}</b>` : ""}`}
-          ${nightSession.active ? "" : `<i>→</i> woke <b>${psClock(psWokeAt(nightSession))}</b>`}
-        </div>
-        <div class="ps-jstoryn">${nightSession.manual
-          ? "Logged by hand"
-          : nightSession.settledAt < nightSession.from
-            ? "already asleep when the Hatch went on"
-            : nightSession.hadExit
-              ? `${psEsc(psHM(nightSession.settleMinutes))} to settle him`
-              : "still settling — nobody has left the room yet"}${
-          /* Where the correction runs past the measurement, say where the
-             measurement stopped. The card is reporting a time the recorder
-             does not hold, and the row that shows it should say so. */
-          !nightSession.manual && psWokeAt(nightSession) > nightSession.to
-            ? ` · Hatch stopped ${psEsc(psClock(nightSession.to))}` : ""}${
-          nightSession.manual ? " · hand-logged, so wake-ups are not known"
-            : nightSession.events.length
-              ? ` · went in at ${psEsc(nightSession.events.map((t) => psClock(t)).join(", "))}`
-              : nightSession.hadExit ? " · nobody went in" : ""}</div>` : ""}
-        ${/* The night's own shape, kept as the last piece of evidence rather
-              than the opening statement. Its legend is also the only place
-              settling and asleep are drawn apart in colour, which is what makes
-              the two words above it mean something. */""}
-        ${this._nurseryRail(nightSession, loaded, err)}
+              the right way, so that is what it opens with now.
 
-        ${this._nurseryDayRail(sessions, todayKey, stats.bedMean)}
-        <div class="ps-jrs">
-          ${todayNaps.length ? todayNaps.map((s) => `
-            <div class="ps-jr"${canEdit(s) ? ` data-napedit="${s.from}"` : ""}>
-              <span class="ps-l">${edd(s)}${psClock(s.from)} – ${s.active ? "now" : psClock(psWokeAt(s))}</span>
-              <span class="ps-v">${psHM(s.asleepMinutes)}${s.active ? " so far" : ""}</span>
-              <span class="${!s.active && s.asleepMinutes < catnapUnder ? "ps-warnc" : "ps-flat"}">${
-                !s.active && s.asleepMinutes < catnapUnder ? "short" : s.interventions ? s.interventions + " in" : ""}</span></div>`).join("")
-            : `<div class="ps-jr"><span class="ps-l">${away
-              ? psEsc(`${awayLabel} — he was out, so no naps were recorded`)
-              : "No naps yet today"}</span></div>`}
-          ${/* Suppressed on an away day for the same reason the chip is: it is
-                measured from the end of a session that happened HERE, and the
-                naps it should have been reset by happened somewhere else. */""}
-          ${away || stats.wakeWindowMin == null ? "" : `<div class="ps-jr"><span class="ps-l">Awake for</span>
-            <span class="ps-v">${psHM(stats.wakeWindowMin)}</span>
-            <span class="ps-flat">since ${psClock(stats.wakeSince)}</span></div>`}
-        </div>
+              v1.79.0 turned that opening from a column chart into a raster of
+              his days on a clock, and the sentence under it went with the
+              change: the strip could only show how LONG, so a line naming the
+              distance from his usual was the only way to say anything else.
+              The raster draws bedtime, nap timing, the spread of the wake-ups
+              and the days with nothing recorded, and the ring on the collapsed
+              face is still the duration against his own average — so the
+              sentence had nothing left that was not already drawn twice. */""}
+        ${this._nurseryRaster(sessions, norms, sec, this._awayDays(sec))}
+        ${meters}
+        ${/* The night's own shape, with the moments marked ON it. What was here
+              was two lines of prose — "Put down 7:36 PM → left him 7:48 PM →
+              woke 6:51 AM", then the settling minutes and a list of the times
+              somebody went in — every one of which is a point on the axis
+              below. The rail labels the exit and the trips where they happened
+              and the tick row already captions both ends, so the sequence reads
+              itself; and the spread of the trips, which the sentence could
+              never show, comes free.
+
+              The caption survives ONLY for what the drawing cannot say. In the
+              ordinary case it renders nothing at all. */""}
+        ${this._nurseryRail(nightSession, loaded, err)}
+        ${!nightSession ? "" : (() => {
+    const bits = [];
+    if (nightSession.manual) bits.push("Logged by hand · wake-ups are not known");
+    else if (!nightSession.hadExit) bits.push("Still settling — nobody has left the room yet");
+    else if (nightSession.settledAt < nightSession.from) {
+      bits.push("Already asleep when the Hatch went on");
+    }
+    /* Where the correction runs past the measurement, say where the
+       measurement stopped. The card is reporting a time the recorder does
+       not hold, and the surface that shows it should say so. */
+    if (!nightSession.manual && psWokeAt(nightSession) > nightSession.to) {
+      bits.push(`Hatch stopped ${psClock(nightSession.to)}`);
+    }
+    if (nightSession.blindMin) {
+      bits.push(`Server down ${psHM(nightSession.blindMin)} — the door was unwatched`);
+    }
+    return bits.length ? `<div class="ps-jstoryn">${psEsc(bits.join(" · "))}</div>` : "";
+  })()}
+        ${/* The naps: when, how long, and how long that is for HIM. The clock
+              span leads because that is what the row is read for, and the day
+              rail moved up to the collapsed face, so this is where nap timing
+              is stated in numbers rather than drawn. */""}
+        ${this._nurseryNaps(sec, todayNaps, norms, stats, {
+    away,
+    awayLabel,
+    canEdit,
+    edd,
+    /* Suppressed on an away day for the reason the chip is: the wake window is
+       measured from a session that ended HERE, and the naps that should have
+       reset it happened somewhere else. And suppressed when the chip is already
+       carrying it, which is the chip-must-not-repeat-the-line rule at the one
+       surface where the two are three centimetres apart. */
+    showAwake: !away && !chipAwake && stats.wakeWindowMin != null,
+  })}
         ${/* A long press has no affordance of its own, so the list says it
               once. Only where there is somewhere to write the correction —
               without the store the gesture does nothing, and inviting it would
               be worse than not offering it. */""}
         ${editable && (todayNaps.length || nightSession)
-          ? `<div class="ps-note">Press and hold a row to correct when he actually slept — or tap a ring.</div>` : ""}
+    ? `<div class="ps-note">Press and hold a nap to correct when he actually slept — or tap a ring.</div>` : ""}
       </div>`;
   },
 });
