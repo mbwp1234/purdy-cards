@@ -780,11 +780,17 @@ check('the transport keys are plain clicks, never repeats',
 
 // volume steps rather than sets: Samsung advertises VOLUME_SET but never honours it
 check('volume renders step buttons, not a slider', rh.includes('id="volup"') && !rh.includes('type="range"'));
-/* And draws NO level. Samsung reports volume_level as 0 forever, so a filled
-   track would be a fabricated reading — the zero-versus-missing rule at the one
-   surface where the honest answer is to show nothing at all. */
-check('the volume rail never draws a level it cannot read',
-  !/attributes\.volume_level/.test(remoteSrc) && !rh.includes('vtick'));
+/* The level NEVER comes from the player. Samsung reports volume_level as 0
+   forever (one real 0.19 in a week of history, at the instant the UPnP channel
+   connects), the Android TV player publishes none at all, and the Sony SA-S350
+   soundbar downstream of both has no network control — so reading the attribute
+   would be a fabricated reading whichever way it went. v1.81.0 draws a level
+   from a tracker helper the card writes itself, and the attribute stays unread. */
+check('the volume level never comes from the player\'s own attribute',
+  !/attributes\.volume_level/.test(remoteSrc));
+/* And with no tracker configured there is no ladder at all — the meter-with-no-
+   band rule. An empty track would imply a reading that could have existed. */
+check('a rail with no tracker draws no ladder', !rh.includes('id="vlad"'));
 rc._step(1);
 const vup = rhass._calls.find(c => c[1]==='volume_up');
 check('volume up targets the media player', vup && vup[2].entity_id==='media_player.lr');
@@ -802,6 +808,174 @@ check('mute shows the value it just asked for, before HA echoes it',
 rc._opt['mute:media_player.lr'].at = Date.now() - 20000;
 check('an optimistic value expires rather than lying for ever',
   rc._muted(rc._tv()) === false);
+
+/* ---- the volume ladder (v1.81.0) ---------------------------------------
+ *
+ * There is no volume reading in this house and there cannot be one, so the
+ * ladder counts the card's own presses into an input_number. The drift is
+ * accepted deliberately; what is NOT accepted is the drift being invisible,
+ * which is what these assertions are about. */
+const vhass = { states: {
+  'remote.lr': { state:'on', attributes:{} },
+  'sensor.lr_app': { state:'Twitch', attributes:{} },
+  'media_player.lr': { state:'on', attributes:{ is_volume_muted:false } },
+  'input_number.bar': { state:'20', attributes:{ min:0, max:100, step:1 } },
+}, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
+const mkVol = () => {
+  const c = new RC();
+  c.setConfig({ tvs:[{ name:'Living Room', remote:'remote.lr',
+    media_player:'media_player.lr', app_sensor:'sensor.lr_app',
+    volume_track:'input_number.bar' }], apps:[] });
+  c.hass = vhass;
+  return c;
+};
+const vc = mkVol();
+check('the tracker is watched, or the ladder waits on the 30s clock',
+  vc._watched.includes('input_number.bar'));
+const vhtml = vc.shadowRoot.innerHTML;
+check('a configured tracker draws the ladder', vhtml.includes('id="vlad"'));
+const NDASH = Number((remoteSrc.match(/PC_VOL_DASHES = (\d+)/) || [])[1]);
+check('the ladder draws one rung per dash', NDASH > 0 &&
+  (vhtml.match(/<i class=/g) || []).length === NDASH);
+check('the lit rungs are the level, rounded to the dash',
+  (vhtml.match(/<i class="on">/g) || []).length === Math.round(0.20 * NDASH));
+check('the ladder reports its value to a screen reader',
+  vhtml.includes('aria-valuenow="20"') && vhtml.includes('role="slider"'));
+
+/* THE zero-versus-missing pin, at the surface the whole feature turns on. An
+   input_number reads `unknown` until it is first written and parseFloat answers
+   NaN; a level of 0 is a real reading. They must not draw the same picture. */
+vhass.states['input_number.bar'] = { state:'unknown', attributes:{ min:0, max:100 } };
+const vcU = mkVol();
+const vhU = vcU.shadowRoot.innerHTML;
+check('an unwritten tracker reads as nothing, not as zero', vcU._level(vcU._tv()) === null);
+check('no reading draws a HOLLOW ladder', vhU.includes('class="vlad unset" id="vlad"'));
+check('no reading claims no value to a screen reader', !vhU.includes('aria-valuenow'));
+vhass.states['input_number.bar'] = { state:'0', attributes:{ min:0, max:100 } };
+const vcZ = mkVol();
+const vhZ = vcZ.shadowRoot.innerHTML;
+check('a level of zero is a real reading, drawn solid',
+  vhZ.includes('class="vlad" id="vlad"') &&
+  vhZ.includes('aria-valuenow="0"') && !vhZ.includes('<i class="on">'));
+check('zero and no-reading are different pictures',
+  vhZ.includes('class="vlad" id="vlad"') && vhU.includes('class="vlad unset" id="vlad"'));
+/* The hollow style has to EXIST, or the class is a no-op and both draw alike. */
+check('the hollow ladder is actually styled, not just classed',
+  /\.vlad\.unset i \{[^}]*border-top: 1px dashed/.test(remoteSrc));
+
+/* Stepping writes the tracker AND still sends the command. Dropping either
+   half gives a ladder that moves without the room, or a room without a ladder. */
+vhass.states['input_number.bar'] = { state:'20', attributes:{ min:0, max:100 } };
+const vcS = mkVol();
+vhass._calls.length = 0;
+vcS._step(1);
+const sv = vhass._calls.find(c => c[0]==='input_number' && c[1]==='set_value');
+check('a volume step writes the tracker', sv && sv[2].entity_id==='input_number.bar' && sv[2].value===21);
+check('a volume step still reaches the player',
+  vhass._calls.some(c => c[1]==='volume_up'));
+/* Computing the next value from the LIVE state is how the climate panel's third
+   tap kept recomputing the same number inside the echo window. */
+vcS._step(1); vcS._step(1);
+check('a burst accumulates rather than recomputing the same number',
+  vcS._level(vcS._tv()) === 23);
+/* ...but the helper is written on a THROTTLE, not once per press. */
+check('a burst does not write the helper once per press',
+  vhass._calls.filter(c => c[1]==='set_value').length === 1);
+clearTimeout(vcS._volTail); vcS._volTail = null;
+/* A helper value outside the helper's range is silently rejected and the
+   tracker then never works again. */
+vhass.states['input_number.bar'] = { state:'100', attributes:{ min:0, max:100 } };
+const vcC = mkVol();
+vhass._calls.length = 0;
+vcC._step(1);
+check('the tracker is clamped to the helper range, never written past it',
+  !vhass._calls.some(c => c[1]==='set_value'));
+/* Muted keeps the level — you want to know what you are coming back to. */
+vhass.states['input_number.bar'] = { state:'50', attributes:{ min:0, max:100 } };
+vhass.states['media_player.lr'] = { state:'on', attributes:{ is_volume_muted:true } };
+const vcM = mkVol();
+const vhM = vcM.shadowRoot.innerHTML;
+check('mute silences the ladder without zeroing it',
+  vhM.includes('class="vlad mut"') &&
+  (vhM.match(/<i class="on">/g) || []).length === Math.round(0.50 * NDASH));
+
+/* A method can be complete and never called. */
+check('the re-anchor gesture is bound, not merely defined',
+  /_bindVolSet\(el\) \{/.test(remoteSrc) && /if \(vl\) this\._bindVolSet\(vl\)/.test(remoteSrc));
+/* Without a repair route the first drift is permanent, since nothing measures
+   the soundbar and no state will ever correct the count. */
+check('the ladder can be re-anchored by hand',
+  /HOLD = 380/.test(remoteSrc) && /this\._setLevel\(id, v\)/.test(remoteSrc));
+/* Re-rendering mid-gesture detaches the node under the finger: the handler
+   keeps its stale el, getBoundingClientRect reads zero, every later move is
+   discarded. Six surfaces now. */
+check('the ladder paints in place and gates the repaint while dragging',
+  /_paintLadder\(\) \{/.test(remoteSrc) && /this\._paintLadder\(\);/.test(remoteSrc) &&
+  /live = true;\s*\n\s*this\._dragging = true;/.test(remoteSrc));
+
+/* The now-playing tile takes the running app's colour. A TINT, not a fill:
+   five of the nine marks are coloured glyphs on transparent and a solid brand
+   ground would swallow the mark it exists to show. */
+check('the now-playing tile carries the running app\'s colour',
+  vhtml.includes('#9146FF') || /PC_BRAND_TINT/.test(remoteSrc));
+check('every brand with a mark has a tint, or the tile flickers neutral', (() => {
+  const marks = Object.keys(JSON.parse('{}')) ;
+  const bt = remoteSrc.slice(remoteSrc.indexOf('const PC_BRAND_TINT'), remoteSrc.indexOf('/* Hold-to-repeat'));
+  const brands = (remoteSrc.slice(remoteSrc.indexOf('const PC_BRANDS'), remoteSrc.indexOf('const PC_BRAND_TINT'))
+    .match(/^  ([a-z0-9]+):/gm) || []).map(x => x.trim().replace(':',''));
+  return brands.length >= 9 && brands.every(b => bt.includes(b + ':'));
+})());
+/* An unrecognised app gets no tint at all — a colour meaning "some app" means
+   nothing, and the grid stays neutral so the one tile that matters stands out. */
+check('an unknown app is left untinted rather than given a default colour',
+  /\(brand && PC_BRAND_TINT\[brand\]\) \|\| null/.test(remoteSrc));
+check('the app grid itself is not tinted',
+  !/\.app \{[^}]*PC_BRAND_TINT/.test(remoteSrc));
+
+/* ---- the app strip (v1.81.0) --------------------------------------------
+ * Two 58px rows the trackpad then had to give back through _fitPad. */
+check('the app strip is one scrolling row, not a wrapping grid',
+  /\.apps \{[^}]*overflow-x: auto/.test(remoteSrc) &&
+  !/\.apps \{[^}]*grid-template-columns/.test(remoteSrc));
+/* pan-x is NOT equivalent to the default on an overflow-x strip: it makes the
+   browser's axis commitment stickier and a diagonal swipe kills the scroll. */
+check('the app strip takes no touch-action of its own',
+  !/\.apps \{[^}]*touch-action/.test(remoteSrc));
+check('the app strip contains its overscroll',
+  /\.apps \{[^}]*overscroll-behavior-x: contain/.test(remoteSrc));
+/* A truncated label is a MISSING label — the tile grows to its name. */
+check('an app tile sizes to its label rather than to a column', (() => {
+  const b = remoteSrc.slice(remoteSrc.indexOf('.app {'), remoteSrc.indexOf('.app:active'));
+  return /min-width: 56px/.test(b) && /flex: 0 0 auto/.test(b);
+})());
+/* The mockup's count. Five tiles and the edge of a sixth is what says the row
+   scrolls; four and a sliver reads as a grid that ran out of room. */
+check('the strip is sized for five tiles and a peek', (() => {
+  const b = remoteSrc.slice(remoteSrc.indexOf('.app {'), remoteSrc.indexOf('.app:active'));
+  const w = Number((b.match(/min-width: (\d+)px/) || [])[1]);
+  const pad = Number((b.match(/padding: 0 (\d+)px/) || [])[1]);
+  const gap = Number((remoteSrc.slice(remoteSrc.indexOf('.apps {')).match(/gap: (\d+)px/) || [])[1]);
+  /* 340px of strip inside the sheet. Five tiles plus their gaps must leave
+     room for a sixth to show, and must not leave room for a sixth to FIT. */
+  const five = 5 * w + 4 * gap;
+  return w > 0 && gap > 0 && pad >= 0 && five < 340 && five + gap + w > 340;
+})());
+/* The label still sets the floor, and it is drawn at a step off the scale. */
+check('the app label stays on the type scale rather than shrinking to fit', (() => {
+  const b = remoteSrc.slice(remoteSrc.indexOf('.app {'), remoteSrc.indexOf('.app:active'));
+  const fs = Number((b.match(/font-size: (\d+)px/) || [])[1]);
+  return fs === 9;
+})());
+/* The trackpad is not a scroller and keeps its own gesture surface. */
+check('the trackpad still claims its gesture outright', (() => {
+  const b = remoteSrc.slice(remoteSrc.indexOf('.pad {'), remoteSrc.indexOf('.pad.live'));
+  return /touch-action: none/.test(b);
+})());
+/* A one-row strip hides what a two-row grid showed; the live app is the thing
+   most worth not hiding, but yanking it back on every repaint is worse. */
+check('the strip reveals the live app, and only when it changes',
+  /_revealApp\(\) \{/.test(remoteSrc) && /this\._revealApp\(\);/.test(remoteSrc) &&
+  /if \(key === this\._shownApp\) return;/.test(remoteSrc));
 
 /* Both Samsungs carry SELECT_SOURCE with a real source_list and the card had no
    route to it. It was first built as a cycle key labelled with the input it

@@ -581,11 +581,20 @@ Object.assign(PurdyShellCard.prototype, {
     if (this._sheet === "media") {
       const face = this._mediaFace();
       const sec = (this._config.sections || []).find((x) => x.type === "music");
+      /* The green bar says what is ON; the pill says what you are LOOKING at.
+         Two different questions, so two different marks — the mockup draws both
+         and they must not be merged into one coloured pill, or "selected" and
+         "playing" stop being separable and the tab you opened deliberately on a
+         silent house lights up as though something were playing. */
+      const mlive = this._mediaLive();
+      const bar = (o) => (o ? '<span class="ps-mbar"></span>' : "");
       const tabs = `<div class="ps-mtabs" role="tablist">
           <button class="ps-mtab${face === "watch" ? " on" : ""}" type="button"
-            data-media="watch" role="tab" aria-selected="${face === "watch"}">Watch</button>
+            data-media="watch" role="tab" aria-selected="${face === "watch"}"
+            >${bar(mlive.tv)}Watch</button>
           <button class="ps-mtab${face === "listen" ? " on" : ""}" type="button"
-            data-media="listen" role="tab" aria-selected="${face === "listen"}">Listen</button>
+            data-media="listen" role="tab" aria-selected="${face === "listen"}"
+            >${bar(mlive.music)}Listen</button>
         </div>`;
       const spec = (this._config.sheets || {}).media || {};
       const title = psEsc(spec.title || "Media");
@@ -773,16 +782,27 @@ Object.assign(PurdyShellCard.prototype, {
    *
    * `default_face:` on the sheet is that tie-break, so changing your mind about
    * it is config rather than another release. */
+  /* Which half of the sheet has something ON. Lifted out of _mediaFace, which
+     already had to work both out to choose a face and then threw them away —
+     the tabs want the same two facts to draw their live bars, and deriving them
+     twice is how the two readings drift. */
+  _mediaLive() {
+    const media = (this._config.sheets || {}).media || {};
+    const tvs = media.tvs || (media.card || {}).tvs
+      || (((this._config.sheets || {}).tv || {}).card || {}).tvs || [];
+    return {
+      tv: tvs.some((t) => {
+        const st = pcState(this._hass, t.media_player || t.remote);
+        return st && st !== "off" && st !== "unavailable" && st !== "unknown";
+      }),
+      music: !!this._nowPlaying(),
+    };
+  },
+
   _mediaFace() {
     if (this._mediaPick === "watch" || this._mediaPick === "listen") return this._mediaPick;
     const media = (this._config.sheets || {}).media || {};
-    const tvOn = media.tvs || (media.card || {}).tvs
-      || (((this._config.sheets || {}).tv || {}).card || {}).tvs || [];
-    const anyTv = tvOn.some((t) => {
-      const st = pcState(this._hass, t.media_player || t.remote);
-      return st && st !== "off" && st !== "unavailable" && st !== "unknown";
-    });
-    const anyMusic = !!this._nowPlaying();
+    const { tv: anyTv, music: anyMusic } = this._mediaLive();
     if (anyTv && !anyMusic) return "watch";
     if (anyMusic && !anyTv) return "listen";
     return media.default_face === "listen" ? "listen" : "watch";
