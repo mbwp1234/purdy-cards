@@ -32,6 +32,17 @@ const PC_RPT_EVERY = 130;
    12s so a failure shows the truth rather than a lie that never lapses. */
 const PC_OPT_MS = 12000;
 
+/* The trackpad's range. It is the only element on this card with no intrinsic
+   size of its own, so it is the one that gives when the sheet is shorter than
+   the remote would like — see _fitPad. */
+const PC_PAD_MAX = 200;
+/* Below this the trackpad stops being a surface you can swipe on and becomes a
+   fourth row of keys with a hole in the middle. Where the volume rail is
+   present the row floors higher on its own — 44 + 36 + 44 plus padding is
+   ~150px of min-content that a flex item will not shrink past — so 132 is only
+   ever reached on a TV with no media_player beside it. */
+const PC_PAD_MIN = 132;
+
 class PurdyRemoteCard extends PcBaseCard {
   static getStubConfig(hass) {
     const r = Object.keys(hass.states).find((e) => e.startsWith("remote."));
@@ -420,7 +431,7 @@ class PurdyRemoteCard extends PcBaseCard {
         /* ---- trackpad + volume rail ---- */
         .padwrap { display: flex; gap: 9px; }
         .pad {
-          flex: 1; position: relative; height: 200px; border-radius: var(--pc-r-2xl);
+          flex: 1; position: relative; height: ${PC_PAD_MAX}px; border-radius: var(--pc-r-2xl);
           background:
             radial-gradient(88% 70% at 50% 46%, rgba(255,255,255,0.052), transparent 74%),
             var(--pc-fill-1);
@@ -635,6 +646,81 @@ class PurdyRemoteCard extends PcBaseCard {
     if (vu) this._bindRepeat(vu, () => this._step(1), "light");
     const vd = this.shadowRoot.getElementById("voldown");
     if (vd) this._bindRepeat(vd, () => this._step(-1), "light");
+
+    this._fitPad();
+  }
+
+  /* ---- fitting the remote to the sheet it is hosted in --------------------
+   *
+   * Hosted in the Media sheet the Watch face overflowed by 13px on a 390x844
+   * phone and by more on a shorter one: a scrollbar down the side of a REMOTE,
+   * where the whole point is that every key is under the thumb without
+   * hunting for it. The sheet is already at its own ceiling — .ps-sheet.tall
+   * is min(80vh, sheettop - 24px) and the 24px is what keeps the greeting
+   * visible behind it — so the height has to come out of the card.
+   *
+   * It is MEASURED rather than shaved to a number that fits this house. The
+   * chrome above and below the pad is whatever the config makes it: one TV or
+   * three (the selector appears only above one), apps or none, the source
+   * picker open (34px) or the hint (12px). A constant tuned on one of those
+   * shapes is wrong for all the others, and wrong again on the next phone.
+   *
+   * One read and one write per render, no re-render, so it cannot loop: the
+   * innerHTML rewrite puts the pad back at PC_PAD_MAX every time, which means
+   * every pass measures the same starting point rather than compounding.
+   * Positive slack grows it back, so closing the source picker returns the
+   * pad to full size rather than leaving it shrunk. */
+  _fitPad() {
+    const pad = this.shadowRoot.getElementById("pad");
+    if (!pad) return;
+    const sc = this._scroller();
+    if (!sc) return;
+    const slack = sc.clientHeight - sc.scrollHeight;
+    if (!slack) return;
+    const cur = pad.getBoundingClientRect().height;
+    /* Zero means we are not laid out yet — a detached render, or the harness
+       measuring before the sheet is attached. Guessing from zero would pin the
+       pad at its minimum and leave it there. */
+    if (!cur) return;
+    const next = Math.max(PC_PAD_MIN, Math.min(PC_PAD_MAX, Math.round(cur + slack)));
+    if (Math.abs(next - cur) >= 1) pad.style.height = next + "px";
+  }
+
+  /* The nearest scrolling ancestor, crossing shadow boundaries — the card sits
+     inside the shell's shadow root, so parentElement runs out before the sheet
+     does. html/body are deliberately NOT accepted: standing alone on a page the
+     card should keep its full-size pad and let the page scroll. */
+  _scroller() {
+    let n = this;
+    for (let i = 0; i < 12; i++) {
+      const root = n.getRootNode ? n.getRootNode() : null;
+      n = n.parentElement || (root && root.host) || null;
+      if (!n || n === document.body || n === document.documentElement) return null;
+      const ov = getComputedStyle(n).overflowY;
+      if (ov === "auto" || ov === "scroll") return n;
+    }
+    return null;
+  }
+
+  /* Rotating the phone with the sheet open changes the height the pad was fitted
+     to, and nothing else would repaint until the next state change. Nulled on
+     disconnect so a reconnect can tell it is stopped rather than stacking a
+     second listener — Lovelace detaches this element, it does not destroy it. */
+  connectedCallback() {
+    /* The sheet builds this card once and ATTACHES it after the patch, so the
+       first _render runs on a detached element: nothing is laid out, the
+       measurement reads zero and the fit is skipped. Refit on the frame after
+       attach, when the sheet has its height and --ps-dockh has been written. */
+    requestAnimationFrame(() => this._fitPad());
+    if (this._onResize) return;
+    this._onResize = () => this._fitPad();
+    window.addEventListener("resize", this._onResize);
+  }
+
+  disconnectedCallback() {
+    if (!this._onResize) return;
+    window.removeEventListener("resize", this._onResize);
+    this._onResize = null;
   }
 
   /* The app sensor reports a friendly name ("Twitch"); the config knows which

@@ -638,6 +638,51 @@ check('touch is handled raw and non-passive, pointer left to the mouse',
 check('the pad keeps a keyboard route the four buttons used to provide',
   /ArrowUp: "DPAD_UP"/.test(remoteSrc) && /Enter: "DPAD_CENTER"/.test(remoteSrc));
 
+/* v1.80.1 — hosted in the Media sheet the Watch face overflowed by 13px on a
+   390x844 phone: a scrollbar down the side of a REMOTE. .ps-sheet.tall is
+   already at its own ceiling, so the height comes out of the card, and the pad
+   is the only element on it with no intrinsic size. Measured rather than shaved
+   to a constant, because the chrome around it is whatever the config makes it:
+   one TV or three, apps or none, the source picker open or the hint. */
+const mkFit = (padH, clientH, scrollH) => {
+  const pad = { style: {}, getBoundingClientRect: () => ({ height: padH }) };
+  const el = Object.create(RC.prototype);
+  el.shadowRoot = { getElementById: (id) => (id === 'pad' ? pad : null) };
+  el._scroller = () => ({ clientHeight: clientH, scrollHeight: scrollH });
+  el._fitPad();
+  return pad.style.height;
+};
+check('an overflowing sheet shrinks the trackpad by exactly the overflow',
+  mkFit(200, 637, 650) === '187px');
+check('slack grows the trackpad back rather than leaving it shrunk',
+  mkFit(165, 637, 615) === '187px');
+check('the trackpad never grows past its full size',
+  mkFit(165, 637, 550) === '200px');
+/* A pad small enough to need aiming at is the d-pad this replaced. */
+check('the trackpad stops at its floor rather than vanishing',
+  mkFit(200, 300, 460) === '132px');
+check('a sheet that already fits leaves the trackpad alone',
+  mkFit(200, 637, 637) === undefined);
+/* A detached first render measures zero, and zero-plus-slack would pin the pad
+   at its floor and leave it there once the sheet was real. */
+check('an unlaid-out card is left alone, not pinned at the floor',
+  mkFit(0, 637, 900) === undefined);
+/* A method can be complete and never called — and this one has two callers,
+   because the sheet ATTACHES the card after the patch, so the first render runs
+   detached and measures nothing. */
+check('the pad fit is called from the render tail and again after attach',
+  /^  _fitPad\(\) \{/m.test(remoteSrc) &&
+  /\n    this\._fitPad\(\);\n  \}/.test(remoteSrc) &&
+  /requestAnimationFrame\(\(\) => this\._fitPad\(\)\)/.test(remoteSrc));
+/* Standing alone on a page the card keeps its full-size pad and lets the page
+   scroll; only a real scrolling BOX gets to squeeze it. */
+check('the scroller search stops short of the document',
+  /n === document\.body \|\| n === document\.documentElement/.test(remoteSrc));
+/* The resize handle is nulled on disconnect, or a reconnect stacks a second. */
+check('the remote unbinds its resize listener on disconnect',
+  /disconnectedCallback\(\) \{[\s\S]{0,220}removeEventListener\("resize"[\s\S]{0,80}this\._onResize = null;/
+    .test(remoteSrc));
+
 /* A node real enough to drive a gesture across. */
 class PadNode {
   constructor(w,h){ this._l={}; this._w=w; this._h=h;
