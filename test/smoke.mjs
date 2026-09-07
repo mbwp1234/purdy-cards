@@ -5136,12 +5136,45 @@ check('the trailing awake gap is dropped when the chip carries it', () => {
    10pm, so it sat half an hour early every day with nothing to give it away. */
 check('the bedtime ghost lands on the rail it is drawn on', () => {
   const h = jweek.s._nurseryDayRail([], '2026-08-07', 20 * 60);
-  const m = /stroke-dasharray[^>]*\/>/.test(h) && /<rect x="([\d.]+)" y="3\.5" width="6"/.exec(h);
+  const m = /<rect x="([\d.]+)" y="3\.5" width="0\.3"/.exec(h);
   if (!m) return false;
-  /* 8:00 PM on a 6am–10pm axis is 87.5%, and the marker is 6 wide, so its left
-     edge is 84.5. On the old midnight-to-midnight arithmetic it was 83.3. */
-  return Math.abs((Number(m[1]) + 3) - 87.5) < 0.1;
+  /* 8:00 PM on a 6am–10pm axis is 87.5%, and the hairline is 0.3 wide, so its
+     left edge is 87.35. On the old midnight-to-midnight arithmetic the mark
+     centred on 83.3. */
+  return Math.abs((Number(m[1]) + 0.15) - 87.5) < 0.1;
 });
+
+/* The band's centre IS the mean, so a rail that draws both says one thing
+   twice — on top of the night bar the comparison is actually about. It was a
+   6-wide dashed box there, whose dasharray stretches with the viewBox: long
+   smears horizontally, dots vertically. */
+check('the ghost gives way to the band rather than drawing over it', () => {
+  const norms = { bed: { lo: 19 * 60, hi: 21 * 60 } };
+  const withBand = jweek.s._nurseryDayRail([], '2026-08-07', 20 * 60, norms);
+  const alone = jweek.s._nurseryDayRail([], '2026-08-07', 20 * 60);
+  return /rgba\(170,120,255/.test(withBand)
+    && !/width="0\.3"/.test(withBand)
+    && /width="0\.3"/.test(alone)
+    && !/stroke-dasharray/.test(alone);
+});
+
+/* A stretched viewBox makes one `rx` an ellipse: rx=2 was a 7px horizontal
+   radius on a 6px-tall bar, and a settling head a few pixels wide rendered as
+   a floating pill instead of the head of its bar. */
+check('the day rail splits its radii and clips the settling head', () => {
+  const h = jweek.s._nurseryDayRail(
+    [{ from: Date.parse('2026-08-07T10:00:00'), to: Date.parse('2026-08-07T11:30:00'),
+      settledAt: Date.parse('2026-08-07T10:15:00'), asleepMinutes: 75, night: false,
+      active: false, events: [] }], '2026-08-07', null);
+  const heads = h.match(/clip-path="url\(#psdh\d+\)"/g) || [];
+  return heads.length === 1 && /<clipPath id="psdh0">/.test(h)
+    && !/rx="2"/.test(h) && /ry="3"/.test(h);
+});
+
+/* `stroke-width="0.8"` on a vertical line is 0.8 STRETCHED units — 2.7px of
+   hard white through a 6px bar. */
+check('the now mark is a hairline, not a stretched stroke',
+  !/<line[^>]*stroke-width="0\.8"/.test(jweek.s._nurseryDayRail([], '2026-08-07', null)));
 
 /* The measurements worth having whether or not this card shows them. */
 check('longest unbroken stretch is reported', /Longest run/.test(nurseryRendered.html));

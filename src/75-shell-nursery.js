@@ -2173,8 +2173,21 @@ Object.assign(PurdyShellCard.prototype, {
     const t1 = day.getTime() + 22 * 3600000;
     const x = (t) => Math.max(0, Math.min(100, ((t - t0) / (t1 - t0)) * 100));
 
+    /* EVERY radius on this rail is an ELLIPSE, because the viewBox is stretched
+       (`preserveAspectRatio="none"`): 100 units across ~340px is ~3.4x
+       horizontally against 1x vertically, so `rx="2"` drew a 7px horizontal
+       radius on a 6px-tall bar. On a full-width bar that is a stretched
+       lozenge; on a settling head a few pixels wide it collapsed into a
+       floating lavender PILL that read as a mark of its own rather than the
+       head of the bar under it. So radii are split — `rx` in axis units chosen
+       to land near 3px, `ry` in the pixels it already is — and the head is
+       CLIPPED to its bar, which gives it the bar's own rounded nose and a
+       square inner edge for free. */
+    const RX = 0.9;
+
+    let clips = "";
     let bars = "";
-    (sessions || []).forEach((s) => {
+    (sessions || []).forEach((s, i) => {
       const end = s.active ? this._nowMs() : psWokeAt(s);
       /* A correction can put the start of sleep before the Hatch went on, and
          the bar is the SLEEP, so it starts at whichever came first. */
@@ -2183,8 +2196,10 @@ Object.assign(PurdyShellCard.prototype, {
       const a = x(begin);
       const b = x(end);
       const short = !s.night && !s.active && s.asleepMinutes < 30;
-      bars += `<rect x="${a.toFixed(2)}" y="6" width="${Math.max(0.5, b - a).toFixed(2)}"
-        height="6" rx="2" fill="${s.night ? "var(--ps-deep)" : short ? "var(--ps-warn)" : "var(--ps-light)"}"
+      const geom = `x="${a.toFixed(2)}" y="6" width="${Math.max(0.5, b - a).toFixed(2)}"
+        height="6" rx="${RX}" ry="3"`;
+      bars += `<rect ${geom}
+        fill="${s.night ? "var(--ps-deep)" : short ? "var(--ps-warn)" : "var(--ps-light)"}"
         opacity="${s.night ? 0.75 : 1}"/>`;
       /* The settling head, drawn on the front of the block. It is the same mark
          the raster carries, and it is what lets the settling minutes stop being
@@ -2193,23 +2208,24 @@ Object.assign(PurdyShellCard.prototype, {
       if (s.settledAt > begin) {
         const sx = Math.min(b, x(s.settledAt));
         if (sx > a + 0.15) {
+          const cid = `psdh${i}`;
+          clips += `<clipPath id="${cid}"><rect ${geom}/></clipPath>`;
           bars += `<rect x="${a.toFixed(2)}" y="6" width="${(sx - a).toFixed(2)}"
-            height="6" rx="2" fill="rgba(255,255,255,.42)"/>`;
+            height="6" fill="rgba(255,255,255,.42)" clip-path="url(#${cid})"/>`;
         }
       }
     });
 
-    /* His usual bedtime as a band, so the ghost reads as the middle of a range
-       rather than as a time the card is promising. Both come off this rail's
-       own x(), for the reason spelled out under the ghost. A band arrives in
-       SHIFTED minutes, so a bedtime past midnight lands off the right-hand end
-       and clamps there rather than wrapping back to breakfast. */
+    /* His usual bedtime as a band, so it reads as the middle of a range rather
+       than as a time the card is promising. It arrives in SHIFTED minutes, so a
+       bedtime past midnight lands off the right-hand end and clamps there
+       rather than wrapping back to breakfast. */
     const band = !norms || !norms.bed ? "" : (() => {
       const a = x(day.getTime() + norms.bed.lo * 60000);
       const b = x(day.getTime() + norms.bed.hi * 60000);
       if (b <= a) return "";
       return `<rect x="${a.toFixed(2)}" y="3.5" width="${(b - a).toFixed(2)}" height="11"
-        rx="1.6" fill="rgba(170,120,255,.13)"/>`;
+        rx="${RX}" ry="2.5" fill="rgba(170,120,255,.11)"/>`;
     })();
 
     /* The ghost is placed on the SAME axis as everything else on this rail.
@@ -2217,23 +2233,36 @@ Object.assign(PurdyShellCard.prototype, {
        midnight axis — and this axis runs 6am to 10pm, so a 7:23 PM bedtime drew
        at 80.7% where it belongs at 83.6%: the expected bedtime marker sat half
        an hour early, every day, with nothing to give it away. Surfacing bedtime
-       consistency as a metric is what made it visible. */
-    const ghost = bedMean == null ? "" : (() => {
-      const gx = Math.max(0, Math.min(97, x(day.getTime() + bedMean * 60000) - 3));
-      return `<rect x="${gx.toFixed(2)}" y="3.5" width="6" height="11" rx="1.6" fill="none"
-        stroke="var(--ps-deep)" stroke-width="0.6" stroke-dasharray="1.6 1.4"/>`;
+       consistency as a metric is what made it visible.
+
+       It is a HAIRLINE, and only where there is no band — the band's centre IS
+       the mean, so drawing both is the chip repeating the line beside it, in
+       the one place on the rail where it also collides with the night bar it is
+       there to be compared against. As a 6-wide dashed box it was the loudest
+       mark on the rail and the least legible: the dasharray stretches with the
+       viewBox, so the horizontal dashes smeared to 5px while the verticals
+       became 1.6px dots, around the exact spot the bedtime bar, the band and
+       the now-line already meet. */
+    const ghost = bedMean == null || band ? "" : (() => {
+      const gx = Math.max(0, Math.min(100, x(day.getTime() + bedMean * 60000)));
+      return `<rect x="${(gx - 0.15).toFixed(2)}" y="3.5" width="0.3" height="11" rx="0.15"
+        fill="var(--ps-deep)" opacity="0.85"/>`;
     })();
 
+    /* Now, at the width a hairline is: `stroke-width="0.8"` on a vertical line
+       is 0.8 STRETCHED units — 2.7px of hard white through a 6px bar. */
     const nx = x(this._nowMs());
     return `<div class="ps-hyp">
         <div class="ps-hypt"><span class="ps-lbl">Today</span></div>
         <div class="ps-railbox">
           <svg viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true"
             style="width:100%;height:18px;display:block">
-            <rect x="0" y="6" width="100" height="6" rx="2" fill="rgba(255,255,255,.05)"/>
+            ${clips ? `<defs>${clips}</defs>` : ""}
+            <rect x="0" y="6" width="100" height="6" rx="${RX}" ry="3"
+              fill="rgba(255,255,255,.05)"/>
             ${band}${bars}${ghost}
-            <line x1="${nx.toFixed(2)}" y1="1.5" x2="${nx.toFixed(2)}" y2="16.5"
-              stroke="var(--ps-text)" stroke-width="0.8"/>
+            <rect x="${(nx - 0.22).toFixed(2)}" y="3.5" width="0.44" height="11" rx="0.2"
+              fill="var(--ps-text)" opacity="0.8"/>
           </svg>
           <div class="ps-railticks">
             <span>6 AM</span><span>10</span><span>2 PM</span><span>6</span><span>10 PM</span>
