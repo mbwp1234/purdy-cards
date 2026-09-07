@@ -15,6 +15,23 @@ const PC_BRANDS = {
   plex: `<svg viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#1F1F1F"/><path fill="#E5A00D" d="M8 4h4.6l4.6 8-4.6 8H8l4.6-8z"/></svg>`,
 };
 
+/* Hold-to-repeat.
+ *
+ * A physical remote repeats while it is held down; this card only ever counted
+ * presses, so turning the volume down ten notches was ten separate taps and
+ * scrolling a row of forty titles was forty. The leading edge fires at once so
+ * a single tap is still instant, then a grace period passes before the repeat
+ * starts — the grace is the whole reason a normal tap never runs away. The
+ * repeat interval is deliberately slower than the haptic rate floor (40ms), so
+ * a held key buzzes per step rather than becoming one continuous vibration. */
+const PC_RPT_DELAY = 420;
+const PC_RPT_EVERY = 130;
+
+/* Optimistic display, on the same contract as the shell's _optGoal: hold the
+   value we just asked for, let the real state supersede it, and expire after
+   12s so a failure shows the truth rather than a lie that never lapses. */
+const PC_OPT_MS = 12000;
+
 class PurdyRemoteCard extends PcBaseCard {
   static getStubConfig(hass) {
     const r = Object.keys(hass.states).find((e) => e.startsWith("remote."));
@@ -33,6 +50,7 @@ class PurdyRemoteCard extends PcBaseCard {
     this._watched = ids;
     this._last = null;
     this._sel = 0;
+    this._opt = {};
   }
 
   _tv() {
@@ -62,20 +80,43 @@ class PurdyRemoteCard extends PcBaseCard {
     });
   }
 
+  /* One call powers the set on AND opens the app, which is why the app grid is
+     drawn on a cold television rather than replaced by a sentence about
+     turning it on first. Both remotes here advertise supported_features 4. */
   _launch(activity) {
     const t = this._tv();
     if (!t.remote) return;
     this._hass.callService("remote", "turn_on", { entity_id: t.remote, activity });
   }
 
+  /* ---- optimistic attribute reads -------------------------------------
+   * PcBaseCard's re-render signature is built from watched entity STATES, so
+   * an attribute that changes without the state changing never repaints the
+   * card. Mute and source are both attributes: pressing mute called the
+   * service correctly and then drew the old icon until something unrelated
+   * moved, which is indistinguishable from the button not working. */
+  _opt_get(key, real) {
+    const o = this._opt[key];
+    if (!o) return real;
+    if (Date.now() - o.at > PC_OPT_MS) { delete this._opt[key]; return real; }
+    if (o.v === real) { delete this._opt[key]; return real; }
+    return o.v;
+  }
+
+  _opt_set(key, v) {
+    this._opt[key] = { v, at: Date.now() };
+  }
+
   _muted(t) {
     const st = this._hass.states[t.media_player];
-    return !!(st && st.attributes.is_volume_muted);
+    return !!this._opt_get("mute:" + t.media_player, !!(st && st.attributes.is_volume_muted));
   }
 
   /* Volume steps rather than sets. Samsung's Tizen websocket advertises
-     VOLUME_SET but never honours it and reports volume_level as 0 forever,
-     so an absolute slider is meaningless. VOLUME_STEP works everywhere. */
+     VOLUME_SET but never honours it and reports its level as 0 forever, so
+     an absolute slider is meaningless — and so is a level readout. The rail
+     therefore draws no ticks and no number: a zero and a missing reading must
+     never look the same, and inventing a position would be worse than both. */
   _step(dir) {
     const t = this._tv();
     if (!t.media_player) return;
@@ -87,9 +128,47 @@ class PurdyRemoteCard extends PcBaseCard {
   _toggleMute() {
     const t = this._tv();
     if (!t.media_player) return;
+    const next = !this._muted(t);
+    this._opt_set("mute:" + t.media_player, next);
     this._hass.callService("media_player", "volume_mute", {
-      entity_id: t.media_player, is_volume_muted: !this._muted(t),
+      entity_id: t.media_player, is_volume_muted: next,
     });
+    this._render();
+  }
+
+  /* ---- source ---------------------------------------------------------
+   * Both Samsungs carry SELECT_SOURCE with a real source_list (TV, HDMI) and
+   * the card had no route to it at all.
+   *
+   * It was first built as a cycle key labelled with the input it would switch
+   * TO — which the render pass killed: Tizen publishes source_list and NEVER
+   * publishes `source`, so the key read "TV" on a set that was already on TV
+   * and every press would have selected TV again. A cycle needs to know where
+   * it is standing. This is the "a chip that asks for a value and does not get
+   * one is dropped, not filled with a placeholder" rule at a control rather
+   * than a caption: the answer is not a better guess, it is a picker, which
+   * selects DIRECTLY and so needs no current value at all. Where `source` does
+   * come through, the live one is marked. */
+  _sourceList(t) {
+    const st = t.media_player && this._hass.states[t.media_player];
+    const list = st && st.attributes.source_list;
+    return Array.isArray(list) && list.length > 1 ? list : null;
+  }
+
+  _source(t) {
+    const st = t.media_player && this._hass.states[t.media_player];
+    return this._opt_get("src:" + t.media_player, st ? st.attributes.source : undefined);
+  }
+
+  _selectSource(name) {
+    const t = this._tv();
+    if (!name) return;
+    this._opt_set("src:" + t.media_player, name);
+    this._srcOpen = false;
+    this._hass.callService("media_player", "select_source", {
+      entity_id: t.media_player, source: name,
+    });
+    this._render();
   }
 
   _power() {
@@ -105,108 +184,324 @@ class PurdyRemoteCard extends PcBaseCard {
     this._hass.callService("remote", on ? "turn_off" : "turn_on", { entity_id: t.remote });
   }
 
+  /* ---- binding --------------------------------------------------------- */
+
+  /* A key that fires once on press, then repeats while it is held. No pointer
+     capture: touch pointer events are not retargeted so it buys nothing there,
+     and on the mouse path a release outside the button would never fire
+     pointerup at all — the repeat would run on with nothing to stop it. Leaving
+     the element ends the hold instead. */
+  _bindRepeat(el, fn, type) {
+    let delay = null, timer = null, down = false;
+    const stop = () => {
+      clearTimeout(delay); clearInterval(timer);
+      delay = timer = null; down = false;
+    };
+    el.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      if (down) return;
+      down = true;
+      fn(); pcHaptic(type || "light");
+      delay = setTimeout(() => {
+        timer = setInterval(() => { fn(); pcHaptic("selection"); }, PC_RPT_EVERY);
+      }, PC_RPT_DELAY);
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((k) => {
+      el.addEventListener(k, stop);
+    });
+  }
+
+  /* The trackpad.
+   *
+   * The d-pad's four chevrons were past the touch floor and still wrong: a
+   * target you have to AIM at is a target you have to LOOK at, which defeats
+   * the one thing a remote is for. The whole block is now the control — swipe
+   * to move, tap to select — and the rim keeps working as four discrete keys
+   * for anyone who wants a single precise step.
+   *
+   * Touch is handled with raw, non-passive touch events and pointer events are
+   * left to the mouse, the same split the shell's scrubber uses: touch-action
+   * is read at gesture start and cannot be taken back, so preventDefault() on
+   * a non-passive touchmove is the only thing that holds a gesture mid-flight.
+   *
+   * One handler owns all three verbs rather than overlaying edge buttons on a
+   * swipe surface, because two handlers competing for the same pointer is how
+   * a gesture goes dead diagonally. */
+  _bindPad(el) {
+    const STEP = 30;      /* px of travel per DPAD step */
+    const EDGE = 52;      /* how far in from a rim still counts as that key */
+    const TAP_PX = 9, TAP_MS = 600;
+    let sx = 0, sy = 0, ax = 0, ay = 0, t0 = 0, moved = false, zone = null;
+    let hold = null, rpt = null;
+
+    const zoneAt = (x, y) => {
+      const r = el.getBoundingClientRect();
+      const dx = x - r.left, dy = y - r.top;
+      if (dx < EDGE) return "DPAD_LEFT";
+      if (r.width - dx < EDGE) return "DPAD_RIGHT";
+      if (dy < EDGE) return "DPAD_UP";
+      if (r.height - dy < EDGE) return "DPAD_DOWN";
+      return null;
+    };
+    const stopHold = () => { clearTimeout(hold); clearInterval(rpt); hold = rpt = null; };
+
+    const down = (x, y) => {
+      this._dragging = true;
+      sx = ax = x; sy = ay = y; t0 = Date.now(); moved = false;
+      zone = zoneAt(x, y);
+      el.classList.add("live");
+      if (!zone) return;
+      /* Resting on a rim is "keep going". It arms only after the tap window
+         has passed, so an ordinary edge tap can never repeat. */
+      hold = setTimeout(() => {
+        moved = true;   /* consumed here — the release must not send another */
+        this._send(zone); pcHaptic("selection");
+        rpt = setInterval(() => { this._send(zone); pcHaptic("selection"); }, PC_RPT_EVERY);
+      }, PC_RPT_DELAY);
+    };
+
+    const move = (x, y) => {
+      if (!this._dragging) return;
+      if (!moved && (Math.abs(x - sx) > TAP_PX || Math.abs(y - sy) > TAP_PX)) {
+        stopHold();
+        moved = true;
+      }
+      let dx = x - ax, dy = y - ay;
+      /* Each step commits to one axis and resets the other, so a swipe that
+         drifts diagonally still reads as the line it was mostly travelling. */
+      while (Math.abs(dx) >= STEP || Math.abs(dy) >= STEP) {
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          this._send(dx > 0 ? "DPAD_RIGHT" : "DPAD_LEFT");
+          ax += dx > 0 ? STEP : -STEP; ay = y;
+        } else {
+          this._send(dy > 0 ? "DPAD_DOWN" : "DPAD_UP");
+          ay += dy > 0 ? STEP : -STEP; ax = x;
+        }
+        pcHaptic("selection");
+        dx = x - ax; dy = y - ay;
+      }
+    };
+
+    const up = () => {
+      stopHold();
+      el.classList.remove("live");
+      if (this._dragging && !moved && Date.now() - t0 < TAP_MS) {
+        this._send(zone || "DPAD_CENTER");
+        pcHaptic(zone ? "light" : "medium");
+      }
+      this._dragging = false;
+      /* Repaints held off during the gesture land now. Re-rendering mid-swipe
+         detaches the node under the finger: the handler keeps its stale el,
+         getBoundingClientRect() reads zero and every later move is discarded. */
+      if (this._pending) { this._pending = false; this._render(); }
+    };
+
+    el.addEventListener("touchstart", (e) => {
+      e.preventDefault(); const t = e.touches[0]; down(t.clientX, t.clientY);
+    }, { passive: false });
+    el.addEventListener("touchmove", (e) => {
+      e.preventDefault(); const t = e.touches[0]; move(t.clientX, t.clientY);
+    }, { passive: false });
+    el.addEventListener("touchend", (e) => { e.preventDefault(); up(); }, { passive: false });
+    el.addEventListener("touchcancel", () => {
+      stopHold(); el.classList.remove("live"); this._dragging = false;
+    });
+
+    el.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "touch") return;
+      down(e.clientX, e.clientY);
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "touch") return;
+      move(e.clientX, e.clientY);
+    });
+    /* pointerleave ends the mouse drag as surely as pointerup does. Without it
+       a button released off the pad never fires pointerup, _dragging stays true
+       and the card stops repainting for the rest of the session. */
+    ["pointerup", "pointerleave"].forEach((k) => {
+      el.addEventListener(k, (e) => {
+        if (e.pointerType === "touch") return;
+        up();
+      });
+    });
+
+    /* The four chevrons used to be real buttons, so replacing them with a
+       surface would have taken the keyboard route away with them. */
+    const KEYS = {
+      ArrowUp: "DPAD_UP", ArrowDown: "DPAD_DOWN", ArrowLeft: "DPAD_LEFT",
+      ArrowRight: "DPAD_RIGHT", Enter: "DPAD_CENTER", " ": "DPAD_CENTER",
+    };
+    el.addEventListener("keydown", (e) => {
+      const cmd = KEYS[e.key];
+      if (!cmd) return;
+      e.preventDefault();
+      this._send(cmd);
+    });
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
+    /* Never repaint under a live gesture. */
+    if (this._dragging) { this._pending = true; return; }
     this._autoSelect();
     const tvs = this._config.tvs;
     const t = this._tv();
     const on = this._isOn(t);
     const app = pcState(this._hass, t.app_sensor);
     const onCount = tvs.filter((x) => this._isOn(x)).length;
+    const hasPlayer = !!(t.media_player && this._hass.states[t.media_player]);
+    const srcList = on && hasPlayer ? this._sourceList(t) : null;
+    const srcNow = srcList ? this._source(t) : undefined;
+    const apps = this._config.apps || [];
 
-    const key = (icon, cmd, cls) =>
-      `<button class="k ${cls || ""}" type="button" data-cmd="${cmd}" aria-label="${cmd}">
-         <ha-icon icon="${icon}"></ha-icon></button>`;
+    const key = (icon, cmd, label) =>
+      `<button class="k" type="button" data-cmd="${cmd}" aria-label="${label}">
+         <ha-icon icon="${icon}"></ha-icon><em>${label}</em></button>`;
 
     this.shadowRoot.innerHTML = `
       <style>
         ${PC_BASE}
-        .hd { display: flex; align-items: center; gap: 8px; padding: 0 4px 10px; }
-        .hd b { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; }
+        .card { display: flex; flex-direction: column; gap: 10px; }
+        .hd { display: flex; align-items: center; gap: 8px; padding: 0 4px 2px; }
+        .hd b { font-size: var(--pc-fs-2xl); font-weight: 650; letter-spacing: -0.02em; }
         .hd .spacer { flex: 1; }
-        .chip.good { background: rgba(129,201,149,0.15); color: var(--pc-good); }
+        .chip.good { background: rgba(127,216,164,0.15); color: var(--pc-good); }
         .chip .cdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
-        .seg { display: flex; background: var(--pc-chip); border-radius: 14px; padding: 3px; gap: 3px; margin-bottom: 11px; }
+        .seg { display: flex; background: var(--pc-chip); border-radius: var(--pc-r-md); padding: 3px; gap: 3px; }
         .seg button {
           flex: 1; border: 0; background: none; cursor: pointer; font-family: inherit;
-          padding: 8px 6px; border-radius: 11px; color: var(--pc-muted);
-          font-size: 12.5px; font-weight: 600; display: flex; align-items: center;
-          justify-content: center; gap: 5px;
+          padding: 8px 6px; border-radius: var(--pc-r-sm); color: var(--pc-muted);
+          font-size: var(--pc-fs-sm); font-weight: 640; display: flex;
+          align-items: center; justify-content: center; gap: 5px;
         }
-        .seg button.sel { background: var(--pc-panel-2); color: var(--pc-text); }
-        .seg .live { width: 6px; height: 6px; border-radius: 50%; background: var(--pc-good); }
+        .seg button.sel { background: var(--pc-fill-2); color: var(--pc-text); }
+        .seg .live { width: 6px; height: 6px; border-radius: 50%; background: var(--pc-good);
+                     box-shadow: 0 0 7px rgba(127,216,164,0.8); }
 
-        .now { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .now { display: flex; align-items: center; gap: 11px; }
         .art {
-          width: 46px; height: 46px; border-radius: 13px; flex: 0 0 auto;
-          display: flex; align-items: center; justify-content: center;
-          background: var(--pc-panel-2); color: var(--pc-muted);
+          width: 44px; height: 44px; border-radius: var(--pc-r-md); flex: 0 0 auto;
+          display: flex; align-items: center; justify-content: center; overflow: hidden;
+          background: var(--pc-fill-1); color: var(--pc-muted);
         }
-        .art.on { background: linear-gradient(140deg, #9146ff, #5c2ea8); color: #fff; }
-        .now .t { font-size: 16px; font-weight: 650; letter-spacing: -0.015em; }
+        .art svg { width: 26px; height: 26px; }
+        .now .t { font-size: var(--pc-fs-lg); font-weight: 650; letter-spacing: -0.015em; }
+        .now .s { font-size: var(--pc-fs-xs); color: var(--pc-muted); letter-spacing: 0.05em;
+                  text-transform: uppercase; font-weight: 640; }
         .pwr {
-          flex: 0 0 auto; width: 44px; height: 44px; border-radius: 50%;
-          border: 0; cursor: pointer; background: var(--pc-chip);
+          flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%;
+          border: 1px solid var(--pc-edge); cursor: pointer; background: var(--pc-fill-1);
           display: flex; align-items: center; justify-content: center;
         }
         .pwr ha-icon { color: var(--pc-bad); }
         .pwr.off ha-icon { color: var(--pc-good); }
 
         /* A 26px logo and a 9px label do not need an 80px square around them.
-           aspect-ratio:1 made every cell as tall as the column was wide, so
-           eight apps took 167px to draw about 70px of content — and the remote
-           came to 716px inside a sheet with roughly 600 to give it, which is
-           why the transport keys fell off the bottom. A fixed row height keeps
-           the same four columns, the same eight apps and the same touch target
-           while giving 39px back. */
-        .apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 6px; }
+           Deliberately still a WRAPPING grid rather than the scrolling strip
+           the mockup drew: an app is an app wherever it falls on the line, and
+           a horizontal scroller inside a vertical sheet loses the axis lock.
+           Eight apps are two rows here and nothing is hidden behind a swipe. */
+        .apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
         .app {
           height: 58px; border: 0; cursor: pointer; font-family: inherit;
-          border-radius: 16px; background: var(--pc-panel-2);
+          border-radius: var(--pc-r-lg); background: var(--pc-fill-1);
+          border: 1px solid var(--pc-edge);
           display: flex; flex-direction: column; align-items: center;
           justify-content: center; gap: 4px; padding: 0;
           font-size: 9px; letter-spacing: 0.04em; color: var(--pc-muted);
         }
+        .app:active { background: var(--pc-fill-3); }
         .app svg { width: 24px; height: 24px; }
+        /* The app that is actually open. Nothing else on the card says it once
+           the header row is blanked by the sheet. */
+        .app.live { border-color: rgba(var(--pc-cool-rgb), 0.55); color: var(--pc-text); }
 
-        /* 214px with 54px keys and an 84px centre is larger than any physical
-           remote. 46 / 70 is still comfortably past the 44px touch floor. */
-        .dpad { position: relative; width: 176px; height: 176px; margin: 10px auto 0; }
-        .dpad .ring { position: absolute; inset: 0; border-radius: 50%; background: var(--pc-panel-2); }
-        .dpad button { position: absolute; border: 0; background: none; cursor: pointer; padding: 0;
-          display: flex; align-items: center; justify-content: center; color: var(--pc-text); }
-        .dpad .k { width: 46px; height: 46px; border-radius: 50%; }
-        .dpad .k:active { background: var(--pc-chip); }
-        .dpad .up { top: 6px; left: 65px; }
-        .dpad .dn { bottom: 6px; left: 65px; }
-        .dpad .lf { left: 6px; top: 65px; }
-        .dpad .rt { right: 6px; top: 65px; }
-        .dpad .ok {
-          width: 70px; height: 70px; border-radius: 50%; top: 53px; left: 53px;
-          background: var(--pc-chip); font-size: 13.5px; font-weight: 650;
+        /* ---- trackpad + volume rail ---- */
+        .padwrap { display: flex; gap: 9px; }
+        .pad {
+          flex: 1; position: relative; height: 200px; border-radius: var(--pc-r-2xl);
+          background:
+            radial-gradient(88% 70% at 50% 46%, rgba(255,255,255,0.052), transparent 74%),
+            var(--pc-fill-1);
+          border: 1px solid var(--pc-edge); cursor: pointer;
+          /* The one place in the bundle that takes touch-action: none up front.
+             It is a dedicated gesture surface with nothing scrollable beneath
+             it, which is exactly the case the rule against pan-x pan-y is not
+             about — the danger there is restricting a strip that still has to
+             scroll. Touch is preventDefault()ed from touchstart regardless. */
+          touch-action: none;
+          -webkit-user-select: none; user-select: none;
         }
-        .dpad ha-icon { --mdc-icon-size: 26px; }
+        .pad.live { background:
+            radial-gradient(88% 70% at 50% 46%, rgba(var(--pc-cool-rgb), 0.10), transparent 74%),
+            var(--pc-fill-2); }
+        .pad .ok {
+          position: absolute; inset: 0; display: flex; align-items: center;
+          justify-content: center; font-size: var(--pc-fs-md); font-weight: 700;
+          letter-spacing: 0.18em; color: rgba(230, 236, 242, 0.38); pointer-events: none;
+        }
+        /* The rim chevrons are the affordance that says the edges are keys, so
+           they have to survive the shot rather than merely exist in the DOM. */
+        .pad .arw { position: absolute; color: rgba(230, 236, 242, 0.34); pointer-events: none; }
+        .pad .arw ha-icon { --mdc-icon-size: 20px; display: block; }
+        .pad .arw.u { top: 9px; left: 50%; transform: translateX(-50%); }
+        .pad .arw.d { bottom: 9px; left: 50%; transform: translateX(-50%); }
+        .pad .arw.l { left: 9px; top: 50%; transform: translateY(-50%); }
+        .pad .arw.r { right: 9px; top: 50%; transform: translateY(-50%); }
 
-        .row { display: flex; gap: 8px; margin-top: 9px; }
-        .row button {
-          flex: 1; height: 46px; border: 0; border-radius: 15px; cursor: pointer;
-          background: var(--pc-panel-2); color: var(--pc-text);
-          display: flex; align-items: center; justify-content: center; font-family: inherit;
+        .vrail {
+          flex: 0 0 auto; width: 62px; border-radius: var(--pc-r-2xl);
+          background: var(--pc-fill-1); border: 1px solid var(--pc-edge);
+          display: flex; flex-direction: column; align-items: center;
+          justify-content: space-between; padding: 12px 0;
+          touch-action: none;
         }
-        .row button:active { background: var(--pc-chip); }
+        .vrail button {
+          border: 0; background: none; cursor: pointer; padding: 0; font-family: inherit;
+          display: flex; align-items: center; justify-content: center; color: var(--pc-text);
+        }
+        .vrail .vstep { width: 44px; height: 44px; border-radius: 50%; }
+        .vrail .vstep:active { background: var(--pc-fill-3); }
+        .vrail .vstep ha-icon { --mdc-icon-size: 24px; }
+        .vrail .mute {
+          width: 36px; height: 36px; border-radius: 50%; background: var(--pc-fill-2);
+          color: var(--pc-muted);
+        }
+        .vrail .mute ha-icon { --mdc-icon-size: 18px; }
+        .vrail .mute.on { color: var(--pc-bad); background: rgba(242,122,131,0.16); }
+
+        .hint { font-size: var(--pc-fs-micro); color: var(--pc-muted); text-align: center;
+                letter-spacing: 0.02em; }
+        /* Sits in the hint's slot rather than below it, so opening the picker
+           does not shove the pad and the keys under the thumb that opened it. */
+        .srcs { display: flex; gap: 8px; }
+        .srcs button {
+          flex: 1; height: 34px; border: 1px solid var(--pc-edge); border-radius: var(--pc-r-sm);
+          cursor: pointer; background: var(--pc-fill-1); color: var(--pc-muted);
+          font-family: inherit; font-size: var(--pc-fs-sm); font-weight: 640;
+        }
+        .srcs button.sel { background: var(--pc-fill-3); color: var(--pc-text); }
+
+        /* ---- bottom keys ---- */
+        .krow { display: flex; gap: 8px; }
+        .krow button {
+          flex: 1; height: 52px; border: 1px solid var(--pc-edge); border-radius: var(--pc-r-lg);
+          cursor: pointer; background: var(--pc-fill-1); color: var(--pc-text);
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          gap: 3px; font-family: inherit; padding: 0;
+        }
+        .krow button:active { background: var(--pc-fill-3); }
+        /* Borrowed from face C: the key you press most is the one you should be
+           able to find without reading it, so it is visibly the widest. */
+        .krow button.hero { flex: 1.5; background: var(--pc-fill-3); }
+        .krow button.hot { background: var(--pc-fill-3); border-color: rgba(var(--pc-cool-rgb), 0.5); }
+        .krow em { font-style: normal; font-size: 9px; letter-spacing: 0.06em;
+                   text-transform: uppercase; color: var(--pc-muted); font-weight: 640; }
+        .krow ha-icon { --mdc-icon-size: 21px; }
+
         button:focus-visible { outline: 2px solid var(--pc-cool); outline-offset: 2px; }
-        .off-note { text-align: center; color: var(--pc-muted); font-size: 12.5px; padding: 18px 0 6px; }
-        .vol { display: flex; align-items: center; gap: 11px; margin: 0 0 14px; }
-        .vbtn { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; border: 0;
-                cursor: pointer; background: var(--pc-chip); color: var(--pc-muted);
-                display: flex; align-items: center; justify-content: center; }
-        .vbtn ha-icon { --mdc-icon-size: 18px; }
-        .vstep { flex: 1; height: 40px; border-radius: 14px; border: 0; cursor: pointer;
-                 background: var(--pc-panel-2); color: var(--pc-text);
-                 display: flex; align-items: center; justify-content: center; }
-        .vstep:active { background: var(--pc-chip); }
-        .vbtn.muted { color: var(--pc-bad); }
+        .off-note { text-align: center; color: var(--pc-muted); font-size: var(--pc-fs-sm); }
       </style>
 
       <div class="card tint${this._config.glass ? " glass" : ""}${this._config.bare ? " bare" : ""}">
@@ -233,59 +528,71 @@ class PurdyRemoteCard extends PcBaseCard {
           </div>` : ""}
 
         <div class="now">
-          <div class="art ${on ? "on" : ""}"><ha-icon icon="mdi:television"></ha-icon></div>
+          <div class="art">${on && app && PC_BRANDS[this._brandFor(app)]
+            ? PC_BRANDS[this._brandFor(app)]
+            : '<ha-icon icon="mdi:television"></ha-icon>'}</div>
           <div class="grow">
             <div class="t trunc">${on ? (app && app !== "Idle" ? app : "Home screen") : "Off"}</div>
-            <div class="lbl trunc">${t.name}</div>
+            <div class="s trunc">${t.name}${on && srcNow ? " · " + srcNow : ""}</div>
           </div>
           <button class="pwr ${on ? "" : "off"}" type="button" id="pwr" aria-label="Power">
             <ha-icon icon="mdi:power"></ha-icon>
           </button>
         </div>
 
-        ${on && t.media_player && this._hass.states[t.media_player] ? `
-          <div class="vol">
-            <button class="vstep" type="button" id="voldown" aria-label="Volume down">
-              <ha-icon icon="mdi:volume-minus"></ha-icon>
-            </button>
-            <button class="vbtn ${this._muted(t) ? "muted" : ""}" type="button" id="mute" aria-label="Mute">
-              <ha-icon icon="${this._muted(t) ? "mdi:volume-off" : "mdi:volume-high"}"></ha-icon>
-            </button>
-            <button class="vstep" type="button" id="volup" aria-label="Volume up">
-              <ha-icon icon="mdi:volume-plus"></ha-icon>
-            </button>
-          </div>` : ""}
-
-        ${!on ? `<div class="off-note">${t.name} is off — turn it on to use the remote.</div>` : `
-          <span class="lbl">Apps</span>
+        ${!apps.length ? "" : `
+          <span class="lbl">${on ? "Apps" : "Turn on and open"}</span>
           <div class="apps">
-            ${(this._config.apps || []).map((a) => `
-              <button class="app" type="button" data-app="${a.activity}">
+            ${apps.map((a) => `
+              <button class="app ${on && a.name && app === a.name ? "live" : ""}"
+                      type="button" data-app="${a.activity}">
                 ${PC_BRANDS[a.brand] || '<ha-icon icon="mdi:application"></ha-icon>'}
                 ${(a.name || "").toUpperCase()}
               </button>`).join("")}
+          </div>`}
+
+        ${!on ? `<div class="off-note">${t.name} is off. Tap an app to turn it on and open it.</div>` : `
+          <div class="padwrap">
+            <div class="pad" id="pad" tabindex="0" role="group" aria-label="Navigation trackpad">
+              <div class="arw u"><ha-icon icon="mdi:chevron-up"></ha-icon></div>
+              <div class="arw l"><ha-icon icon="mdi:chevron-left"></ha-icon></div>
+              <div class="arw r"><ha-icon icon="mdi:chevron-right"></ha-icon></div>
+              <div class="arw d"><ha-icon icon="mdi:chevron-down"></ha-icon></div>
+              <div class="ok">OK</div>
+            </div>
+            ${hasPlayer ? `
+              <div class="vrail">
+                <button class="vstep" type="button" id="volup" aria-label="Volume up">
+                  <ha-icon icon="mdi:plus"></ha-icon>
+                </button>
+                <button class="mute ${this._muted(t) ? "on" : ""}" type="button" id="mute" aria-label="Mute">
+                  <ha-icon icon="${this._muted(t) ? "mdi:volume-off" : "mdi:volume-high"}"></ha-icon>
+                </button>
+                <button class="vstep" type="button" id="voldown" aria-label="Volume down">
+                  <ha-icon icon="mdi:minus"></ha-icon>
+                </button>
+              </div>` : ""}
           </div>
 
-          <div class="dpad">
-            <div class="ring"></div>
-            <button class="k up" type="button" data-cmd="DPAD_UP" aria-label="Up"><ha-icon icon="mdi:chevron-up"></ha-icon></button>
-            <button class="k lf" type="button" data-cmd="DPAD_LEFT" aria-label="Left"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
-            <button class="k rt" type="button" data-cmd="DPAD_RIGHT" aria-label="Right"><ha-icon icon="mdi:chevron-right"></ha-icon></button>
-            <button class="k dn" type="button" data-cmd="DPAD_DOWN" aria-label="Down"><ha-icon icon="mdi:chevron-down"></ha-icon></button>
-            <button class="ok" type="button" data-cmd="DPAD_CENTER">OK</button>
-          </div>
+          ${this._srcOpen && srcList ? `
+            <div class="srcs">
+              ${srcList.map((n) => `
+                <button type="button" data-src="${n}" class="${n === srcNow ? "sel" : ""}">${n}</button>
+              `).join("")}
+            </div>`
+            : `<div class="hint">swipe to move · tap to select · hold an edge to repeat</div>`}
 
-          ${/* Two rows of three became one row of six. Navigation and transport
-                are both "what I press while something is on", and at 56px wide
-                each they are still wider than they are tall. This is the 57px
-                that puts the play button back on screen. */""}
-          <div class="row">
-            ${key("mdi:arrow-u-left-top", "BACK")}
-            ${key("mdi:home", "HOME")}
-            ${key("mdi:menu", "MENU")}
-            ${key("mdi:rewind", "MEDIA_REWIND")}
-            ${key("mdi:play-pause", "MEDIA_PLAY_PAUSE")}
-            ${key("mdi:fast-forward", "MEDIA_FAST_FORWARD")}
+          <div class="krow">
+            ${key("mdi:arrow-u-left-top", "BACK", "Back")}
+            ${key("mdi:home", "HOME", "Home")}
+            <button class="hero" type="button" data-cmd="MEDIA_PLAY_PAUSE" aria-label="Play or pause">
+              <ha-icon icon="mdi:play-pause"></ha-icon><em>Play</em>
+            </button>
+            ${srcList ? `
+              <button type="button" id="src" class="${this._srcOpen ? "hot" : ""}"
+                      aria-expanded="${this._srcOpen ? "true" : "false"}" aria-label="Choose input">
+                <ha-icon icon="mdi:video-input-hdmi"></ha-icon><em>Input</em>
+              </button>` : key("mdi:menu", "MENU", "Menu")}
           </div>
         `}
       </div>
@@ -295,27 +602,50 @@ class PurdyRemoteCard extends PcBaseCard {
       el.addEventListener("click", () => {
         this._touched = true;
         this._sel = parseInt(el.dataset.sel, 10);
+        pcHaptic("light");
         this._render();
       });
     });
+    /* Deliberately NOT _bindRepeat. Repeat belongs to the two controls whose
+       job is to travel — the pad and the volume rail. A held Back that spammed
+       Back, or a held Play that toggled play/pause twenty times, is the repeat
+       feature doing damage rather than work. */
     this.shadowRoot.querySelectorAll("[data-cmd]").forEach((el) => {
-      el.addEventListener("click", () => this._send(el.dataset.cmd));
+      el.addEventListener("click", () => { pcHaptic("light"); this._send(el.dataset.cmd); });
     });
     this.shadowRoot.querySelectorAll("[data-app]").forEach((el) => {
-      el.addEventListener("click", () => this._launch(el.dataset.app));
+      el.addEventListener("click", () => { pcHaptic("medium"); this._launch(el.dataset.app); });
     });
+    const pad = this.shadowRoot.getElementById("pad");
+    if (pad) this._bindPad(pad);
     const p = this.shadowRoot.getElementById("pwr");
-    if (p) p.addEventListener("click", () => this._power());
+    if (p) p.addEventListener("click", () => { pcHaptic("heavy"); this._power(); });
     const m = this.shadowRoot.getElementById("mute");
-    if (m) m.addEventListener("click", () => this._toggleMute());
+    if (m) m.addEventListener("click", () => { pcHaptic("medium"); this._toggleMute(); });
+    const s = this.shadowRoot.getElementById("src");
+    if (s) s.addEventListener("click", () => {
+      pcHaptic("light");
+      this._srcOpen = !this._srcOpen;
+      this._render();
+    });
+    this.shadowRoot.querySelectorAll("[data-src]").forEach((el) => {
+      el.addEventListener("click", () => { pcHaptic("medium"); this._selectSource(el.dataset.src); });
+    });
     const vu = this.shadowRoot.getElementById("volup");
-    if (vu) vu.addEventListener("click", () => this._step(1));
+    if (vu) this._bindRepeat(vu, () => this._step(1), "light");
     const vd = this.shadowRoot.getElementById("voldown");
-    if (vd) vd.addEventListener("click", () => this._step(-1));
+    if (vd) this._bindRepeat(vd, () => this._step(-1), "light");
+  }
+
+  /* The app sensor reports a friendly name ("Twitch"); the config knows which
+     brand mark goes with it. Matched by name so the artwork tile and the grid
+     agree about what is open. */
+  _brandFor(app) {
+    const hit = (this._config.apps || []).find((a) => a.name === app);
+    return hit ? hit.brand : null;
   }
 
   getCardSize() {
     return 12;
   }
 }
-
