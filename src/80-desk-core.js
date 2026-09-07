@@ -128,7 +128,7 @@ const PD_BORROW = [
      no Media button today, so the call never fires — but the borrow is about
      what the method CAN reach, not what it happens to reach, and a desk dock
      entry pointing at a media sheet should work the day it is added. */
-  "_patch", "_each", "_one", "_claim", "_mountSheetCard", "_mediaFace",
+  "_patch", "_each", "_one", "_claim", "_mountSheetCard", "_mediaFace", "_mediaLive",
   /* greeting + name, and the state-string prettifier */
   "_greeting", "_who", "_humanize",
   /* geometry that is genuinely one picture at two sizes */

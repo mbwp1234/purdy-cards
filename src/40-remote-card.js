@@ -15,6 +15,25 @@ const PC_BRANDS = {
   plex: `<svg viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#1F1F1F"/><path fill="#E5A00D" d="M8 4h4.6l4.6 8-4.6 8H8l4.6-8z"/></svg>`,
 };
 
+/* The now-playing tile takes the running app's own colour.
+ *
+ * The mockup draws a solid purple square with a white Twitch mark, and a flat
+ * grey tile beside a bright logo grid was the weakest thing on the face. It is
+ * a TINT rather than a solid fill because five of the nine marks above are
+ * coloured glyphs on transparent — Netflix's red, Twitch's purple — and a solid
+ * brand-coloured ground would swallow the very mark it is there to show. The
+ * tint plus a matching rim reads as the brand at a glance and keeps the glyph
+ * legible on it, which the solid version would have needed nine second pieces
+ * of white artwork to achieve.
+ *
+ * Only the ART tile is tinted. The grid stays neutral: eight saturated squares
+ * in a row is a colour chart, and the one that matters would stop standing out. */
+const PC_BRAND_TINT = {
+  netflix: "#E50914", disney: "#3B7DD8", prime: "#1399FF", peacock: "#0089CF",
+  twitch: "#9146FF", f1: "#E10600", jellyfin: "#AA5CC3", youtube: "#FF0000",
+  plex: "#E5A00D",
+};
+
 /* Hold-to-repeat.
  *
  * A physical remote repeats while it is held down; this card only ever counted
@@ -43,6 +62,43 @@ const PC_PAD_MAX = 200;
    ever reached on a TV with no media_player beside it. */
 const PC_PAD_MIN = 132;
 
+/* ---- the volume ladder ------------------------------------------------
+ *
+ * There is NO volume reading anywhere in this house and there cannot be one.
+ * media_player.samsung_7_series_50 publishes volume_level: 0 permanently — a
+ * single real value (0.19) appears in a week of history, at the instant the set
+ * powers on and the UPnP RenderingControl channel connects, and it is gone six
+ * seconds later. The Android TV media_player publishes no volume_level at all.
+ * And the living room runs a Sony SA-S350 soundbar on HDMI-ARC, which is not
+ * network-capable and has no HA integration — so even that 0.19 was describing
+ * the television's own bypassed speakers rather than anything audible.
+ *
+ * So the ladder is DEAD RECKONING: the card counts its own presses into an
+ * input_number and draws that. Chosen deliberately with the drift understood —
+ * the soundbar's own remote moves the real volume and nothing tells us. Two
+ * things keep that from becoming a lie that never lapses:
+ *
+ *   - an unreadable tracker draws a HOLLOW ladder, never a ladder of zeros.
+ *     A level of 0 and no reading at all are the same picture otherwise, which
+ *     is the one confusion this codebase refuses everywhere else.
+ *   - a 380ms hold on the ladder re-anchors it. Without a repair route the
+ *     first drift is permanent and the meter is wrong for good.
+ *
+ * The dash count is also the drag's granularity: the re-anchor snaps to what is
+ * actually drawn, because a 110px track claiming 100 distinct positions claims
+ * a precision the picture does not have. */
+/* NINE, and the count is a drawing decision rather than a resolution one. The
+   rail gives the ladder ~50px between the + key and the mute, so twelve rungs
+   left a 2px gap between 2px rungs and the whole thing read as one hatched
+   block — a texture, not a scale. Nine puts the pitch at 5.5px, which is the
+   point the eye starts counting rungs instead of seeing fill. */
+const PC_VOL_DASHES = 9;
+/* A THROTTLE, not a debounce — the same distinction the light drag turned on.
+   Every press must reach the soundbar as its own step, but the helper only ever
+   needs the value the finger landed on; a debounce would leave the ladder
+   frozen until the hold ended, which is when you have stopped looking at it. */
+const PC_VOL_WRITE_MS = 150;
+
 class PurdyRemoteCard extends PcBaseCard {
   static getStubConfig(hass) {
     const r = Object.keys(hass.states).find((e) => e.startsWith("remote."));
@@ -56,7 +112,8 @@ class PurdyRemoteCard extends PcBaseCard {
     this._config = { title: "Televisions", apps: [], ...config };
     const ids = [];
     config.tvs.forEach((t) => {
-      [t.remote, t.app_sensor, t.media_player].forEach((x) => x && ids.push(x));
+      [t.remote, t.app_sensor, t.media_player, t.volume_track]
+        .forEach((x) => x && ids.push(x));
     });
     this._watched = ids;
     this._last = null;
@@ -123,14 +180,95 @@ class PurdyRemoteCard extends PcBaseCard {
     return !!this._opt_get("mute:" + t.media_player, !!(st && st.attributes.is_volume_muted));
   }
 
-  /* Volume steps rather than sets. Samsung's Tizen websocket advertises
-     VOLUME_SET but never honours it and reports its level as 0 forever, so
-     an absolute slider is meaningless — and so is a level readout. The rail
-     therefore draws no ticks and no number: a zero and a missing reading must
-     never look the same, and inventing a position would be worse than both. */
+  /* ---- volume ---------------------------------------------------------
+   * Steps rather than sets: Tizen advertises VOLUME_SET, never honours it, and
+   * the soundbar is downstream of the television anyway. What the ladder draws
+   * comes from the tracker helper this card writes, NEVER from the player's own
+   * volume_level — see the PC_VOL_DASHES note. */
+  _volRange(t) {
+    const st = t.volume_track && this._hass.states[t.volume_track];
+    const min = st ? parseFloat(st.attributes.min) : NaN;
+    const max = st ? parseFloat(st.attributes.max) : NaN;
+    return {
+      min: isNaN(min) ? 0 : min,
+      max: isNaN(max) || max <= min ? 100 : max,
+    };
+  }
+
+  /* null means "no reading", which the ladder draws hollow. An input_number
+     reads `unknown` before it is ever written and parseFloat answers NaN — the
+     one value that must not fall through to a zero. */
+  _level(t) {
+    if (!t.volume_track) return null;
+    const st = this._hass.states[t.volume_track];
+    const raw = st ? parseFloat(st.state) : NaN;
+    const real = isNaN(raw) ? null : raw;
+    return this._opt_get("vol:" + t.volume_track, real);
+  }
+
+  /* Optimistic first so a held key moves the ladder at the repeat rate, then
+     one throttled write. Reads the OPTIMISTIC value to compute the next one:
+     computing from the live state is how the climate panel's third tap kept
+     recomputing the same number inside the echo window. */
+  _bump(t, dir) {
+    const id = t.volume_track;
+    if (!id) return;
+    const cur = this._level(t);
+    if (cur === null) return;   /* nothing to count from; anchor it by hold */
+    const { min, max } = this._volRange(t);
+    const next = Math.max(min, Math.min(max, cur + dir));
+    if (next === cur) return;
+    this._setLevel(id, next);
+    this._paintLadder();
+  }
+
+  /* Painted in place, never through _render. A held + is a continuous control
+     and the repaint would land between two presses of it — and on the re-anchor
+     drag it would detach the very node the finger is measuring against, which
+     is the bug this codebase has now met at six surfaces. */
+  _paintLadder() {
+    const el = this.shadowRoot.getElementById("vlad");
+    if (!el) return;
+    const t = this._tv();
+    const lvl = this._level(t);
+    const { min, max } = this._volRange(t);
+    const lit = lvl === null ? -1
+      : Math.round(((lvl - min) / (max - min)) * PC_VOL_DASHES);
+    el.classList.toggle("unset", lvl === null);
+    if (lvl === null) el.removeAttribute("aria-valuenow");
+    else el.setAttribute("aria-valuenow", String(lvl));
+    Array.prototype.forEach.call(el.children, (d, i) => {
+      d.classList.toggle("on", i < lit);
+    });
+  }
+
+  _setLevel(id, v) {
+    this._opt_set("vol:" + id, v);
+    this._volPend = { id, v };
+    const now = Date.now();
+    const since = now - (this._volAt || 0);
+    if (since >= PC_VOL_WRITE_MS) {
+      this._volAt = now;
+      this._volPend = null;
+      this._hass.callService("input_number", "set_value", { entity_id: id, value: v });
+      return;
+    }
+    if (this._volTail) return;   /* a trailing write is already queued */
+    this._volTail = setTimeout(() => {
+      this._volTail = null;
+      const p = this._volPend;
+      this._volPend = null;
+      if (!p || !this._hass) return;
+      this._volAt = Date.now();
+      this._hass.callService("input_number", "set_value",
+        { entity_id: p.id, value: p.v });
+    }, PC_VOL_WRITE_MS - since);
+  }
+
   _step(dir) {
     const t = this._tv();
     if (!t.media_player) return;
+    this._bump(t, dir);
     this._hass.callService("media_player", dir > 0 ? "volume_up" : "volume_down", {
       entity_id: t.media_player,
     });
@@ -220,6 +358,93 @@ class PurdyRemoteCard extends PcBaseCard {
     ["pointerup", "pointercancel", "pointerleave"].forEach((k) => {
       el.addEventListener(k, stop);
     });
+  }
+
+  /* Re-anchoring the ladder.
+   *
+   * Dead reckoning drifts the moment anyone picks up the soundbar's own remote,
+   * and with no reading to correct against, the only repair is a human saying
+   * where it actually is. One press-and-hold, 380ms, the same gesture as the
+   * graph scrub and the light row — then drag to set.
+   *
+   * It snaps to the dash, not to the unit. The track is ~110px tall and the
+   * helper spans 100 steps, so a pixel-accurate drag would be claiming a
+   * precision the drawing cannot show; the dashes are what you can see, so the
+   * dashes are what you can choose. +/- refines from there. */
+  _bindVolSet(el) {
+    const HOLD = 380, SLOP = 8;
+    let hold = null, live = false, sy = 0, id = null;
+
+    const at = (y) => {
+      const t = this._tv();
+      const r = el.getBoundingClientRect();
+      if (!r.height) return null;
+      const f = 1 - Math.min(1, Math.max(0, (y - r.top) / r.height));
+      const { min, max } = this._volRange(t);
+      const q = Math.round(f * PC_VOL_DASHES) / PC_VOL_DASHES;
+      return Math.round(min + q * (max - min));
+    };
+    const stop = () => {
+      clearTimeout(hold); hold = null;
+      if (!live) return;
+      live = false;
+      el.classList.remove("set");
+      this._dragging = false;
+      if (this._pending) { this._pending = false; this._render(); }
+    };
+
+    const down = (y) => {
+      const t = this._tv();
+      id = t.volume_track;
+      if (!id) return;
+      sy = y;
+      hold = setTimeout(() => {
+        live = true;
+        this._dragging = true;
+        el.classList.add("set");
+        pcHaptic("medium");
+        const v = at(sy);
+        if (v !== null) { this._setLevel(id, v); this._paintLadder(); }
+      }, HOLD);
+    };
+    const move = (y) => {
+      if (!live) {
+        if (Math.abs(y - sy) > SLOP) { clearTimeout(hold); hold = null; }
+        return;
+      }
+      const v = at(y);
+      if (v === null || v === this._level(this._tv())) return;
+      this._setLevel(id, v);
+      this._paintLadder();
+      pcHaptic("selection");
+    };
+
+    el.addEventListener("touchstart", (e) => {
+      down(e.touches[0].clientY);
+    }, { passive: true });
+    /* Non-passive only once the hold has claimed the gesture: preventDefault on
+       a touchmove is the sole thing that holds a gesture mid-flight, but taking
+       it before the hold completes would eat the sheet's scroll. */
+    el.addEventListener("touchmove", (e) => {
+      if (live) e.preventDefault();
+      move(e.touches[0].clientY);
+    }, { passive: false });
+    ["touchend", "touchcancel"].forEach((k) =>
+      el.addEventListener(k, stop, { passive: true }));
+
+    el.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "touch") return;
+      down(e.clientY);
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "touch") return;
+      move(e.clientY);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach((k) =>
+      el.addEventListener(k, (e) => {
+        if (e.pointerType === "touch") return;
+        stop();
+      }));
   }
 
   /* The trackpad.
@@ -365,6 +590,33 @@ class PurdyRemoteCard extends PcBaseCard {
     const srcNow = srcList ? this._source(t) : undefined;
     const apps = this._config.apps || [];
 
+    /* Built here rather than inline so the "no tracker configured" case is one
+       empty string: a rail with no helper behind it draws no ladder at all,
+       which is the meter-with-no-band rule — not an empty track implying a
+       reading we could have had. */
+    const ladder = (() => {
+      if (!on || !hasPlayer || !t.volume_track) return "";
+      const lvl = this._level(t);
+      const { min, max } = this._volRange(t);
+      const lit = lvl === null ? -1
+        : Math.round(((lvl - min) / (max - min)) * PC_VOL_DASHES);
+      const cls = ["vlad"];
+      if (lvl === null) cls.push("unset");
+      if (this._muted(t)) cls.push("mut");
+      return `<div class="${cls.join(" ")}" id="vlad" role="slider" tabindex="0"
+                   aria-label="Volume level" aria-valuemin="${min}" aria-valuemax="${max}"
+                   ${lvl === null ? "" : `aria-valuenow="${lvl}"`}>
+        ${Array.from({ length: PC_VOL_DASHES },
+          (_, i) => `<i class="${i < lit ? "on" : ""}"></i>`).join("")}
+      </div>`;
+    })();
+
+    const brand = on && app ? this._brandFor(app) : null;
+    /* An unrecognised app gets NO tint rather than a default one: a colour that
+       means "some app" is a colour that means nothing, and the neutral tile is
+       already the honest answer for a home screen. */
+    const tint = (brand && PC_BRAND_TINT[brand]) || null;
+
     const key = (icon, cmd, label) =>
       `<button class="k" type="button" data-cmd="${cmd}" aria-label="${label}">
          <ha-icon icon="${icon}"></ha-icon><em>${label}</em></button>`;
@@ -386,17 +638,28 @@ class PurdyRemoteCard extends PcBaseCard {
           font-size: var(--pc-fs-sm); font-weight: 640; display: flex;
           align-items: center; justify-content: center; gap: 5px;
         }
+        /* Neutral, matching the Watch/Listen pill above it. The mockup's colour
+           lives in the bar, not in the pill — see .seg .live. */
         .seg button.sel { background: var(--pc-fill-2); color: var(--pc-text); }
-        .seg .live { width: 6px; height: 6px; border-radius: 50%; background: var(--pc-good);
-                     box-shadow: 0 0 7px rgba(127,216,164,0.8); }
+        /* A BAR, not a dot. Same mark and same meaning as the Watch/Listen tabs
+           directly above — this set is on — so the two rows of the sheet answer
+           "what is playing" in one language instead of two. The dot it replaces
+           was 6px of green that read as a bullet point rather than as a state. */
+        .seg .live {
+          flex: 1 1 auto; min-width: 12px; max-width: 78px; height: 13px;
+          border-radius: 7px;
+          background: linear-gradient(90deg, rgba(127,216,164,0.5), var(--pc-good));
+          box-shadow: 0 0 10px rgba(127,216,164,0.4);
+        }
 
         .now { display: flex; align-items: center; gap: 11px; }
         .art {
-          width: 44px; height: 44px; border-radius: var(--pc-r-md); flex: 0 0 auto;
+          width: 48px; height: 48px; border-radius: var(--pc-r-lg); flex: 0 0 auto;
           display: flex; align-items: center; justify-content: center; overflow: hidden;
           background: var(--pc-fill-1); color: var(--pc-muted);
+          border: 1px solid var(--pc-edge);
         }
-        .art svg { width: 26px; height: 26px; }
+        .art svg { width: 28px; height: 28px; }
         .now .t { font-size: var(--pc-fs-lg); font-weight: 650; letter-spacing: -0.015em; }
         .now .s { font-size: var(--pc-fs-xs); color: var(--pc-muted); letter-spacing: 0.05em;
                   text-transform: uppercase; font-weight: 640; }
@@ -408,19 +671,51 @@ class PurdyRemoteCard extends PcBaseCard {
         .pwr ha-icon { color: var(--pc-bad); }
         .pwr.off ha-icon { color: var(--pc-good); }
 
-        /* A 26px logo and a 9px label do not need an 80px square around them.
-           Deliberately still a WRAPPING grid rather than the scrolling strip
-           the mockup drew: an app is an app wherever it falls on the line, and
-           a horizontal scroller inside a vertical sheet loses the axis lock.
-           Eight apps are two rows here and nothing is hidden behind a swipe. */
-        .apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        /* One scrolling row, per the mockup.
+
+           This was a wrapping 4-up grid, on the argument that an app is an app
+           wherever it falls on the line. That argument was right about apps and
+           wrong about the SHEET: eight apps took two 58px rows, which is 66px
+           the trackpad then had to give back through _fitPad — and a remote
+           whose pad has been squeezed to make room for a second row of icons
+           has its priorities backwards. The strip is the one axis where a
+           scroller costs nothing, because a shortcut list has no order worth
+           preserving and a partly-visible tile at the edge says "there are
+           more" better than any affordance we could draw.
+
+           NO touch-action here. pan-x is not equivalent to the default on an
+           overflow-x strip — it makes the browser's axis commitment stickier
+           and a slightly diagonal swipe kills the scroll. The trackpad below
+           still takes touch-action: none; it is not a scroller.
+
+           Tiles size to their own label rather than to a column, because a
+           truncated label is a MISSING label: "PEACOCK" sets the floor and a
+           longer name widens its own tile instead of becoming "PEAC…". */
+        .apps {
+          display: flex; gap: 8px; overflow-x: auto;
+          overscroll-behavior-x: contain;
+          scrollbar-width: none; -ms-overflow-style: none;
+          /* The tiles carry a focus ring and a 1px border; without the gutter
+             the first and last are shaved by the scroll box. */
+          padding: 2px; margin: -2px;
+        }
+        .apps::-webkit-scrollbar { display: none; }
         .app {
+          /* Sized so FIVE tiles and the edge of a sixth sit in the strip, which
+             is the count the mockup draws — the partly-visible tile is the only
+             thing telling you the row goes on. The label still sets the floor
+             (a truncated label is a missing one), so the padding gave way and
+             the 9px type did not: --pc-fs-micro is 10px and there is no step
+             below it, and inventing one to win 4px of strip is the trade this
+             codebase refuses. */
+          flex: 0 0 auto; min-width: 56px; padding: 0 5px;
           height: 58px; border: 0; cursor: pointer; font-family: inherit;
           border-radius: var(--pc-r-lg); background: var(--pc-fill-1);
           border: 1px solid var(--pc-edge);
           display: flex; flex-direction: column; align-items: center;
-          justify-content: center; gap: 4px; padding: 0;
+          justify-content: center; gap: 4px;
           font-size: 9px; letter-spacing: 0.04em; color: var(--pc-muted);
+          white-space: nowrap;
         }
         .app:active { background: var(--pc-fill-3); }
         .app svg { width: 24px; height: 24px; }
@@ -482,6 +777,42 @@ class PurdyRemoteCard extends PcBaseCard {
         .vrail .mute ha-icon { --mdc-icon-size: 18px; }
         .vrail .mute.on { color: var(--pc-bad); background: rgba(242,122,131,0.16); }
 
+        /* The ladder. Fills bottom-up, so column-reverse and the first child is
+           the lowest rung. It sits in space the rail already had between the +
+           and the mute — the level costs no height at all. */
+        .vlad {
+          flex: 1 1 auto; min-height: 46px; width: 100%;
+          display: flex; flex-direction: column-reverse;
+          align-items: center; justify-content: space-between;
+          /* MEASURED, not chosen. The rail hands the ladder 50px; padding is
+             subtracted from the pitch, so 7px here took the rung spacing from
+             5.5px to 4.3px and nine rungs closed into one hatched block. The
+             gap between rungs is the whole picture — it is what makes a scale
+             read as countable rather than as fill. */
+          padding: 2px 0; cursor: ns-resize;
+          -webkit-user-select: none; user-select: none;
+          touch-action: pan-y;
+        }
+        .vlad i {
+          display: block; width: 24px; height: 2px; border-radius: 1px;
+          background: rgba(230, 236, 242, 0.15);
+        }
+        .vlad i.on {
+          background: var(--pc-cool);
+          box-shadow: 0 0 6px rgba(var(--pc-cool-rgb), 0.55);
+        }
+        /* Muted keeps the level — you want to know what you are coming back to —
+           and drops the glow, so it reads as silenced rather than as zero. */
+        .vlad.mut i.on { background: rgba(230, 236, 242, 0.34); box-shadow: none; }
+        /* No reading at all. Hollow, never a ladder of unlit rungs: an
+           input_number is "unknown" until it is first written, and a level of 0
+           would otherwise draw exactly the same picture. */
+        .vlad.unset i {
+          background: none; box-shadow: none;
+          border-top: 1px dashed rgba(230, 236, 242, 0.26);
+        }
+        .vlad.set { background: rgba(var(--pc-cool-rgb), 0.09); border-radius: var(--pc-r-sm); }
+
         .hint { font-size: var(--pc-fs-micro); color: var(--pc-muted); text-align: center;
                 letter-spacing: 0.02em; }
         /* Sits in the hint's slot rather than below it, so opening the picker
@@ -539,9 +870,11 @@ class PurdyRemoteCard extends PcBaseCard {
           </div>` : ""}
 
         <div class="now">
-          <div class="art">${on && app && PC_BRANDS[this._brandFor(app)]
-            ? PC_BRANDS[this._brandFor(app)]
-            : '<ha-icon icon="mdi:television"></ha-icon>'}</div>
+          <div class="art"${tint
+            ? ` style="background:${tint}2E;border-color:${tint}66"` : ""}>${
+            brand && PC_BRANDS[brand]
+              ? PC_BRANDS[brand]
+              : '<ha-icon icon="mdi:television"></ha-icon>'}</div>
           <div class="grow">
             <div class="t trunc">${on ? (app && app !== "Idle" ? app : "Home screen") : "Off"}</div>
             <div class="s trunc">${t.name}${on && srcNow ? " · " + srcNow : ""}</div>
@@ -552,8 +885,12 @@ class PurdyRemoteCard extends PcBaseCard {
         </div>
 
         ${!apps.length ? "" : `
-          <span class="lbl">${on ? "Apps" : "Turn on and open"}</span>
-          <div class="apps">
+          ${/* The label earns its 18px only when it is saying something the row
+                cannot. A grid of brand marks under a powered set is self-evidently
+                the apps; on a cold one, "Turn on and open" is the whole
+                instruction and there is no off-note beneath it to repeat it. */""}
+          ${on ? "" : '<span class="lbl">Turn on and open</span>'}
+          <div class="apps" id="apps">
             ${apps.map((a) => `
               <button class="app ${on && a.name && app === a.name ? "live" : ""}"
                       type="button" data-app="${a.activity}">
@@ -576,6 +913,7 @@ class PurdyRemoteCard extends PcBaseCard {
                 <button class="vstep" type="button" id="volup" aria-label="Volume up">
                   <ha-icon icon="mdi:plus"></ha-icon>
                 </button>
+                ${ladder}
                 <button class="mute ${this._muted(t) ? "on" : ""}" type="button" id="mute" aria-label="Mute">
                   <ha-icon icon="${this._muted(t) ? "mdi:volume-off" : "mdi:volume-high"}"></ha-icon>
                 </button>
@@ -646,8 +984,30 @@ class PurdyRemoteCard extends PcBaseCard {
     if (vu) this._bindRepeat(vu, () => this._step(1), "light");
     const vd = this.shadowRoot.getElementById("voldown");
     if (vd) this._bindRepeat(vd, () => this._step(-1), "light");
+    const vl = this.shadowRoot.getElementById("vlad");
+    if (vl) this._bindVolSet(vl);
 
+    this._revealApp();
     this._fitPad();
+  }
+
+  /* A one-row strip hides what a two-row grid showed, and the thing most worth
+     not hiding is the app that is currently open — the sixth app being the live
+     one, off the right-hand edge, is the "replacing a surface orphans what was
+     only reachable through it" trap in its smallest form.
+
+     Only on CHANGE, never on every render. The card repaints whenever any
+     watched entity moves, and yanking the strip back under a thumb that had
+     deliberately scrolled it is worse than the tile being off-screen. */
+  _revealApp() {
+    const box = this.shadowRoot.getElementById("apps");
+    if (!box) return;
+    const live = box.querySelector(".app.live");
+    const key = live ? live.dataset.app : null;
+    if (key === this._shownApp) return;
+    this._shownApp = key;
+    if (!live || !live.scrollIntoView) return;
+    live.scrollIntoView({ inline: "nearest", block: "nearest" });
   }
 
   /* ---- fitting the remote to the sheet it is hosted in --------------------

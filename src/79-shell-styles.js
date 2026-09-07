@@ -939,8 +939,23 @@ const PS_STYLES = `
       .ps-mtab { flex: 1; border: 0; cursor: pointer; font-family: inherit;
                  padding: 8px 6px; border-radius: var(--pc-r-sm); background: none;
                  text-align: center; color: var(--ps-muted);
-                 font-size: var(--pc-fs-sm); font-weight: 660; }
+                 font-size: var(--pc-fs-sm); font-weight: 660;
+                 display: flex; align-items: center; justify-content: center; gap: 8px; }
+      /* The pill stays NEUTRAL. It was briefly aurora, on a misreading of the
+         mockup: the colour there is not a fill behind the label, it is a bar
+         beside it, and the two carry different facts. Selection is not a
+         semantic state and does not want a hue. */
       .ps-mtab.on { background: var(--pc-fill-3); color: var(--ps-text); }
+      /* Live: something is playing on this side of the sheet. Grows into the
+         space the centred label leaves, which is what the mockup draws — capped,
+         because a bar that runs the width of the tab stops reading as a mark
+         beside the word and starts reading as a fill behind it. */
+      .ps-mbar {
+        flex: 1 1 auto; min-width: 12px; max-width: 78px; height: 13px;
+        border-radius: 7px;
+        background: linear-gradient(90deg, rgba(127,216,164,.5), var(--ps-good, #7FD8A4));
+        box-shadow: 0 0 10px rgba(127,216,164,.4);
+      }
 
       /* The crew's landing-page face: one row per thing that needs a human, and
          no row at all otherwise. */
