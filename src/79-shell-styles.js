@@ -139,8 +139,8 @@ const PS_STYLES = `
         background:
           radial-gradient(120% 46% at 78% -6%, rgba(139,124,255,.40), transparent 62%),
           radial-gradient(100% 38% at 12% -2%, rgba(86,212,228,.18), transparent 60%),
-          radial-gradient(140% 36% at 50% 86%, rgba(255,120,80,.28), transparent 64%),
-          radial-gradient(120% 20% at 50% 82%, rgba(255,158,94,.28), transparent 68%),
+          radial-gradient(130% 26% at 50% 88%, rgba(255,120,80,.16), transparent 66%),
+          radial-gradient(110% 14% at 50% 86%, rgba(255,158,94,.15), transparent 70%),
           linear-gradient(178deg, #0A0C18 0%, #07080F 46%, #0F0912 82%, #07070D 100%);
       }
       .ps-ground.sky-night {
