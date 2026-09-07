@@ -594,6 +594,7 @@ check('unread chips drop zero counts', html.includes('3 Warning') && !html.inclu
 // ---- remote card ----
 check('purdy-remote-card defined', names.includes('purdy-remote-card'));
 const RC = defined['purdy-remote-card'];
+const remoteSrc = fs.readFileSync(new URL('../src/40-remote-card.js', import.meta.url),'utf8');
 const rhass = { states: {
   'remote.lr': { state:'on', attributes:{} },
   'remote.br': { state:'off', attributes:{} },
@@ -602,7 +603,8 @@ const rhass = { states: {
 }, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
 
 const rc = new RC();
-rhass.states['media_player.lr'] = { state:'on', attributes:{ is_volume_muted:false } };
+rhass.states['media_player.lr'] = { state:'on', attributes:{
+  is_volume_muted:false, source:'TV', source_list:['TV','HDMI'] } };
 rhass.states['media_player.br'] = { state:'off', attributes:{} };
 rc.setConfig({ tvs:[
   { name:'Living Room', remote:'remote.lr', media_player:'media_player.lr', app_sensor:'sensor.lr_app' },
@@ -617,19 +619,127 @@ check('remote auto-selects the TV that is on', rc._sel === 0);
 check('remote shows the running app', rh.includes('Twitch'));
 check('remote draws brand art inline, not an iconset', rh.includes('#E50914') && rh.includes('#9146FF'));
 check('remote has no empty spacer cards', !rh.includes('markdown'));
-check('remote renders the d-pad', rh.includes('data-cmd="DPAD_CENTER"'));
 check('remote marks the live TV in the selector', rh.includes('class="live"'));
 
+/* v1.80.0 — the d-pad became a trackpad. Four chevrons at 46px were past the
+   touch floor and still wrong: a target you have to AIM at is one you have to
+   LOOK at, which is the one thing a remote exists to avoid. */
+check('remote renders a trackpad, not four d-pad buttons',
+  rh.includes('id="pad"') && !rh.includes('data-cmd="DPAD_'));
+check('the rim still shows the four directions it accepts',
+  rh.includes('mdi:chevron-up') && rh.includes('mdi:chevron-down') &&
+  rh.includes('mdi:chevron-left') && rh.includes('mdi:chevron-right'));
+/* A method can be complete and never called. */
+check('the pad is bound, not merely defined',
+  /_bindPad\(el\)\s*\{/.test(remoteSrc) && /if \(pad\) this\._bindPad\(pad\)/.test(remoteSrc));
+check('touch is handled raw and non-passive, pointer left to the mouse',
+  /addEventListener\("touchmove"[\s\S]{0,160}passive: false/.test(remoteSrc) &&
+  /pointerType === "touch"\) return/.test(remoteSrc));
+check('the pad keeps a keyboard route the four buttons used to provide',
+  /ArrowUp: "DPAD_UP"/.test(remoteSrc) && /Enter: "DPAD_CENTER"/.test(remoteSrc));
+
+/* A node real enough to drive a gesture across. */
+class PadNode {
+  constructor(w,h){ this._l={}; this._w=w; this._h=h;
+    const set=new Set();
+    this.classList={ add:(c)=>set.add(c), remove:(c)=>set.delete(c), contains:(c)=>set.has(c) }; }
+  addEventListener(k,fn){ (this._l[k]=this._l[k]||[]).push(fn); }
+  fire(k,ev){ (this._l[k]||[]).forEach(f=>f(ev||{})); }
+  getBoundingClientRect(){ return { left:0, top:0, width:this._w, height:this._h }; }
+  setPointerCapture(){}
+}
+const touch = (x,y) => ({ preventDefault(){}, touches:[{clientX:x, clientY:y}] });
+const cmds = () => rhass._calls.filter(c=>c[1]==='send_command').map(c=>c[2].command);
+
+const pad = new PadNode(200,200);
+rc._bindPad(pad);
+
+rhass._calls.length = 0;
+pad.fire('touchstart', touch(100,100));
+pad.fire('touchmove', touch(100,10));
+pad.fire('touchend', touch(100,10));
+check('a 90px swipe up sends three DPAD_UP, one per 30px of travel',
+  cmds().join(',') === 'DPAD_UP,DPAD_UP,DPAD_UP');
+
+rhass._calls.length = 0;
+pad.fire('touchstart', touch(100,100));
+pad.fire('touchmove', touch(160,110));
+pad.fire('touchend', touch(160,110));
+check('a swipe that drifts diagonally commits to the axis it is travelling',
+  cmds().join(',') === 'DPAD_RIGHT,DPAD_RIGHT');
+
+rhass._calls.length = 0;
+pad.fire('touchstart', touch(100,100));
+pad.fire('touchend', touch(100,100));
+check('a tap in the middle of the pad is OK', cmds().join(',') === 'DPAD_CENTER');
+
+rhass._calls.length = 0;
+pad.fire('touchstart', touch(10,100));
+pad.fire('touchend', touch(10,100));
+check('a tap on the rim is still one discrete step', cmds().join(',') === 'DPAD_LEFT');
+
+/* Re-rendering mid-gesture detaches the node under the finger — the handler
+   keeps a stale el, getBoundingClientRect() reads zero and every later move is
+   thrown away. The repaint has to be deferred rather than dropped, or the card
+   ends the gesture showing state from before it started. */
+rc.shadowRoot.innerHTML = 'SENTINEL';
+pad.fire('touchstart', touch(100,100));
+rc._render();
+check('a repaint under a live gesture is held, not painted',
+  rc.shadowRoot.innerHTML === 'SENTINEL' && rc._pending === true);
+pad.fire('touchend', touch(100,100));
+check('the held repaint lands when the gesture ends',
+  rc.shadowRoot.innerHTML !== 'SENTINEL' && rc._pending === false);
+check('the gesture releases the render gate', rc._dragging === false);
+
+rhass._calls.length = 0;
 rc._send('DPAD_UP');
 const sent = rhass._calls.find(c => c[1]==='send_command');
-check('d-pad targets the selected remote', sent[2].entity_id==='remote.lr' && sent[2].command==='DPAD_UP');
+check('the pad targets the selected remote', sent[2].entity_id==='remote.lr' && sent[2].command==='DPAD_UP');
 rc._launch('com.netflix.ninja');
 const launched = rhass._calls.find(c => c[1]==='turn_on');
 check('app launch passes activity', launched[2].activity==='com.netflix.ninja');
 
+/* Hold-to-repeat. The leading edge is immediate so a tap is never delayed;
+   the repeat is armed behind a grace period so a tap never runs away. */
+const timers = [];
+const realST = globalThis.setTimeout, realSI = globalThis.setInterval;
+const realCT = globalThis.clearTimeout, realCI = globalThis.clearInterval;
+globalThis.setTimeout = (fn,ms)=>{ timers.push(['t',fn,ms]); return timers.length; };
+globalThis.setInterval = (fn,ms)=>{ timers.push(['i',fn,ms]); return timers.length; };
+globalThis.clearTimeout = ()=>{}; globalThis.clearInterval = ()=>{};
+try {
+  const vk = new PadNode(44,44);
+  rhass._calls.length = 0;
+  rc._bindRepeat(vk, () => rc._step(-1), 'light');
+  vk.fire('pointerdown', { preventDefault(){}, pointerId:1 });
+  const first = rhass._calls.filter(c=>c[1]==='volume_down').length;
+  check('a held key fires once immediately', first === 1);
+  const armed = timers.find(t=>t[0]==='t');
+  check('the repeat waits out a grace period before it starts', !!armed && armed[2] >= 300);
+  armed[1]();                                   // the grace elapses
+  const loop = timers.find(t=>t[0]==='i');
+  check('the repeat then runs on an interval', !!loop && loop[2] > 40 && loop[2] < 300);
+  loop[1](); loop[1]();
+  check('each repeat sends another step',
+    rhass._calls.filter(c=>c[1]==='volume_down').length === 3);
+} finally {
+  globalThis.setTimeout = realST; globalThis.setInterval = realSI;
+  globalThis.clearTimeout = realCT; globalThis.clearInterval = realCI;
+}
+/* Repeat belongs to the controls whose job is to travel. A held Back that
+   spammed Back, or a held Play that toggled twenty times, is the feature doing
+   damage rather than work. */
+check('the transport keys are plain clicks, never repeats',
+  /\[data-cmd\]"\)\.forEach\(\(el\) => \{\s*el\.addEventListener\("click"/.test(remoteSrc));
 
 // volume steps rather than sets: Samsung advertises VOLUME_SET but never honours it
 check('volume renders step buttons, not a slider', rh.includes('id="volup"') && !rh.includes('type="range"'));
+/* And draws NO level. Samsung reports volume_level as 0 forever, so a filled
+   track would be a fabricated reading — the zero-versus-missing rule at the one
+   surface where the honest answer is to show nothing at all. */
+check('the volume rail never draws a level it cannot read',
+  !/attributes\.volume_level/.test(remoteSrc) && !rh.includes('vtick'));
 rc._step(1);
 const vup = rhass._calls.find(c => c[1]==='volume_up');
 check('volume up targets the media player', vup && vup[2].entity_id==='media_player.lr');
@@ -638,16 +748,79 @@ check('volume down targets the media player', rhass._calls.some(c => c[1]==='vol
 rc._toggleMute();
 const mu = rhass._calls.find(c => c[1]==='volume_mute');
 check('mute targets the media player', mu && mu[2].entity_id==='media_player.lr');
+/* PcBaseCard's repaint signature is built from watched STATES, so an attribute
+   that moves without the state moving never repaints the card. Mute and source
+   are both attributes: the service call was always right and the icon then sat
+   on the old value, which looks exactly like a button that does nothing. */
+check('mute shows the value it just asked for, before HA echoes it',
+  rc._muted(rc._tv()) === true && rhass.states['media_player.lr'].attributes.is_volume_muted === false);
+rc._opt['mute:media_player.lr'].at = Date.now() - 20000;
+check('an optimistic value expires rather than lying for ever',
+  rc._muted(rc._tv()) === false);
+
+/* Both Samsungs carry SELECT_SOURCE with a real source_list and the card had no
+   route to it. It was first built as a cycle key labelled with the input it
+   would switch TO, and the render pass killed that: Tizen publishes source_list
+   and never publishes `source`, so the key read "TV" on a set already on TV and
+   every press would have selected TV again. A picker selects directly and needs
+   no current value at all. */
+check('the input key is a picker, not a cycle through a value we may not have',
+  rh.includes('id="src"') && rh.includes('<em>Input</em>'));
+check('the now-line says which input is live when the set publishes one',
+  rh.includes('Living Room · TV'));
+rc._srcOpen = true; rc._render();
+const rhSrc = rc.shadowRoot.innerHTML;
+check('the picker offers every input directly',
+  rhSrc.includes('data-src="TV"') && rhSrc.includes('data-src="HDMI"'));
+check('the picker marks the live input when there is one',
+  /data-src="TV" class="sel"/.test(rhSrc));
+check('the picker takes the hint line rather than pushing the keys down',
+  !rhSrc.includes('swipe to move'));
+rhass._calls.length = 0;
+rc._selectSource('HDMI');
+const srcCall = rhass._calls.find(c => c[1]==='select_source');
+check('choosing an input selects exactly that one', srcCall && srcCall[2].source === 'HDMI');
+check('source is optimistic too', rc._source(rc._tv()) === 'HDMI');
+check('choosing an input closes the picker', rc._srcOpen === false);
+/* A set that publishes a list but no current source is the live case here, and
+   the picker has to survive it with no placeholder and no wrong claim. */
+rhass.states['media_player.lr'].attributes.source = undefined;
+rc._opt = {}; rc._render();
+const rhNoSrc = rc.shadowRoot.innerHTML;
+check('an unpublished source names no input on the now-line',
+  !rhNoSrc.includes('Living Room · ') && rhNoSrc.includes('id="src"'));
+rhass.states['media_player.lr'].attributes.source = 'TV';
+rc._opt = {};
+const rcOne = new RC();
+rcOne.setConfig({ tvs:[{ name:'One', remote:'remote.lr', media_player:'media_player.br' }], apps:[] });
+rcOne.hass = rhass;
+check('a set with a single input offers no input key',
+  !rcOne.shadowRoot.innerHTML.includes('id="src"'));
+
 rc._power();
 const pw = rhass._calls.find(c => c[0]==='media_player' && (c[1]==='turn_off'||c[1]==='turn_on'));
 check('power prefers the media player over the remote', !!pw);
 check('on-state reads from the media player', rc._isOn({media_player:'media_player.lr', remote:'remote.br'}) === true);
 check('off media player reads as off', rc._isOn({media_player:'media_player.br', remote:'remote.lr'}) === false);
 
-// switching to an off TV collapses the remote body
+/* An off television used to be a sentence and nothing else. One call powers the
+   set on AND opens the app, so the grid is the right thing to draw on a cold
+   set — replacing a surface orphans whatever was only reachable through it, and
+   this one orphaned every app on the television that was not already on. */
 rc._touched = true; rc._sel = 1; rc._render();
 const rh2 = rc.shadowRoot.innerHTML;
-check('off TV hides the remote body', rh2.includes('is off') && !rh2.includes('DPAD_CENTER'));
+check('an off TV puts the pad and the transport away',
+  rh2.includes('is off') && !rh2.includes('id="pad"') && !rh2.includes('MEDIA_PLAY_PAUSE'));
+check('an off TV still offers every app, and says what tapping one does',
+  rh2.includes('data-app="com.netflix.ninja"') && rh2.includes('Turn on and open') &&
+  rh2.includes('turn it on and open it'));
+
+/* Every control answers a thumb. A key with no click is why a glass remote
+   feels dead — the buzz is what lets you keep your eyes on the television. */
+check('the remote is haptic throughout', (() => {
+  const n = (remoteSrc.match(/pcHaptic\(/g) || []).length;
+  return n >= 10;
+})());
 
 
 // ---- devices card ----
@@ -2837,6 +3010,10 @@ check('leaving the plot cannot end a touch drag, because pointerleave is mouse-o
   /pointerleave", \(ev\) => \{\s*if \(ev\.pointerType !== "mouse"\) return;/.test(src) &&
   src.includes('off the element entirely is fine'));
 check('a wandering thumb still enters scrub mode', src.includes('const TOL = 18'));
+/* Nowhere in the bundle. On touch it buys nothing (touch pointer events are
+   not retargeted); on the mouse path it hides the real hazard, which is a
+   release outside the element never firing pointerup at all. Both the scrubber
+   and the remote's trackpad end a mouse drag on pointerleave instead. */
 check('no pointer capture is needed, since touch events are not retargeted',
   !src.includes('setPointerCapture'));
 check('hypnogram plot is positioned for a crosshair', shs.includes('.ps-hypplot { position: relative'));
