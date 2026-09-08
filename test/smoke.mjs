@@ -680,7 +680,7 @@ check('the scroller search stops short of the document',
   /n === document\.body \|\| n === document\.documentElement/.test(remoteSrc));
 /* The resize handle is nulled on disconnect, or a reconnect stacks a second. */
 check('the remote unbinds its resize listener on disconnect',
-  /disconnectedCallback\(\) \{[\s\S]{0,420}removeEventListener\("resize"[\s\S]{0,80}this\._onResize = null;/
+  /disconnectedCallback\(\) \{[\s\S]{0,220}removeEventListener\("resize"[\s\S]{0,80}this\._onResize = null;/
     .test(remoteSrc));
 
 /* A node real enough to drive a gesture across. */
@@ -744,82 +744,6 @@ check('the pad targets the selected remote', sent[2].entity_id==='remote.lr' && 
 rc._launch('com.netflix.ninja');
 const launched = rhass._calls.find(c => c[1]==='turn_on');
 check('app launch passes activity', launched[2].activity==='com.netflix.ninja');
-
-/* v1.82.0 — an app tile on a COLD set.
- *
- * androidtv_remote's async_turn_on sends POWER and then sends the app link on
- * the next line with no wait, so the link lands on a device that is still
- * waking and is dropped. The service reports success, so nothing anywhere says
- * the app did not open: the recorder simply shows the set arriving at the
- * launcher. Re-sent once the stick reports a foreground activity of its own. */
-check('a warm set arms no re-send — one call is enough there', !rc._wake);
-
-const wakeSI = globalThis.setInterval, wakeCI = globalThis.clearInterval;
-let wakeArmed = 0;
-globalThis.setInterval = () => { wakeArmed++; return 4242; };
-globalThis.clearInterval = () => {};
-rc._touched = true;
-rc._sel = 1;                                  // Bedroom: media_player.br is off
-rhass._calls.length = 0;
-rc._launch('tv.twitch.android.app');
-check('a cold set still gets the first call — power has to go somehow',
-  rhass._calls.length === 1 && rhass._calls[0][2].entity_id === 'remote.br');
-check('a cold set arms a re-send', !!rc._wake && wakeArmed === 1 &&
-  rc._wake.activity === 'tv.twitch.android.app' && rc._wake.remote === 'remote.br');
-
-rhass._calls.length = 0;
-rc._wakeTick();
-check('nothing is re-sent while the set is still off', rhass._calls.length === 0 && !!rc._wake);
-
-rhass.states['remote.br'] = { state:'on', attributes:{} };
-rc._wakeTick();
-check('powered but with no activity yet is NOT ready — the stick is still coming up',
-  rhass._calls.length === 0 && !!rc._wake);
-
-rhass.states['remote.br'] = { state:'on', attributes:{
-  current_activity:'com.google.android.apps.tv.launcherx' } };
-rc._wakeTick();
-const resent = rhass._calls.find(c => c[1]==='turn_on');
-check('the launch is re-sent once the stick is up',
-  !!resent && resent[2].entity_id==='remote.br' &&
-  resent[2].activity==='tv.twitch.android.app');
-check('the pending launch clears after it is re-sent', !rc._wake);
-
-/* It got there on its own — a set that did honour the first link, or a hand on
-   the physical remote. Re-sending would relaunch the app over itself. */
-rc._launch('tv.twitch.android.app');
-rhass._calls.length = 0;
-rhass.states['remote.br'] = { state:'on', attributes:{
-  current_activity:'tv.twitch.android.app' } };
-rc._wakeTick();
-check('an app that arrived on its own is not relaunched over itself',
-  rhass._calls.length === 0 && !rc._wake);
-
-/* Bounded, and the bound is the whole safety of it. */
-rhass.states['remote.br'] = { state:'on', attributes:{
-  current_activity:'com.google.android.apps.tv.launcherx' } };
-rc._launch('tv.twitch.android.app');
-rc._wake.at = Date.now() - 60000;
-rhass._calls.length = 0;
-rc._wakeTick();
-check('a stale pending launch lapses instead of firing late',
-  rhass._calls.length === 0 && !rc._wake);
-
-globalThis.setInterval = wakeSI;
-globalThis.clearInterval = wakeCI;
-rc._sel = 0;
-rc._touched = false;
-
-/* A method can be complete and never called: every change of mind has to
-   actually reach _wakeStop. */
-check('_wakeStop is wired to the changes of mind, not merely defined',
-  /_wakeStop\(\)\s*\{/.test(remoteSrc) &&
-  /_power\(\)[\s\S]{0,240}this\._wakeStop\(\)/.test(remoteSrc) &&
-  /data-sel[\s\S]{0,400}this\._wakeStop\(\)/.test(remoteSrc) &&
-  /disconnectedCallback\(\)[\s\S]{0,200}this\._wakeStop\(\)/.test(remoteSrc));
-check('readiness reads the REMOTE, not the television that wakes earlier',
-  /_wakeTick\(\)[\s\S]{0,700}current_activity/.test(remoteSrc) &&
-  !/_wakeTick\(\)[\s\S]{0,700}_isOn\(/.test(remoteSrc));
 
 /* Hold-to-repeat. The leading edge is immediate so a tap is never delayed;
    the repeat is armed behind a grace period so a tap never runs away. */

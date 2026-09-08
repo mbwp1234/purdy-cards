@@ -99,14 +99,6 @@ const PC_VOL_DASHES = 9;
    frozen until the hold ended, which is when you have stopped looking at it. */
 const PC_VOL_WRITE_MS = 150;
 
-/* Waking a cold set and then opening the app on it — see _launch. The window
-   is generous because a Chromecast coming up from cold is slow and the cost of
-   giving up early is the bug this exists to fix; the poll is slow because the
-   thing it waits for takes seconds, not milliseconds, and a pending launch is
-   the only time either runs at all. */
-const PC_WAKE_MS = 25000;
-const PC_WAKE_EVERY = 1200;
-
 class PurdyRemoteCard extends PcBaseCard {
   static getStubConfig(hass) {
     const r = Object.keys(hass.states).find((e) => e.startsWith("remote."));
@@ -156,63 +148,39 @@ class PurdyRemoteCard extends PcBaseCard {
     });
   }
 
-  /* Tapping an app on a COLD set turned it on and landed on the home screen.
-   *
-   * `remote.turn_on` with an activity looks like one call that does both, and
-   * the app grid is drawn on a cold television on exactly that promise. The
-   * promise is false: androidtv_remote's `async_turn_on` sends POWER and then
-   * sends the app link on the very next line, with nothing in between — so the
-   * link reaches a device that is still waking and is dropped. Nothing reports
-   * a failure. The service call succeeds, the card repaints, and the recorder
-   * shows every power-on in this house arriving at
-   * `com.google.android.apps.tv.launcherx` however deliberately an app was
-   * chosen. The symptom is a tile that "does nothing" precisely when it is the
-   * one you reach for first — from an already-on set the same tap always
-   * worked, which is what made it look intermittent rather than broken.
-   *
-   * So the launch is re-sent once the stick is actually up. Readiness is the
-   * REMOTE reporting a `current_activity`, not `_isOn` — `_isOn` reads the
-   * television's media_player, which goes true when the display wakes, and the
-   * Google TV behind it is not listening yet at that moment. */
+  /* One call powers the set on AND opens the app, which is why the app grid is
+     drawn on a cold television rather than replaced by a sentence about
+     turning it on first. Both remotes here advertise supported_features 4.
+     Verified end to end on 2026-09-07: from a set that was off, one call
+     brought it up and landed in the app.
+
+     `activity` MUST be a deep link, never an Android package name. The card
+     does not enforce that — it is a config value — so the trap is recorded
+     here because the failure is completely silent. `androidtvremote2` turns a
+     bare package into `market://launch?id=<pkg>` internally, and a Google Play
+     Store update in mid-August 2026 removed that mechanism. Since then the
+     service call still succeeds, HA logs nothing, `remote.turn_on` still
+     powers the television on, and the app simply never opens — which reads
+     exactly like a dead button. Both televisions here failed identically, so
+     this is not one device being broken.
+
+     Measured on remote.living_room_googletv, all four in one sitting:
+     `tv.twitch.android.app` never left the launcher; `market://launch?id=...`
+     and an `intent:#Intent;...;end` URI were ignored outright; `twitch://home`
+     opened Twitch in about a second. `netflix://` — which the HA docs list —
+     also did nothing, while `https://www.netflix.com/title` worked, so the
+     https form is the one to reach for first.
+
+     A wake-then-retry was built and shipped for this (v1.82.0) on the theory
+     that the launch was racing the set's power-on, and reverted a few hours
+     later: re-sending a package name to a set that had been sitting awake for
+     minutes did nothing at all. The activity string was the whole bug, and a
+     plausible mechanism is not evidence. Fire the call at an awake device and
+     read `current_activity` before believing any story about this. */
   _launch(activity) {
     const t = this._tv();
     if (!t.remote) return;
-    this._wakeStop();
     this._hass.callService("remote", "turn_on", { entity_id: t.remote, activity });
-    if (this._isOn(t)) return;
-    this._wake = { activity, remote: t.remote, at: Date.now() };
-    this._wakeTimer = setInterval(() => this._wakeTick(), PC_WAKE_EVERY);
-  }
-
-  /* `current_activity` is an ATTRIBUTE, so it moves without moving a state and
-     PcBaseCard's signature never sees it — the same trap mute and source fell
-     into. This cannot ride the render path; it has to poll. */
-  _wakeTick() {
-    const w = this._wake;
-    if (!w || !this._hass) return this._wakeStop();
-    /* Bounded, and the bound is the whole safety of it: a re-send that fired a
-       minute later would open Twitch over whatever had been chosen since. */
-    if (Date.now() - w.at > PC_WAKE_MS) return this._wakeStop();
-    const st = this._hass.states[w.remote];
-    if (!st || st.state !== "on") return;
-    const cur = st.attributes && st.attributes.current_activity;
-    if (!cur) return;
-    this._wakeStop();
-    /* Already there — a set that did honour the first link, or a hand on the
-       physical remote. Re-sending would relaunch the app over itself. */
-    if (cur === w.activity) return;
-    this._hass.callService("remote", "turn_on", {
-      entity_id: w.remote, activity: w.activity,
-    });
-  }
-
-  /* Every exit from the pending state goes through here, including the ones
-     that are a change of mind: switching television, pressing power, or
-     picking a different app before the first one has landed. */
-  _wakeStop() {
-    if (this._wakeTimer) clearInterval(this._wakeTimer);
-    this._wakeTimer = null;
-    this._wake = null;
   }
 
   /* ---- optimistic attribute reads -------------------------------------
@@ -381,9 +349,6 @@ class PurdyRemoteCard extends PcBaseCard {
   _power() {
     const t = this._tv();
     const on = this._isOn(t);
-    /* Powering the set off by hand while an app launch is still pending is the
-       clearest possible statement that the launch is no longer wanted. */
-    this._wakeStop();
     if (t.media_player && this._hass.states[t.media_player]) {
       this._hass.callService("media_player", on ? "turn_off" : "turn_on", {
         entity_id: t.media_player,
@@ -1012,7 +977,6 @@ class PurdyRemoteCard extends PcBaseCard {
       el.addEventListener("click", () => {
         this._touched = true;
         this._sel = parseInt(el.dataset.sel, 10);
-        this._wakeStop();
         pcHaptic("light");
         this._render();
       });
@@ -1140,9 +1104,6 @@ class PurdyRemoteCard extends PcBaseCard {
   }
 
   disconnectedCallback() {
-    /* Nulled, not merely stopped, so a reconnect can tell it is stopped rather
-       than stacking a second one — the same contract as the resize listener. */
-    this._wakeStop();
     if (!this._onResize) return;
     window.removeEventListener("resize", this._onResize);
     this._onResize = null;
