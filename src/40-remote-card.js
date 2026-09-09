@@ -45,6 +45,16 @@ const PC_BRAND_TINT = {
  * a held key buzzes per step rather than becoming one continuous vibration. */
 const PC_RPT_DELAY = 420;
 const PC_RPT_EVERY = 130;
+/* The dead man's switch on the repeat, and it is a FLOOR under the structural
+ * fixes rather than the fix itself.
+ *
+ * A repeat that outlives the finger that started it is not a slow bug, it is a
+ * runaway: on 2026-09-08 five taps of + left detached intervals stepping the
+ * volume seven times a second from 61 to 88, and nothing on screen could stop
+ * them — the recorder has it at 20:58:40 through 20:58:53, ending only when the
+ * app was closed. The failure mode is "for ever", and no hold is nine seconds
+ * long, so the interval also stops counting the day away on its own. */
+const PC_RPT_MAX = 9000;
 
 /* Optimistic display, on the same contract as the shell's _optGoal: hold the
    value we just asked for, let the real state supersede it, and expire after
@@ -366,23 +376,83 @@ class PurdyRemoteCard extends PcBaseCard {
      and on the mouse path a release outside the button would never fire
      pointerup at all — the repeat would run on with nothing to stop it. Leaving
      the element ends the hold instead. */
-  _bindRepeat(el, fn, type) {
-    let delay = null, timer = null, down = false;
-    const stop = () => {
-      clearTimeout(delay); clearInterval(timer);
-      delay = timer = null; down = false;
+  /* Hold-to-repeat, with the timers on the CARD rather than in the closure.
+   *
+   * They were per-binding locals, and that is what let one run away. This card
+   * repaints whenever a watched entity moves, the ladder helper IS watched, and
+   * a volume step writes it — so the card's own write replaces the button
+   * mid-press. The finger then lifts over a NEW node whose closure armed
+   * nothing, while the old node's 420ms timer fires into an interval that
+   * nothing on the page holds a reference to and no release can ever reach.
+   *
+   * Three separate things now close that, because the bug was unstoppable
+   * rather than merely wrong:
+   *
+   *   - the handle lives on `this`, so a press, a release, a disconnect or the
+   *     dead man clears whatever is actually running rather than its own copy;
+   *   - the release verbs are bound to the WINDOW as well as to the element,
+   *     because a detached node cannot receive the pointerup that would have
+   *     ended its own gesture;
+   *   - a held key sets `_dragging`, the same contract the pad and the ladder
+   *     drag already use, so the repaint that detaches the button is deferred
+   *     to the release and the node under the thumb survives the press.
+   *
+   * The third is the actual cause and the first two are what make the failure
+   * recoverable if it is ever reintroduced by another route. */
+  _stopRepeat() {
+    const r = this._rpt;
+    if (!r) return;
+    this._rpt = null;
+    clearTimeout(r.delay); clearInterval(r.timer);
+    this._endDrag();
+  }
+
+  /* Repaints held off during a gesture land now. */
+  _endDrag() {
+    if (!this._dragging) return;
+    this._dragging = false;
+    if (this._pending) { this._pending = false; this._render(); }
+  }
+
+  /* Every gesture on this card must be endable from the window, not only from
+     the node it started on — a repaint can take that node away mid-press, and a
+     handler bound only to it then never hears the finger lift. Armed by the
+     binders themselves rather than by connectedCallback, so a control cannot
+     exist without its escape hatch. A touchend with fingers still down is not a
+     release: ending the gesture there would kill a pad swipe on a stray palm. */
+  _armRelease() {
+    if (this._onRelease) return;
+    this._onRelease = (ev) => {
+      if (ev && ev.touches && ev.touches.length) return;
+      this._stopRepeat();
+      (this._release || []).forEach((f) => f());
+      /* A gesture whose node was replaced mid-press leaves nothing able to
+         clear this, and a stuck _dragging silently stops the card repainting
+         for the rest of the session. Any release ends any gesture. */
+      this._endDrag();
     };
+    ["pointerup", "pointercancel", "touchend", "touchcancel"].forEach((k) => {
+      window.addEventListener(k, this._onRelease, true);
+    });
+  }
+
+  _bindRepeat(el, fn, type) {
+    this._armRelease();
     el.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
-      if (down) return;
-      down = true;
+      if (this._rpt) return;
+      const r = this._rpt = { delay: null, timer: null, t0: Date.now() };
+      this._dragging = true;
       fn(); pcHaptic(type || "light");
-      delay = setTimeout(() => {
-        timer = setInterval(() => { fn(); pcHaptic("selection"); }, PC_RPT_EVERY);
+      r.delay = setTimeout(() => {
+        r.timer = setInterval(() => {
+          if (Date.now() - r.t0 > PC_RPT_MAX) { this._stopRepeat(); return; }
+          fn(); pcHaptic("selection");
+        }, PC_RPT_EVERY);
       }, PC_RPT_DELAY);
     });
     ["pointerup", "pointercancel", "pointerleave"].forEach((k) => {
-      el.addEventListener(k, stop);
+      el.addEventListener(k, () => this._stopRepeat());
     });
   }
 
@@ -398,6 +468,7 @@ class PurdyRemoteCard extends PcBaseCard {
    * precision the drawing cannot show; the dashes are what you can see, so the
    * dashes are what you can choose. +/- refines from there. */
   _bindVolSet(el) {
+    this._armRelease();
     const HOLD = 380, SLOP = 8;
     let hold = null, live = false, sy = 0, id = null;
 
@@ -415,9 +486,12 @@ class PurdyRemoteCard extends PcBaseCard {
       if (!live) return;
       live = false;
       el.classList.remove("set");
-      this._dragging = false;
-      if (this._pending) { this._pending = false; this._render(); }
+      this._endDrag();
     };
+    /* The hold timer can outlive the node the same way the repeat did: a
+       repaint mid-tap detaches the ladder, its own touchend never arrives, and
+       380ms later _dragging goes true on a ghost and the card stops painting. */
+    (this._release = this._release || []).push(stop);
 
     const down = (y) => {
       const t = this._tv();
@@ -973,6 +1047,9 @@ class PurdyRemoteCard extends PcBaseCard {
       </div>
     `;
 
+    /* The nodes these were registered against are gone; the window guard must
+       not keep calling into their closures. */
+    this._release = [];
     this.shadowRoot.querySelectorAll("[data-sel]").forEach((el) => {
       el.addEventListener("click", () => {
         this._touched = true;
@@ -1104,6 +1181,15 @@ class PurdyRemoteCard extends PcBaseCard {
   }
 
   disconnectedCallback() {
+    /* Lovelace detaches this element rather than destroying it, so a repeat
+       still ticking here would go on stepping the volume with the sheet shut. */
+    this._stopRepeat();
+    if (this._onRelease) {
+      ["pointerup", "pointercancel", "touchend", "touchcancel"].forEach((k) => {
+        window.removeEventListener(k, this._onRelease, true);
+      });
+      this._onRelease = null;
+    }
     if (!this._onResize) return;
     window.removeEventListener("resize", this._onResize);
     this._onResize = null;

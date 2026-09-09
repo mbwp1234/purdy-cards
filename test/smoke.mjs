@@ -53,7 +53,14 @@ class FakeEl {
 }
 globalThis.HTMLElement = FakeEl;
 globalThis.customElements = { define:(n,c)=>{ defined[n]=c; }, get:(n)=>defined[n] };
-globalThis.window = { customCards: [], location:{ hash:'' } };
+globalThis.window = {
+  customCards: [], location:{ hash:'' }, _lis: {},
+  addEventListener(t, f){ (this._lis[t] = this._lis[t] || []).push(f); },
+  removeEventListener(t, f){
+    const a = this._lis[t] || []; const i = a.indexOf(f); if (i >= 0) a.splice(i, 1);
+  },
+  fire(t, ev){ (this._lis[t] || []).slice().forEach((f) => f(ev || { type:t })); },
+};
 globalThis.history = { pushState(){} };
 globalThis.document = { createElement:()=>({ style:{}, setAttribute(){}, appendChild(){} }) };
 globalThis.Event = class { constructor(t){ this.type=t; } };
@@ -680,7 +687,7 @@ check('the scroller search stops short of the document',
   /n === document\.body \|\| n === document\.documentElement/.test(remoteSrc));
 /* The resize handle is nulled on disconnect, or a reconnect stacks a second. */
 check('the remote unbinds its resize listener on disconnect',
-  /disconnectedCallback\(\) \{[\s\S]{0,220}removeEventListener\("resize"[\s\S]{0,80}this\._onResize = null;/
+  /disconnectedCallback\(\) \{[\s\S]{0,700}removeEventListener\("resize"[\s\S]{0,80}this\._onResize = null;/
     .test(remoteSrc));
 
 /* A node real enough to drive a gesture across. */
@@ -912,6 +919,88 @@ check('the ladder can be re-anchored by hand',
 check('the ladder paints in place and gates the repaint while dragging',
   /_paintLadder\(\) \{/.test(remoteSrc) && /this\._paintLadder\(\);/.test(remoteSrc) &&
   /live = true;\s*\n\s*this\._dragging = true;/.test(remoteSrc));
+
+/* ---- the runaway repeat (2026-09-08) --------------------------------------
+ *
+ * Five taps of + and the volume climbed 61 to 88 on its own at seven steps a
+ * second, unstoppable until the app was closed — recorder, 20:58:40 to
+ * 20:58:53, the last five seconds of it a jitter between 87 and 88 where a
+ * runaway + and a runaway - fought each other.
+ *
+ * The mechanism is this codebase's oldest one at a new surface: a volume step
+ * writes the ladder helper, the helper is watched, so the card repaints and
+ * REPLACES the button under the thumb. The release then lands on a new node,
+ * the old node's closure never hears it, and its 420ms timer arms an interval
+ * that nothing holds a reference to. The timers moved onto the card, the
+ * release verbs onto the window, and a held key now defers the repaint. */
+const mkBtn = () => ({
+  _l: {},
+  addEventListener(t, f){ (this._l[t] = this._l[t] || []).push(f); },
+  fire(t, ev){ (this._l[t] || []).slice().forEach((f) => f(ev || { preventDefault(){} })); },
+  classList: { add(){}, remove(){}, toggle(){} },
+});
+const RPT_DELAY = Number((remoteSrc.match(/PC_RPT_DELAY = (\d+)/) || [])[1]);
+const RPT_EVERY = Number((remoteSrc.match(/PC_RPT_EVERY = (\d+)/) || [])[1]);
+check('the repeat timings are readable', RPT_DELAY > 0 && RPT_EVERY > 0);
+
+vhass.states['input_number.bar'] = { state:'20', attributes:{ min:0, max:100 } };
+const vcR = mkVol();
+let rticks = 0;
+const rbtn = mkBtn();
+vcR._bindRepeat(rbtn, () => { rticks++; }, 'light');
+rbtn.fire('pointerdown');
+check('a tap still fires once on the leading edge', rticks === 1);
+check('a held key defers the repaint that would detach it', vcR._dragging === true);
+check('the repeat handle lives on the card, not in the closure', !!vcR._rpt);
+/* The repaint that used to replace the button mid-press. */
+vcR._render();
+check('the repaint waits rather than detaching the button', vcR._pending === true);
+/* The finger lifts — over a different node than the one it pressed. */
+window.fire('pointerup');
+check('a release anywhere ends the repeat',
+  vcR._rpt === null && vcR._dragging === false);
+await new Promise((r) => setTimeout(r, RPT_DELAY + RPT_EVERY * 3));
+check('a released key never repeats, however its node was replaced',
+  rticks === 1);
+
+/* Held for real: it must still repeat, or the fix has removed the feature. */
+const vcH = mkVol();
+let hticks = 0;
+const hbtn = mkBtn();
+vcH._bindRepeat(hbtn, () => { hticks++; }, 'light');
+hbtn.fire('pointerdown');
+await new Promise((r) => setTimeout(r, RPT_DELAY + RPT_EVERY * 3));
+check('a genuine hold still repeats', hticks >= 3);
+window.fire('pointerup');
+const held = hticks;
+await new Promise((r) => setTimeout(r, RPT_EVERY * 3));
+check('and stops when it is let go', hticks === held);
+
+/* A detached card must not go on stepping the volume with the sheet shut. */
+const vcD = mkVol();
+let dticks = 0;
+const dbtn = mkBtn();
+vcD._bindRepeat(dbtn, () => { dticks++; }, 'light');
+dbtn.fire('pointerdown');
+vcD.disconnectedCallback();
+check('a disconnect stops the repeat', vcD._rpt === null && vcD._dragging === false);
+await new Promise((r) => setTimeout(r, RPT_DELAY + RPT_EVERY * 3));
+check('and nothing ticks after the card is detached', dticks === 1);
+
+/* The floor under the other three: no hold is nine seconds long, and the
+   failure mode this closes is "for ever". */
+check('the repeat carries a dead man rather than trusting the release',
+  /PC_RPT_MAX = \d+/.test(remoteSrc) &&
+  /Date\.now\(\) - r\.t0 > PC_RPT_MAX/.test(remoteSrc));
+check('the release is bound to the window, not only to the node',
+  /window\.addEventListener\(k, this\._onRelease, true\)/.test(remoteSrc) &&
+  /_bindRepeat\(el, fn, type\) \{\s*\n\s*this\._armRelease\(\);/.test(remoteSrc));
+/* A palm landing while the other thumb swipes the pad is not a release. */
+check('a touchend with fingers still down does not end the gesture',
+  /ev\.touches && ev\.touches\.length\) return/.test(remoteSrc));
+check('the ladder hold is registered with the same guard',
+  /\(this\._release = this\._release \|\| \[\]\)\.push\(stop\)/.test(remoteSrc) &&
+  /this\._release = \[\];/.test(remoteSrc));
 
 /* The now-playing tile takes the running app's colour. A TINT, not a fill:
    five of the nine marks are coloured glyphs on transparent and a solid brand
