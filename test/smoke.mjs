@@ -730,6 +730,39 @@ pad.fire('touchstart', touch(10,100));
 pad.fire('touchend', touch(10,100));
 check('a tap on the rim is still one discrete step', cmds().join(',') === 'DPAD_LEFT');
 
+/* v1.82.3 — OK stopped working, and nothing about the pad had changed.
+ *
+ * v1.82.2 armed a release guard on the WINDOW, in the capture phase, so that a
+ * control detached mid-press could still be told the finger had lifted. Capture
+ * runs window-first: on every pad tap the guard cleared `_dragging` before this
+ * element's own touchend handler ever ran, and the tap branch — which asked
+ * `_dragging` whether a gesture was live — found it already false and sent
+ * nothing. Swiping was untouched, because a swipe is decided during touchmove.
+ *
+ * The order below is the browser's, not a convenience: the guard first, the
+ * node second. A gesture must decide it has ended from its OWN state, never
+ * from a flag the safety net is allowed to reset underneath it. */
+rhass._calls.length = 0;
+pad.fire('touchstart', touch(100,100));
+globalThis.window.fire('touchend', { touches: [] });
+pad.fire('touchend', touch(100,100));
+check('OK still fires when the window release guard runs first',
+  cmds().join(',') === 'DPAD_CENTER');
+
+rhass._calls.length = 0;
+pad.fire('touchstart', touch(10,100));
+globalThis.window.fire('touchend', { touches: [] });
+pad.fire('touchend', touch(10,100));
+check('a rim tap survives the guard too', cmds().join(',') === 'DPAD_LEFT');
+
+check('the pad decides its own tap rather than reading the shared render gate',
+  /let active = false;/.test(remoteSrc) && /if \(active && !moved/.test(remoteSrc));
+/* The pad needs the guard as much as the volume key does — but deferred by a
+   turn, or the thing meant to protect the press is what eats it. */
+check('the pad registers with the window guard, and defers to its own node',
+  /_armRelease\(\);\s*\(this\._release = this\._release \|\| \[\]\)\.push\(\(\) => \{ if \(active\) setTimeout\(up, 0\); \}\);/
+    .test(remoteSrc));
+
 /* Re-rendering mid-gesture detaches the node under the finger — the handler
    keeps a stale el, getBoundingClientRect() reads zero and every later move is
    thrown away. The repaint has to be deferred rather than dropped, or the card

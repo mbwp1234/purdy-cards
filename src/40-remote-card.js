@@ -569,6 +569,17 @@ class PurdyRemoteCard extends PcBaseCard {
     const TAP_PX = 9, TAP_MS = 600;
     let sx = 0, sy = 0, ax = 0, ay = 0, t0 = 0, moved = false, zone = null;
     let hold = null, rpt = null;
+    /* The gesture's OWN liveness, and it must not be `this._dragging`.
+     *
+       `_dragging` is a repaint-deferral flag shared by every control on the
+       card, and v1.82.2 gave the window a CAPTURE-phase release guard that
+       clears it — so on a pad tap the window handler ran first, `_dragging`
+       was already false by the time this element's own touchend fired, and the
+       tap branch below never ran: OK sent nothing at all while swiping still
+       worked, because a swipe is decided during touchmove. A gesture must
+       decide it has ended from its own state, never from a flag the safety
+       net is allowed to reset underneath it. */
+    let active = false;
 
     const zoneAt = (x, y) => {
       const r = el.getBoundingClientRect();
@@ -582,6 +593,7 @@ class PurdyRemoteCard extends PcBaseCard {
     const stopHold = () => { clearTimeout(hold); clearInterval(rpt); hold = rpt = null; };
 
     const down = (x, y) => {
+      active = true;
       this._dragging = true;
       sx = ax = x; sy = ay = y; t0 = Date.now(); moved = false;
       zone = zoneAt(x, y);
@@ -597,7 +609,7 @@ class PurdyRemoteCard extends PcBaseCard {
     };
 
     const move = (x, y) => {
-      if (!this._dragging) return;
+      if (!active) return;
       if (!moved && (Math.abs(x - sx) > TAP_PX || Math.abs(y - sy) > TAP_PX)) {
         stopHold();
         moved = true;
@@ -621,16 +633,25 @@ class PurdyRemoteCard extends PcBaseCard {
     const up = () => {
       stopHold();
       el.classList.remove("live");
-      if (this._dragging && !moved && Date.now() - t0 < TAP_MS) {
+      if (active && !moved && Date.now() - t0 < TAP_MS) {
         this._send(zone || "DPAD_CENTER");
         pcHaptic(zone ? "light" : "medium");
       }
-      this._dragging = false;
+      active = false;
       /* Repaints held off during the gesture land now. Re-rendering mid-swipe
          detaches the node under the finger: the handler keeps its stale el,
          getBoundingClientRect() reads zero and every later move is discarded. */
-      if (this._pending) { this._pending = false; this._render(); }
+      this._endDrag();
     };
+
+    /* The pad needs the window guard too — a repaint can detach it mid-press
+       the same way it detached the volume key — but the guard runs in CAPTURE,
+       i.e. before this element's own handlers, so it must not end the gesture
+       inline or it would eat the tap it is meant to protect. Deferring by a
+       turn lets the node's own touchend decide first; if that node is gone and
+       it never arrives, this still lands the press and clears the flag. */
+    this._armRelease();
+    (this._release = this._release || []).push(() => { if (active) setTimeout(up, 0); });
 
     el.addEventListener("touchstart", (e) => {
       e.preventDefault(); const t = e.touches[0]; down(t.clientX, t.clientY);
@@ -640,7 +661,7 @@ class PurdyRemoteCard extends PcBaseCard {
     }, { passive: false });
     el.addEventListener("touchend", (e) => { e.preventDefault(); up(); }, { passive: false });
     el.addEventListener("touchcancel", () => {
-      stopHold(); el.classList.remove("live"); this._dragging = false;
+      stopHold(); el.classList.remove("live"); active = false; this._endDrag();
     });
 
     el.addEventListener("pointerdown", (e) => {
