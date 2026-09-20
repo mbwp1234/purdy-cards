@@ -83,8 +83,23 @@ const PC_PAD_MIN = 132;
  * network-capable and has no HA integration — so even that 0.19 was describing
  * the television's own bypassed speakers rather than anything audible.
  *
- * So the ladder is DEAD RECKONING: the card counts its own presses into an
- * input_number and draws that. Chosen deliberately with the drift understood —
+ * That is the LIVING ROOM, and it is a fact about the room's wiring rather
+ * than about the integration. The bedroom set drives its own speakers with no
+ * soundbar in front of them, and its player publishes a real, moving
+ * volume_level (0.11 stepping down to 0.03 one key at a time on 2026-09-19)
+ * and honours volume_set in both directions — verified live before this was
+ * built. So there are TWO ladders, and `volume_player` is the explicit
+ * statement of which television is which.
+ *
+ * It has to be stated rather than derived. Both sets publish the same
+ * supported_features and both publish the attribute; what differs is what is
+ * downstream of the HDMI socket, which nothing in HA can see. Deriving it from
+ * "does a number come through" would read the living room's permanent 0 as a
+ * television at silent and draw an empty ladder over a playing room — the one
+ * confusion this codebase refuses everywhere else.
+ *
+ * Where no player reading exists the ladder is DEAD RECKONING: the card counts
+ * its own presses into an input_number and draws that. Chosen deliberately with the drift understood —
  * the soundbar's own remote moves the real volume and nothing tells us. Two
  * things keep that from becoming a lie that never lapses:
  *
@@ -108,6 +123,19 @@ const PC_VOL_DASHES = 9;
    needs the value the finger landed on; a debounce would leave the ladder
    frozen until the hold ended, which is when you have stopped looking at it. */
 const PC_VOL_WRITE_MS = 150;
+
+/* The ladder's default SPAN where a player reading is real, and it is a
+   drawing decision rather than a limit.
+ *
+ * The bedroom set lives between 3 and 11 out of 100 — its whole week of
+ * history — so nine rungs over the device's true scale put every level anyone
+ * listens at inside the first rung, and "quiet" drew exactly what "silent"
+ * drew. `volume_max` per television caps what the rungs SPAN, the way a graph
+ * picks a domain; the number under the rungs is the untouched reading, so the
+ * scale cannot quietly lie about where the volume actually is. +/- still
+ * reaches the full 0-100, and a level ABOVE the cap widens the span to itself
+ * rather than drawing a full ladder that a drag would then yank down. */
+const PC_VOL_SPAN = 100;
 
 /* ---- driving the PANEL rather than the box ----------------------------
  *
@@ -154,7 +182,7 @@ class PurdyRemoteCard extends PcBaseCard {
     this._config = { title: "Televisions", apps: [], ...config };
     const ids = [];
     config.tvs.forEach((t) => {
-      [t.remote, t.app_sensor, t.media_player, t.volume_track, t.panel]
+      [t.remote, t.app_sensor, t.media_player, t.volume_track, t.volume_player, t.panel]
         .forEach((x) => x && ids.push(x));
     });
     this._watched = ids;
@@ -266,17 +294,50 @@ class PurdyRemoteCard extends PcBaseCard {
     this._opt[key] = { v, at: Date.now() };
   }
 
+  /* Volume is an ATTRIBUTE where the player reading is real, and PcBaseCard's
+     repaint signature is built from states — so the bedroom's own remote could
+     move the volume and this card would go on drawing the old level until
+     something unrelated changed state. The tracker never had this problem: an
+     input_number's value IS its state. Mute rides along for every television,
+     which is the same staleness the optimistic value was papering over. */
+  _sigExtra(hass) {
+    return (this._config.tvs || []).map((t) => {
+      const st = t.media_player && hass.states[t.media_player];
+      const vst = t.volume_player ? hass.states[t.volume_player] : st;
+      const lvl = vst ? vst.attributes.volume_level : undefined;
+      return "|" + (st && st.attributes.is_volume_muted ? "m" : "-")
+        + (t.volume_player && typeof lvl === "number" ? lvl : "");
+    }).join("");
+  }
+
   _muted(t) {
     const st = this._hass.states[t.media_player];
     return !!this._opt_get("mute:" + t.media_player, !!(st && st.attributes.is_volume_muted));
   }
 
   /* ---- volume ---------------------------------------------------------
-   * Steps rather than sets: Tizen advertises VOLUME_SET, never honours it, and
-   * the soundbar is downstream of the television anyway. What the ladder draws
-   * comes from the tracker helper this card writes, NEVER from the player's own
-   * volume_level — see the PC_VOL_DASHES note. */
-  _volRange(t) {
+   * Steps rather than sets on the KEYS: a television steps its own volume by
+   * one and the step is what a remote's +/- means. The level comes from the
+   * player where a `volume_player` says that reading is real, and from the
+   * tracker helper this card writes where it is not — see the PC_VOL_DASHES
+   * note for why that cannot be derived. */
+  _volMode(t) {
+    if (t.volume_track) return "track";
+    return t.volume_player && this._hass.states[t.volume_player] ? "player" : null;
+  }
+
+  /* The entity the level is read from and written to, which is also the key the
+     optimistic value is held under. */
+  _volKey(t) {
+    return this._volMode(t) === "player" ? t.volume_player : t.volume_track;
+  }
+
+  /* What may be WRITTEN. For a tracker this is the helper's own range, because
+     a value outside it is silently rejected and the tracker then never works
+     again; for a player it is the device's full scale, which `volume_max` must
+     never shorten — the cap is about the picture, not about the control. */
+  _volLimits(t) {
+    if (this._volMode(t) === "player") return { min: 0, max: PC_VOL_SPAN };
     const st = t.volume_track && this._hass.states[t.volume_track];
     const min = st ? parseFloat(st.attributes.min) : NaN;
     const max = st ? parseFloat(st.attributes.max) : NaN;
@@ -286,15 +347,52 @@ class PurdyRemoteCard extends PcBaseCard {
     };
   }
 
+  /* What the rungs SPAN, and what a drag can therefore choose. Same thing as
+     the limits for a tracker. For a player it is `volume_max`, widened to the
+     live level when that sits above the cap: a ladder pinned full would say
+     nothing about where you are, and a drag on it would pull the room down to
+     the cap on a gesture meant to nudge. */
+  _volRange(t) {
+    const lim = this._volLimits(t);
+    if (this._volMode(t) !== "player") return lim;
+    const cap = parseFloat(t.volume_max);
+    const top = isNaN(cap) || cap <= 0 ? PC_VOL_SPAN : Math.min(cap, PC_VOL_SPAN);
+    const lvl = this._level(t);
+    return { min: 0, max: lvl === null ? top : Math.max(top, lvl) };
+  }
+
   /* null means "no reading", which the ladder draws hollow. An input_number
-     reads `unknown` before it is ever written and parseFloat answers NaN — the
-     one value that must not fall through to a zero. */
+     reads `unknown` before it is ever written and parseFloat answers NaN, and a
+     player that is off or unreachable publishes no volume_level at all — the
+     one value that must not fall through to a zero, at either source. */
   _level(t) {
-    if (!t.volume_track) return null;
-    const st = this._hass.states[t.volume_track];
-    const raw = st ? parseFloat(st.state) : NaN;
-    const real = isNaN(raw) ? null : raw;
-    return this._opt_get("vol:" + t.volume_track, real);
+    const mode = this._volMode(t);
+    if (!mode) return null;
+    const id = this._volKey(t);
+    const st = this._hass.states[id];
+    let real = null;
+    if (mode === "player") {
+      const v = st ? st.attributes.volume_level : null;
+      real = typeof v === "number" ? Math.round(v * PC_VOL_SPAN) : null;
+    } else {
+      const raw = st ? parseFloat(st.state) : NaN;
+      real = isNaN(raw) ? null : raw;
+    }
+    return this._opt_get("vol:" + id, real);
+  }
+
+  /* How many rungs are lit, shared by the render and the in-place paint so the
+     two cannot disagree. -1 is "no reading", which draws hollow. */
+  _volLit(t) {
+    const lvl = this._level(t);
+    if (lvl === null) return -1;
+    const { min, max } = this._volRange(t);
+    const n = Math.round(((lvl - min) / (max - min)) * PC_VOL_DASHES);
+    /* A set that is ON and quiet must not draw what a set at zero draws. Below
+       half a rung the rounding takes a real level to nothing, and on the
+       bedroom's scale that is most of the band anyone listens at. */
+    if (lvl > min && n < 1) return 1;
+    return Math.max(0, Math.min(PC_VOL_DASHES, n));
   }
 
   /* Optimistic first so a held key moves the ladder at the repeat rate, then
@@ -302,14 +400,13 @@ class PurdyRemoteCard extends PcBaseCard {
      computing from the live state is how the climate panel's third tap kept
      recomputing the same number inside the echo window. */
   _bump(t, dir) {
-    const id = t.volume_track;
-    if (!id) return;
+    if (!this._volMode(t)) return;
     const cur = this._level(t);
     if (cur === null) return;   /* nothing to count from; anchor it by hold */
-    const { min, max } = this._volRange(t);
+    const { min, max } = this._volLimits(t);
     const next = Math.max(min, Math.min(max, cur + dir));
     if (next === cur) return;
-    this._setLevel(id, next);
+    this._setLevel(t, next);
     this._paintLadder();
   }
 
@@ -322,9 +419,11 @@ class PurdyRemoteCard extends PcBaseCard {
     if (!el) return;
     const t = this._tv();
     const lvl = this._level(t);
-    const { min, max } = this._volRange(t);
-    const lit = lvl === null ? -1
-      : Math.round(((lvl - min) / (max - min)) * PC_VOL_DASHES);
+    const lit = this._volLit(t);
+    /* The readout moves with the rungs or it is a second opinion about the same
+       thing. It is only present where the reading is real. */
+    const num = this.shadowRoot.getElementById("vnum");
+    if (num) num.textContent = lvl === null ? "\u2014" : String(lvl);
     el.classList.toggle("unset", lvl === null);
     if (lvl === null) el.removeAttribute("aria-valuenow");
     else el.setAttribute("aria-valuenow", String(lvl));
@@ -333,15 +432,19 @@ class PurdyRemoteCard extends PcBaseCard {
     });
   }
 
-  _setLevel(id, v) {
+  _setLevel(t, v) {
+    const id = this._volKey(t);
+    if (!id) return;
+    const mode = this._volMode(t);
     this._opt_set("vol:" + id, v);
-    this._volPend = { id, v };
+    this._volPend = { mode, id, v };
     const now = Date.now();
     const since = now - (this._volAt || 0);
     if (since >= PC_VOL_WRITE_MS) {
       this._volAt = now;
+      const p = this._volPend;
       this._volPend = null;
-      this._hass.callService("input_number", "set_value", { entity_id: id, value: v });
+      this._writeLevel(p);
       return;
     }
     if (this._volTail) return;   /* a trailing write is already queued */
@@ -351,9 +454,22 @@ class PurdyRemoteCard extends PcBaseCard {
       this._volPend = null;
       if (!p || !this._hass) return;
       this._volAt = Date.now();
-      this._hass.callService("input_number", "set_value",
-        { entity_id: p.id, value: p.v });
+      this._writeLevel(p);
     }, PC_VOL_WRITE_MS - since);
+  }
+
+  /* The write itself. A tracker takes the count; a real player takes the
+     volume, because where the reading is real the set honours volume_set — and
+     a card that could only step would have to send twenty commands to answer
+     one drag. */
+  _writeLevel(p) {
+    if (p.mode === "player") {
+      this._hass.callService("media_player", "volume_set",
+        { entity_id: p.id, volume_level: p.v / PC_VOL_SPAN });
+      return;
+    }
+    this._hass.callService("input_number", "set_value",
+      { entity_id: p.id, value: p.v });
   }
 
   _step(dir) {
@@ -511,12 +627,19 @@ class PurdyRemoteCard extends PcBaseCard {
     });
   }
 
-  /* Re-anchoring the ladder.
+  /* Setting the level by hand. One gesture, two meanings, and the difference
+   * is what is behind the ladder.
    *
-   * Dead reckoning drifts the moment anyone picks up the soundbar's own remote,
-   * and with no reading to correct against, the only repair is a human saying
-   * where it actually is. One press-and-hold, 380ms, the same gesture as the
-   * graph scrub and the light row — then drag to set.
+   * Where the reading is real the drag IS the volume control — it lands on the
+   * set through volume_set, which the bedroom panel honours in both directions.
+   *
+   * Where it is dead reckoning the same drag RE-ANCHORS the count: it drifts
+   * the moment anyone picks up the soundbar's own remote, and with no reading
+   * to correct against, the only repair is a human saying where it actually is.
+   *
+   * One press-and-hold either way, 380ms, the same gesture as the graph scrub
+   * and the light row — then drag to set. A hold rather than a tap because on
+   * the real-volume side a stray tap while scrolling would now be audible.
    *
    * It snaps to the dash, not to the unit. The track is ~110px tall and the
    * helper spans 100 steps, so a pixel-accurate drag would be claiming a
@@ -525,10 +648,9 @@ class PurdyRemoteCard extends PcBaseCard {
   _bindVolSet(el) {
     this._armRelease();
     const HOLD = 380, SLOP = 8;
-    let hold = null, live = false, sy = 0, id = null;
+    let hold = null, live = false, sy = 0, tv = null;
 
-    const at = (y) => {
-      const t = this._tv();
+    const at = (t, y) => {
       const r = el.getBoundingClientRect();
       if (!r.height) return null;
       const f = 1 - Math.min(1, Math.max(0, (y - r.top) / r.height));
@@ -550,16 +672,20 @@ class PurdyRemoteCard extends PcBaseCard {
 
     const down = (y) => {
       const t = this._tv();
-      id = t.volume_track;
-      if (!id) return;
+      if (!this._volMode(t)) return;
+      /* Held for the length of the gesture rather than re-read on every move:
+         the selection cannot change mid-drag, and a write that went to whatever
+         television happened to be selected is the failure worth making
+         impossible rather than unlikely. */
+      tv = t;
       sy = y;
       hold = setTimeout(() => {
         live = true;
         this._dragging = true;
         el.classList.add("set");
         pcHaptic("medium");
-        const v = at(sy);
-        if (v !== null) { this._setLevel(id, v); this._paintLadder(); }
+        const v = at(tv, sy);
+        if (v !== null) { this._setLevel(tv, v); this._paintLadder(); }
       }, HOLD);
     };
     const move = (y) => {
@@ -567,9 +693,9 @@ class PurdyRemoteCard extends PcBaseCard {
         if (Math.abs(y - sy) > SLOP) { clearTimeout(hold); hold = null; }
         return;
       }
-      const v = at(y);
-      if (v === null || v === this._level(this._tv())) return;
-      this._setLevel(id, v);
+      const v = at(tv, y);
+      if (v === null || v === this._level(tv)) return;
+      this._setLevel(tv, v);
       this._paintLadder();
       pcHaptic("selection");
     };
@@ -767,16 +893,16 @@ class PurdyRemoteCard extends PcBaseCard {
     const inPanel = this._inPanel(t);
     const apps = this._config.apps || [];
 
-    /* Built here rather than inline so the "no tracker configured" case is one
-       empty string: a rail with no helper behind it draws no ladder at all,
-       which is the meter-with-no-band rule — not an empty track implying a
-       reading we could have had. */
+    /* Built here rather than inline so the "no level behind it" case is one
+       empty string: a rail with neither a tracker nor a real player reading
+       draws no ladder at all, which is the meter-with-no-band rule — not an
+       empty track implying a reading we could have had. */
+    const volMode = this._volMode(t);
     const ladder = (() => {
-      if (!on || !hasPlayer || !t.volume_track) return "";
+      if (!on || !hasPlayer || !volMode) return "";
       const lvl = this._level(t);
       const { min, max } = this._volRange(t);
-      const lit = lvl === null ? -1
-        : Math.round(((lvl - min) / (max - min)) * PC_VOL_DASHES);
+      const lit = this._volLit(t);
       const cls = ["vlad"];
       if (lvl === null) cls.push("unset");
       if (this._muted(t)) cls.push("mut");
@@ -787,6 +913,17 @@ class PurdyRemoteCard extends PcBaseCard {
           (_, i) => `<i class="${i < lit ? "on" : ""}"></i>`).join("")}
       </div>`;
     })();
+
+    /* The exact reading, and ONLY where there is one to be exact about.
+       Nine rungs over a capped span is a picture of where the volume is; the
+       number is the figure itself, which is what stops the cap from becoming a
+       quiet claim about the scale. A dead-reckoned count gets no numeral — a
+       number carries a precision the count has not earned, and the rungs
+       already say everything the card actually knows. */
+    const readout = ladder && volMode === "player"
+      ? `<b class="vnum" id="vnum">${this._level(t) === null
+          ? "&mdash;" : this._level(t)}</b>`
+      : "";
 
     const brand = on && app ? this._brandFor(app) : null;
     /* An unrecognised app gets NO tint rather than a default one: a colour that
@@ -989,6 +1126,15 @@ class PurdyRemoteCard extends PcBaseCard {
           border-top: 1px dashed rgba(230, 236, 242, 0.26);
         }
         .vlad.set { background: rgba(var(--pc-cool-rgb), 0.09); border-radius: var(--pc-r-sm); }
+        /* The readout costs the rail no height: the rungs give back exactly
+           what the numeral takes, so the floor the vrail puts under the whole
+           row — which is what _fitPad has to fit — does not move. */
+        .vnum {
+          font-size: var(--pc-fs-xs); font-weight: 700; line-height: 1;
+          letter-spacing: 0.02em; color: var(--pc-muted);
+          font-variant-numeric: tabular-nums;
+        }
+        .vrail.num .vlad { min-height: 34px; }
 
         .hint { font-size: var(--pc-fs-micro); color: var(--pc-muted); text-align: center;
                 letter-spacing: 0.02em; }
@@ -1092,11 +1238,12 @@ class PurdyRemoteCard extends PcBaseCard {
               <div class="ok">OK</div>
             </div>
             ${hasPlayer ? `
-              <div class="vrail">
+              <div class="vrail${readout ? " num" : ""}">
                 <button class="vstep" type="button" id="volup" aria-label="Volume up">
                   <ha-icon icon="mdi:plus"></ha-icon>
                 </button>
                 ${ladder}
+                ${readout}
                 <button class="mute ${this._muted(t) ? "on" : ""}" type="button" id="mute" aria-label="Mute">
                   <ha-icon icon="${this._muted(t) ? "mdi:volume-off" : "mdi:volume-high"}"></ha-icon>
                 </button>

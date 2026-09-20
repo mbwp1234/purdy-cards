@@ -1,0 +1,30 @@
+{
+  "_note": "The volume rail is drawn only for a television that is ON, and a set is off most of the day. This patch turns one on and gives its player a real volume_level, so the ladder, the numeral and the cap can be photographed without touching anybody's television. Copy to tvvol.json and fill in your own ids; `sheets` must carry the WHOLE deployed sheets block, because plain keys assign over the top rather than merging.",
+  "sheets": {
+    "media": {
+      "title": "Media",
+      "card": {
+        "type": "custom:purdy-remote-card",
+        "tvs": [
+          {
+            "name": "Bedroom",
+            "remote": "<remote-entity>",
+            "app_sensor": "<app-sensor-entity>",
+            "media_player": "<tv-media-player-entity>",
+            "volume_player": "<tv-media-player-entity>",
+            "volume_max": 25
+          }
+        ],
+        "apps": []
+      }
+    }
+  },
+  "$states": {
+    "<tv-media-player-entity>": {
+      "state": "on",
+      "attributes": { "volume_level": 0.03, "is_volume_muted": false, "source": "HDMI" }
+    },
+    "<remote-entity>": { "state": "on" },
+    "<app-sensor-entity>": { "state": "Twitch" }
+  }
+}

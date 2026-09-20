@@ -114,6 +114,12 @@ const PRESETS = {
      writes the mounted card's own field instead — the hot key and the hint are
      otherwise unphotographable without sending a key to a real television. */
   "media-panel":  [PHONE, SHELL + "&sheet=media&media=watch&panel=1"],
+  /* The volume rail. Drawn only for a television that is ON and only where a
+     level exists behind it, so both halves come from the patch: `$states`
+     switches a set on and gives it a reading, the config half puts
+     `volume_player` on it. Without that the rail is photographable only on an
+     evening when somebody happens to be watching. */
+  "media-vol":    [PHONE, SHELL + "&sheet=media&media=watch&patch=tvvol"],
   alerts:         [PHONE, SHELL + "&sheet=alerts"],
   "sys-overview": [PHONE, SHELL + "&mode=systems&page=overview"],
   "sys-docker":   [PHONE, SHELL + "&mode=systems&page=docker"],

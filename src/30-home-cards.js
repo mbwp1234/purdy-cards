@@ -179,7 +179,7 @@ class PcBaseCard extends HTMLElement {
     const off = pcOffline(hass);
     const sig = (off ? "off|" : "on|") + this._watched
       .map((id) => (hass.states[id] ? hass.states[id].state : "~"))
-      .join("|");
+      .join("|") + this._sigExtra(hass);
     if (sig === this._last) return;
     this._last = sig;
     /* The mark, for every card that does not say it in words. Toggled here
@@ -195,6 +195,16 @@ class PcBaseCard extends HTMLElement {
      it — dimming the sentence that explains the dimming is not an improvement. */
   get _ownsOffline() {
     return false;
+  }
+
+  /* An ATTRIBUTE that moves without its entity's state moving never reaches the
+     signature above, so a card drawing one would sit on the old value until
+     something unrelated changed — which looks exactly like a control that does
+     nothing. A card that draws an attribute says so here; every other card is
+     unaffected, because the empty string changes no signature it did not
+     already have. */
+  _sigExtra() {
+    return "";
   }
 
   getCardSize() {

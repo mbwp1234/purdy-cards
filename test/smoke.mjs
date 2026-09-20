@@ -612,7 +612,10 @@ const rhass = { states: {
 
 const rc = new RC();
 rhass.states['media_player.lr'] = { state:'on', attributes:{
-  is_volume_muted:false, source:'TV', source_list:['TV','HDMI'] } };
+  is_volume_muted:false, source:'TV', source_list:['TV','HDMI'],
+  /* What the living room really publishes: a permanent zero from a UPnP
+     channel describing speakers a soundbar has bypassed. */
+  volume_level:0 } };
 rhass.states['media_player.br'] = { state:'off', attributes:{} };
 rc.setConfig({ tvs:[
   { name:'Living Room', remote:'remote.lr', media_player:'media_player.lr', app_sensor:'sensor.lr_app',
@@ -822,17 +825,20 @@ check('the transport keys are plain clicks, never repeats',
 
 // volume steps rather than sets: Samsung advertises VOLUME_SET but never honours it
 check('volume renders step buttons, not a slider', rh.includes('id="volup"') && !rh.includes('type="range"'));
-/* The level NEVER comes from the player. Samsung reports volume_level as 0
-   forever (one real 0.19 in a week of history, at the instant the UPnP channel
-   connects), the Android TV player publishes none at all, and the Sony SA-S350
-   soundbar downstream of both has no network control — so reading the attribute
-   would be a fabricated reading whichever way it went. v1.81.0 draws a level
-   from a tracker helper the card writes itself, and the attribute stays unread. */
-check('the volume level never comes from the player\'s own attribute',
-  !/attributes\.volume_level/.test(remoteSrc));
-/* And with no tracker configured there is no ladder at all — the meter-with-no-
-   band rule. An empty track would imply a reading that could have existed. */
-check('a rail with no tracker draws no ladder', !rh.includes('id="vlad"'));
+/* The level is never taken from the player unless a `volume_player` says that
+   player's reading is real. The living room reports volume_level as 0 forever
+   (one real 0.19 in a week of history, at the instant the UPnP channel
+   connects) with a Sony SA-S350 on ARC downstream of it, so the attribute is a
+   fabricated reading there whichever way it goes — and 0 is the worst of the
+   two, because it draws a silent television over a playing room. v1.84.0 reads
+   the attribute where it was verified real and nowhere else. */
+check('a player attribute is not a reading unless the config says it is',
+  rc._level(rc._tv()) === null &&
+  rhass.states['media_player.lr'].attributes.volume_level === 0);
+/* And with neither behind it there is no ladder at all — the meter-with-no-band
+   rule. An empty track would imply a reading that could have existed. */
+check('a rail with no tracker and no real player draws no ladder',
+  !rh.includes('id="vlad"'));
 rc._step(1);
 const vup = rhass._calls.find(c => c[1]==='volume_up');
 check('volume up targets the media player', vup && vup[2].entity_id==='media_player.lr');
@@ -947,13 +953,137 @@ check('the re-anchor gesture is bound, not merely defined',
 /* Without a repair route the first drift is permanent, since nothing measures
    the soundbar and no state will ever correct the count. */
 check('the ladder can be re-anchored by hand',
-  /HOLD = 380/.test(remoteSrc) && /this\._setLevel\(id, v\)/.test(remoteSrc));
+  /HOLD = 380/.test(remoteSrc) && /this\._setLevel\(tv, v\)/.test(remoteSrc));
 /* Re-rendering mid-gesture detaches the node under the finger: the handler
    keeps its stale el, getBoundingClientRect reads zero, every later move is
    discarded. Six surfaces now. */
 check('the ladder paints in place and gates the repaint while dragging',
   /_paintLadder\(\) \{/.test(remoteSrc) && /this\._paintLadder\(\);/.test(remoteSrc) &&
   /live = true;\s*\n\s*this\._dragging = true;/.test(remoteSrc));
+
+/* ---- the bedroom ladder: a real reading (v1.84.0) ------------------------
+ *
+ * The bedroom set has no soundbar in front of it, so its player publishes a
+ * real, moving volume_level and honours volume_set — verified live on
+ * 2026-09-19, stepping 0.11 down to 0.03 one key at a time and answering a set
+ * in both directions. `volume_player` is the explicit statement of that, and
+ * these assertions are about the two things it must not become: a reading
+ * derived from any player that happens to publish the attribute, and a capped
+ * ladder that quietly caps the control with it. */
+const phass = { states: {
+  'remote.br': { state:'on', attributes:{} },
+  'sensor.br_app': { state:'Twitch', attributes:{} },
+  'media_player.br': { state:'on', attributes:{ volume_level:0.03, is_volume_muted:false } },
+}, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
+const mkPlay = (extra) => {
+  const c = new RC();
+  c.setConfig({ tvs:[Object.assign({ name:'Bedroom', remote:'remote.br',
+    media_player:'media_player.br', app_sensor:'sensor.br_app',
+    volume_player:'media_player.br', volume_max:25 }, extra || {})], apps:[] });
+  c.hass = phass;
+  return c;
+};
+const pc1 = mkPlay();
+const ph1 = pc1.shadowRoot.innerHTML;
+check('a real player reading draws the ladder with no tracker at all',
+  ph1.includes('id="vlad"') && !pc1._config.tvs[0].volume_track);
+check('the level is the player\'s own volume, on the device scale',
+  pc1._level(pc1._tv()) === 3);
+/* The cap is what the RUNGS span. On the device's true scale the bedroom's
+   whole usable band — 3 to 11 in a week of history — sits inside the first
+   rung, and "quiet" would draw exactly what "silent" draws. */
+check('the rungs span the configured cap, not the device scale',
+  pc1._volRange(pc1._tv()).max === 25);
+check('a quiet set lights a rung rather than reading as silent',
+  (ph1.match(/<i class="on">/g) || []).length === 1);
+check('the exact reading is drawn beside the rungs',
+  ph1.includes('id="vnum"') && />3<\/b>/.test(ph1));
+/* ...and the dead-reckoned ladder gets no numeral: a number claims a precision
+   a count of the card's own presses has not earned. */
+check('a dead-reckoned ladder carries no numeral', !vhtml.includes('id="vnum"'));
+
+/* The zero-versus-missing pin at the new source. A player that is off or
+   unreachable publishes no volume_level at all; one at zero publishes 0. */
+phass.states['media_player.br'] = { state:'on', attributes:{ is_volume_muted:false } };
+const pcN = mkPlay();
+const phN = pcN.shadowRoot.innerHTML;
+check('a player with no volume_level reads as nothing, not as zero',
+  pcN._level(pcN._tv()) === null);
+check('no player reading draws a HOLLOW ladder',
+  phN.includes('class="vlad unset" id="vlad"') && !phN.includes('aria-valuenow'));
+check('the numeral says nothing rather than zero when there is no reading',
+  /id="vnum">&mdash;</.test(phN));
+phass.states['media_player.br'] = { state:'on', attributes:{ volume_level:0, is_volume_muted:false } };
+const pcZ = mkPlay();
+const phZ = pcZ.shadowRoot.innerHTML;
+check('a player at zero is a real reading, drawn solid',
+  pcZ._level(pcZ._tv()) === 0 && phZ.includes('class="vlad" id="vlad"') &&
+  phZ.includes('aria-valuenow="0"') && !phZ.includes('<i class="on">'));
+
+/* The write goes to the SET, not to a helper. */
+phass.states['media_player.br'] = { state:'on', attributes:{ volume_level:0.03, is_volume_muted:false } };
+const pcS = mkPlay();
+phass._calls.length = 0;
+pcS._step(1);
+const psv = phass._calls.find(c => c[1]==='volume_set');
+check('a step on a real ladder sets the player, never an input_number',
+  psv && psv[0]==='media_player' && psv[2].entity_id==='media_player.br' &&
+  Math.round(psv[2].volume_level * 100) === 4 &&
+  !phass._calls.some(c => c[1]==='set_value'));
+check('a step still sends the key the television steps by itself',
+  phass._calls.some(c => c[1]==='volume_up'));
+check('the ladder shows the step before HA echoes it',
+  pcS._level(pcS._tv()) === 4 &&
+  phass.states['media_player.br'].attributes.volume_level === 0.03);
+clearTimeout(pcS._volTail); pcS._volTail = null;
+
+/* THE trap this cap could have introduced: a drawing decision becoming a limit
+   on the control. The bedroom set goes to 100 whatever the rungs span. */
+phass.states['media_player.br'] = { state:'on', attributes:{ volume_level:0.25, is_volume_muted:false } };
+const pcU = mkPlay();
+phass._calls.length = 0;
+pcU._step(1);
+const puv = phass._calls.find(c => c[1]==='volume_set');
+check('the cap draws the ladder without capping the volume',
+  puv && Math.round(puv[2].volume_level * 100) === 26);
+clearTimeout(pcU._volTail); pcU._volTail = null;
+/* And a level above the cap widens the span to itself rather than pinning the
+   ladder full — a full ladder says nothing about where you are, and a drag on
+   one would pull the room down to the cap on a gesture meant to nudge. */
+phass.states['media_player.br'] = { state:'on', attributes:{ volume_level:0.40, is_volume_muted:false } };
+const pcW = mkPlay();
+check('a level above the cap widens the span instead of pinning full',
+  pcW._volRange(pcW._tv()).max === 40 && pcW._volLit(pcW._tv()) === NDASH);
+/* The device scale is still the ceiling. */
+phass.states['media_player.br'] = { state:'on', attributes:{ volume_level:1, is_volume_muted:false } };
+const pcT = mkPlay();
+phass._calls.length = 0;
+pcT._step(1);
+check('a set already at full is not written past its own scale',
+  !phass._calls.some(c => c[1]==='volume_set'));
+
+/* The drag lands on the television itself. */
+phass.states['media_player.br'] = { state:'on', attributes:{ volume_level:0.03, is_volume_muted:false } };
+const pcD = mkPlay();
+phass._calls.length = 0;
+pcD._setLevel(pcD._tv(), 11);
+const pdv = phass._calls.find(c => c[1]==='volume_set');
+check('a hand-set level is sent to the player as a volume',
+  pdv && Math.round(pdv[2].volume_level * 100) === 11);
+clearTimeout(pcD._volTail); pcD._volTail = null;
+
+/* PcBaseCard's signature is built from STATES, and a real volume lives in an
+   ATTRIBUTE: without the hook the bedroom's own remote would move the volume
+   and this card would go on drawing the old level until something unrelated
+   changed state — which is the same staleness the mute icon had. */
+const pcR = mkPlay();
+const before = pcR.shadowRoot.innerHTML;
+phass.states['media_player.br'] = { state:'on', attributes:{ volume_level:0.18, is_volume_muted:false } };
+pcR.hass = phass;
+check('a volume moved elsewhere repaints the card',
+  pcR.shadowRoot.innerHTML !== before && pcR._level(pcR._tv()) === 18);
+check('the signature hook is a no-op for every card that does not draw one',
+  new (defined['purdy-people-card'])()._sigExtra({ states:{} }) === '');
 
 /* ---- the runaway repeat (2026-09-08) --------------------------------------
  *
