@@ -1107,6 +1107,12 @@ check('the strip reveals the live app, and only when it changes',
    no current value at all. */
 check('the input key is a picker, not a cycle through a value we may not have',
   rh.includes('id="src"') && rh.includes('<em>Input</em>'));
+/* Input arrived as an ALTERNATIVE to Menu, so it deleted Menu on exactly the
+   sets that have a source list — both Samsungs — which is where Menu is used:
+   it is the route to the picture settings. A picker and a hardware key are two
+   destinations, not two readings of one control. Both are always drawn. */
+check('the input key did not take the menu key away with it',
+  rh.includes('data-cmd="MENU"') && rh.includes('id="src"'));
 check('the now-line says which input is live when the set publishes one',
   rh.includes('Living Room · TV'));
 rc._srcOpen = true; rc._render();
