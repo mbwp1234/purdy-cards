@@ -276,6 +276,23 @@ function buildHass(states) {
       if (touched) { if (el._expandWatched) el._expandWatched(); el._render(); }
     };
 
+    /* The remote's panel mode. Two reasons this cannot ride `poke()` with the
+       rest: the remote is a HOSTED card, so it does not exist until the sheet
+       has been rendered and mounted, and the mode is normally entered by a
+       service call, which this harness refuses by construction. So it reaches
+       the mounted instance afterwards and writes the card's own field —
+       photographing the mode without sending a key to a real television. */
+    const pokePanel = () => {
+      if (!P.get("panel")) return;
+      const sheet = el.shadowRoot && el.shadowRoot.querySelector(".ps-sheet");
+      const rc = sheet && sheet.querySelector("purdy-remote-card");
+      if (!rc || !rc._tv) return note("panel=1 found no mounted remote card");
+      const tv = rc._tv();
+      if (!tv.panel) return note("panel=1 but the selected TV has no panel remote");
+      rc._panel = tv.panel;
+      rc._render();
+    };
+
     /* Settled = nothing in flight for 900ms AND at least one turn of the
      * fetches has come back. The card fires several waves (history, nursery,
      * calendar, schedule), so a single microtask wait would photograph a
@@ -292,6 +309,7 @@ function buildHass(states) {
     await settled();
     poke();
     await settled();
+    pokePanel();
 
     const h = document.getElementById("mount").scrollHeight;
     document.title = `READY ${tag} ${innerWidth}x${innerHeight} content=${h}px`

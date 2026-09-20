@@ -605,6 +605,7 @@ const remoteSrc = fs.readFileSync(new URL('../src/40-remote-card.js', import.met
 const rhass = { states: {
   'remote.lr': { state:'on', attributes:{} },
   'remote.br': { state:'off', attributes:{} },
+  'remote.lr_panel': { state:'on', attributes:{} },
   'sensor.lr_app': { state:'Twitch', attributes:{} },
   'sensor.br_app': { state:'Idle', attributes:{} },
 }, _calls: [], callService(d,sv,data){ this._calls.push([d,sv,data]); } };
@@ -614,7 +615,8 @@ rhass.states['media_player.lr'] = { state:'on', attributes:{
   is_volume_muted:false, source:'TV', source_list:['TV','HDMI'] } };
 rhass.states['media_player.br'] = { state:'off', attributes:{} };
 rc.setConfig({ tvs:[
-  { name:'Living Room', remote:'remote.lr', media_player:'media_player.lr', app_sensor:'sensor.lr_app' },
+  { name:'Living Room', remote:'remote.lr', media_player:'media_player.lr', app_sensor:'sensor.lr_app',
+    panel:'remote.lr_panel' },
   { name:'Bedroom', remote:'remote.br', media_player:'media_player.br', app_sensor:'sensor.br_app' },
 ], apps:[
   { name:'Netflix', brand:'netflix', activity:'com.netflix.ninja' },
@@ -1108,11 +1110,78 @@ check('the strip reveals the live app, and only when it changes',
 check('the input key is a picker, not a cycle through a value we may not have',
   rh.includes('id="src"') && rh.includes('<em>Input</em>'));
 /* Input arrived as an ALTERNATIVE to Menu, so it deleted Menu on exactly the
-   sets that have a source list — both Samsungs — which is where Menu is used:
-   it is the route to the picture settings. A picker and a hardware key are two
-   destinations, not two readings of one control. Both are always drawn. */
+   sets that have a source list — both Samsungs, which is every set here. A
+   picker and a menu are two destinations, not two readings of one control. */
 check('the input key did not take the menu key away with it',
-  rh.includes('data-cmd="MENU"') && rh.includes('id="src"'));
+  rh.includes('id="menu"') && rh.includes('id="src"'));
+
+/* ---- the panel mode -------------------------------------------------
+ * Every set here is a Samsung panel with a Google TV box in front of it, and
+ * `remote:` is the box. MENU went to the box, which ignored it: no error, no
+ * log line, a key that did nothing. Brightness is a PANEL setting, so MENU
+ * opens the panel's own menu and re-points the pad at it. */
+check('a set with no panel remote draws no menu key at all',
+  !/id="menu"/.test((() => { rc._touched = true; rc._sel = 1; rc._render();
+    const h = rc.shadowRoot.innerHTML; rc._sel = 0; rc._touched = false;
+    rc._render(); return h; })()));
+check('the menu key is not a dead key: it is drawn only where a panel exists',
+  /!t\.panel \? "" :/.test(remoteSrc));
+
+rhass._calls.length = 0;
+rc._togglePanel();
+const panelOpen = rhass._calls.find(c => c[0] === 'remote' && c[1] === 'send_command');
+check('menu opens the PANEL menu, on the panel remote',
+  panelOpen && panelOpen[2].entity_id === 'remote.lr_panel' &&
+  panelOpen[2].command === 'KEY_MENU');
+check('the mode is held as the panel entity, not a boolean',
+  rc._panel === 'remote.lr_panel');
+
+const rhPanel = rc.shadowRoot.innerHTML;
+check('the menu key shows the mode is on', /id="menu" class="hot"/.test(rhPanel));
+/* A mode with no visible state is a mode you will be stuck in. */
+check('the hint says what the pad is driving', rhPanel.includes('own menu'));
+
+rhass._calls.length = 0;
+rc._send('DPAD_DOWN');
+rc._send('BACK');
+const moves = rhass._calls.filter(c => c[1] === 'send_command');
+check('the pad drives the panel while the mode is on',
+  moves.length === 2 &&
+  moves[0][2].entity_id === 'remote.lr_panel' && moves[0][2].command === 'KEY_DOWN' &&
+  moves[1][2].entity_id === 'remote.lr_panel' && moves[1][2].command === 'KEY_RETURN');
+
+/* The mode is entered to reach the picture settings. Silently re-pointing what
+   is about PLAYBACK would be it reaching past what it was entered for, and
+   HOME is the escape hatch — a hatch the mode could capture is not a hatch. */
+rhass._calls.length = 0;
+rc._send('MEDIA_PLAY_PAUSE');
+rc._send('HOME');
+const kept = rhass._calls.filter(c => c[1] === 'send_command');
+check('play and home stay on the box even inside the mode',
+  kept.length === 2 && kept.every(c => c[2].entity_id === 'remote.lr') &&
+  kept[0][2].command === 'MEDIA_PLAY_PAUSE' && kept[1][2].command === 'HOME');
+
+rhass._calls.length = 0;
+rc._togglePanel();
+const panelShut = rhass._calls.find(c => c[1] === 'send_command');
+check('menu again leaves the panel menu', panelShut && panelShut[2].command === 'KEY_EXIT');
+check('leaving the mode hands the pad back to the box', rc._panel === null);
+rhass._calls.length = 0;
+rc._send('DPAD_DOWN');
+check('the pad drives the box again once the mode is off',
+  rhass._calls[0][2].entity_id === 'remote.lr' &&
+  rhass._calls[0][2].command === 'DPAD_DOWN');
+
+/* Held as the panel's entity so selecting the other television drops the mode
+   by simply not matching. A boolean would have survived the switch and pointed
+   the pad at a panel in another room. */
+rc._togglePanel();
+rc._touched = true; rc._sel = 1;
+check('the mode does not follow you to another television',
+  rc._inPanel(rc._tv()) === false);
+rc._sel = 0; rc._touched = false; rc._panel = null; rc._render();
+check('the panel remote is watched, or the hot key waits on the 30s clock',
+  rc._watched.includes('remote.lr_panel'));
 check('the now-line says which input is live when the set publishes one',
   rh.includes('Living Room · TV'));
 rc._srcOpen = true; rc._render();

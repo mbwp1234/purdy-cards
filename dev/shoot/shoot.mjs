@@ -109,6 +109,11 @@ const PRESETS = {
      Watch is unphotographable whenever the televisions are off. */
   "media-listen": [PHONE, SHELL + "&sheet=media&media=listen"],
   "media-watch":  [PHONE, SHELL + "&sheet=media&media=watch"],
+  /* The remote driving the PANEL rather than the box. The mode is entered by
+     a service call, which the harness refuses by construction, so `panel=1`
+     writes the mounted card's own field instead — the hot key and the hint are
+     otherwise unphotographable without sending a key to a real television. */
+  "media-panel":  [PHONE, SHELL + "&sheet=media&media=watch&panel=1"],
   alerts:         [PHONE, SHELL + "&sheet=alerts"],
   "sys-overview": [PHONE, SHELL + "&mode=systems&page=overview"],
   "sys-docker":   [PHONE, SHELL + "&mode=systems&page=docker"],
