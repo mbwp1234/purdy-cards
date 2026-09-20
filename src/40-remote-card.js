@@ -947,9 +947,14 @@ class PurdyRemoteCard extends PcBaseCard {
         .srcs button.sel { background: var(--pc-fill-3); color: var(--pc-text); }
 
         /* ---- bottom keys ---- */
-        .krow { display: flex; gap: 8px; }
+        /* Five keys, not four: Menu and Input are both permanent members now,
+           so the row is sized for the crowded case. min-width: 0 lets a key
+           shrink to its share instead of its label, and the gap comes in to
+           6px to pay for the extra divider. */
+        .krow { display: flex; gap: 6px; }
         .krow button {
-          flex: 1; height: 52px; border: 1px solid var(--pc-edge); border-radius: var(--pc-r-lg);
+          flex: 1; min-width: 0; height: 52px;
+          border: 1px solid var(--pc-edge); border-radius: var(--pc-r-lg);
           cursor: pointer; background: var(--pc-fill-1); color: var(--pc-text);
           display: flex; flex-direction: column; align-items: center; justify-content: center;
           gap: 3px; font-family: inherit; padding: 0;
@@ -957,7 +962,7 @@ class PurdyRemoteCard extends PcBaseCard {
         .krow button:active { background: var(--pc-fill-3); }
         /* Borrowed from face C: the key you press most is the one you should be
            able to find without reading it, so it is visibly the widest. */
-        .krow button.hero { flex: 1.5; background: var(--pc-fill-3); }
+        .krow button.hero { flex: 1.35; background: var(--pc-fill-3); }
         .krow button.hot { background: var(--pc-fill-3); border-color: rgba(var(--pc-cool-rgb), 0.5); }
         .krow em { font-style: normal; font-size: 9px; letter-spacing: 0.06em;
                    text-transform: uppercase; color: var(--pc-muted); font-weight: 640; }
@@ -1052,17 +1057,26 @@ class PurdyRemoteCard extends PcBaseCard {
             </div>`
             : `<div class="hint">swipe to move · tap to select · hold an edge to repeat</div>`}
 
+          ${/* Input was added as an ALTERNATIVE to Menu and so deleted Menu on
+                exactly the sets that have a source list — both Samsungs — which
+                is where Menu is used: it is the route to the picture settings,
+                and turning the brightness down is a nightly thing here. A
+                picker and a hardware key are not two readings of one control;
+                they are two destinations, and one must not stand in for the
+                other. Both are drawn, and Input simply appears where there is
+                a list to pick from. */""}
           <div class="krow">
             ${key("mdi:arrow-u-left-top", "BACK", "Back")}
             ${key("mdi:home", "HOME", "Home")}
             <button class="hero" type="button" data-cmd="MEDIA_PLAY_PAUSE" aria-label="Play or pause">
               <ha-icon icon="mdi:play-pause"></ha-icon><em>Play</em>
             </button>
-            ${srcList ? `
+            ${key("mdi:menu", "MENU", "Menu")}
+            ${!srcList ? "" : `
               <button type="button" id="src" class="${this._srcOpen ? "hot" : ""}"
                       aria-expanded="${this._srcOpen ? "true" : "false"}" aria-label="Choose input">
                 <ha-icon icon="mdi:video-input-hdmi"></ha-icon><em>Input</em>
-              </button>` : key("mdi:menu", "MENU", "Menu")}
+              </button>`}
           </div>
         `}
       </div>
