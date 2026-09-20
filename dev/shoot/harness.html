@@ -169,7 +169,11 @@ function buildHass(states) {
 (async function boot() {
   try {
     const [statesRes, cfgRes] = await Promise.all([
-      fetch("/h/states").then((r) => r.json()),
+      /* The patch reaches the STATES as well as the config: a rail that is
+         drawn only for a television that is on is unphotographable for most of
+         the day otherwise. See patchStates() in server.mjs. */
+      fetch("/h/states" + (P.get("patch") ? "?patch=" + encodeURIComponent(P.get("patch")) : ""))
+        .then((r) => r.json()),
       fetch("/h/config?" + new URLSearchParams({
         view: P.get("view") || "phone2", tag: TAG, ...(P.get("index") ? { index: P.get("index") } : {}),
         /* A section that is not deployed yet still has to be photographable —

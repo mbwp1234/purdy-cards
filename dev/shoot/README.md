@@ -152,6 +152,16 @@ dollar-keys handle the array that matters:
 |-----|--------|
 | `$insertSection` | `{ index, section }` — put one section at a position |
 | `$appendSections` | `[ ... ]` — add sections at the end |
+| `$states` | `{ "<entity_id>": { state, attributes } }` — overlay entities on the live dump |
+
+`$states` is the same idea one layer down: a STATE that is not happening right
+now cannot be photographed either, and waiting for it is the same loop. The
+volume rail forced it — it is drawn only for a television that is ON, so the
+feature was otherwise verifiable only by switching on someone else's set to look
+at it. Attributes **merge** into the live entity's, so a fixture can move one
+reading without restating a player's whole attribute set, and an entity the
+house does not have is added outright. It rewrites the response on its way to
+the page; nothing is written to Home Assistant.
 
 **Home Assistant is never written to** — the rewrite happens in flight, in the
 server, on the way to the page. A missing or malformed patch file is logged and

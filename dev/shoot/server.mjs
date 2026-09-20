@@ -120,14 +120,54 @@ const noteRefusal = (what) => {
  *
  * This changes NOTHING in Home Assistant — it rewrites the config in flight, on
  * its way into setConfig. */
+/* A STATE that is not happening right now cannot be photographed either, and
+ * waiting for it is the same loop the config patcher replaces. The volume
+ * ladder is the case that forced it: the rail is drawn only for a television
+ * that is ON, and a television is off for most of the day — so the feature was
+ * verifiable only by switching on someone else's TV to look at it.
+ *
+ * `$states` in a patch file overlays entities onto the live dump on the way to
+ * the page. Attributes MERGE into the live entity's so a fixture can move one
+ * reading without having to restate a player's whole attribute set, and an
+ * entity the house does not have is added outright. Nothing is written to HA;
+ * this rewrites the response, exactly as patchConfig rewrites the config. */
+function patchStates(text, name) {
+  if (!name) return text;
+  const patch = readPatch(name);
+  if (!patch || !patch.$states) return text;
+  let states;
+  try { states = JSON.parse(text); } catch { return text; }
+  if (!Array.isArray(states)) return text;
+  const byId = new Map(states.map((e) => [e.entity_id, e]));
+  Object.keys(patch.$states).forEach((id) => {
+    const over = patch.$states[id] || {};
+    const cur = byId.get(id);
+    const next = {
+      ...(cur || { entity_id: id, last_changed: new Date().toISOString() }),
+      ...over,
+      attributes: { ...((cur && cur.attributes) || {}), ...(over.attributes || {}) },
+    };
+    if (cur) states[states.indexOf(cur)] = next;
+    else states.push(next);
+  });
+  console.log(`  patched ${Object.keys(patch.$states).length} states with ${name}`);
+  return JSON.stringify(states);
+}
+
+/* One reader, because two copies of "which file, is it JSON" is how the two
+   halves of a patch end up disagreeing about what a bad name is. */
+function readPatch(name) {
+  if (!/^[a-z0-9-]+$/i.test(name)) { console.log("  bad patch name: " + name); return null; }
+  const file = path.join(HERE, "patches", name + ".json");
+  if (!fs.existsSync(file)) { console.log("  no such patch: " + file); return null; }
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (e) { console.log("  patch is not JSON: " + e.message); return null; }
+}
+
 function patchConfig(cfg, name) {
   if (!name) return cfg;
-  if (!/^[a-z0-9-]+$/i.test(name)) { console.log("  bad patch name: " + name); return cfg; }
-  const file = path.join(HERE, "patches", name + ".json");
-  if (!fs.existsSync(file)) { console.log("  no such patch: " + file); return cfg; }
-  let patch;
-  try { patch = JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch (e) { console.log("  patch is not JSON: " + e.message); return cfg; }
+  const patch = readPatch(name);
+  if (!patch) return cfg;
 
   const out = { ...cfg };
   Object.keys(patch).forEach((k) => { if (k[0] !== "$") out[k] = patch[k]; });
@@ -287,7 +327,8 @@ const server = http.createServer(async (req, res) => {
 
     if (u.pathname === "/h/states") {
       const r = await haRest("GET", "states");
-      return send(res, r.status, "application/json", r.text);
+      const patched = patchStates(r.text, u.searchParams.get("patch"));
+      return send(res, r.status, "application/json", patched);
     }
 
     if (u.pathname === "/h/config") {
