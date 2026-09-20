@@ -109,6 +109,38 @@ const PC_VOL_DASHES = 9;
    frozen until the hold ended, which is when you have stopped looking at it. */
 const PC_VOL_WRITE_MS = 150;
 
+/* ---- driving the PANEL rather than the box ----------------------------
+ *
+ * Every television here is a Samsung panel with a Google TV box in front of
+ * it, and the card's `remote:` is the BOX — which is correct for everything
+ * the box owns, and wrong for the one thing it does not: the picture
+ * settings. Brightness lives in the Samsung's own menu, and the box cannot
+ * reach it. `MENU` went to `remote.living_room_googletv`, which ignored it;
+ * nothing errored, so the key simply did nothing.
+ *
+ * So MENU is not a key, it is a MODE. It opens the panel's menu and re-points
+ * the pad and Back at the panel, because a key that opens a menu you cannot
+ * then move around in is the same dead end by a longer route. Pressing it
+ * again exits and hands the pad back.
+ *
+ * Only the keys that MEAN something inside that menu are translated. Apps,
+ * Play, Input, power and the volume rail keep their own targets — they are
+ * about what is playing, not about the panel, and silently re-pointing them
+ * would be the mode reaching past what it was entered for. HOME deliberately
+ * stays on the box as well: it is the way back to what you were watching, and
+ * an escape hatch that the mode could capture is not an escape hatch. */
+const PC_PANEL_KEYS = {
+  DPAD_UP: "KEY_UP", DPAD_DOWN: "KEY_DOWN",
+  DPAD_LEFT: "KEY_LEFT", DPAD_RIGHT: "KEY_RIGHT",
+  DPAD_CENTER: "KEY_ENTER", BACK: "KEY_RETURN",
+};
+/* Verified live against remote.samsung_tu7000_50_tv on 2026-09-19: KEY_MENU
+   raises the settings menu, KEY_RETURN closes it. Tizen wants the KEY_ prefix
+   and answers a bare "MENU" with nothing at all — no error, no log line,
+   which is precisely how this went unnoticed. */
+const PC_PANEL_OPEN = "KEY_MENU";
+const PC_PANEL_CLOSE = "KEY_EXIT";
+
 class PurdyRemoteCard extends PcBaseCard {
   static getStubConfig(hass) {
     const r = Object.keys(hass.states).find((e) => e.startsWith("remote."));
@@ -122,13 +154,18 @@ class PurdyRemoteCard extends PcBaseCard {
     this._config = { title: "Televisions", apps: [], ...config };
     const ids = [];
     config.tvs.forEach((t) => {
-      [t.remote, t.app_sensor, t.media_player, t.volume_track]
+      [t.remote, t.app_sensor, t.media_player, t.volume_track, t.panel]
         .forEach((x) => x && ids.push(x));
     });
     this._watched = ids;
     this._last = null;
     this._sel = 0;
     this._opt = {};
+    /* Held as the panel's ENTITY, not a boolean, so selecting the other
+       television drops the mode by simply not matching any more. A boolean
+       would have survived the switch and pointed the pad at a panel in
+       another room. */
+    this._panel = null;
   }
 
   _tv() {
@@ -150,12 +187,30 @@ class PurdyRemoteCard extends PcBaseCard {
     if (i >= 0) this._sel = i;
   }
 
+  /* True only while the mode is on AND it belongs to the set on screen. */
+  _inPanel(t) {
+    return !!(t.panel && this._panel === t.panel);
+  }
+
   _send(command) {
     const t = this._tv();
-    if (!t.remote) return;
+    const key = this._inPanel(t) ? PC_PANEL_KEYS[command] : null;
+    const entity_id = key ? t.panel : t.remote;
+    if (!entity_id) return;
     this._hass.callService("remote", "send_command", {
-      entity_id: t.remote, command,
+      entity_id, command: key || command,
     });
+  }
+
+  _togglePanel() {
+    const t = this._tv();
+    if (!t.panel) return;
+    const open = !this._inPanel(t);
+    this._hass.callService("remote", "send_command", {
+      entity_id: t.panel, command: open ? PC_PANEL_OPEN : PC_PANEL_CLOSE,
+    });
+    this._panel = open ? t.panel : null;
+    this._render();
   }
 
   /* One call powers the set on AND opens the app, which is why the app grid is
@@ -709,6 +764,7 @@ class PurdyRemoteCard extends PcBaseCard {
     const hasPlayer = !!(t.media_player && this._hass.states[t.media_player]);
     const srcList = on && hasPlayer ? this._sourceList(t) : null;
     const srcNow = srcList ? this._source(t) : undefined;
+    const inPanel = this._inPanel(t);
     const apps = this._config.apps || [];
 
     /* Built here rather than inline so the "no tracker configured" case is one
@@ -964,6 +1020,7 @@ class PurdyRemoteCard extends PcBaseCard {
            able to find without reading it, so it is visibly the widest. */
         .krow button.hero { flex: 1.35; background: var(--pc-fill-3); }
         .krow button.hot { background: var(--pc-fill-3); border-color: rgba(var(--pc-cool-rgb), 0.5); }
+        .hint.panel { color: var(--pc-cool); }
         .krow em { font-style: normal; font-size: 9px; letter-spacing: 0.06em;
                    text-transform: uppercase; color: var(--pc-muted); font-weight: 640; }
         .krow ha-icon { --mdc-icon-size: 21px; }
@@ -1055,23 +1112,34 @@ class PurdyRemoteCard extends PcBaseCard {
                 <button type="button" data-src="${n}" class="${n === srcNow ? "sel" : ""}">${n}</button>
               `).join("")}
             </div>`
-            : `<div class="hint">swipe to move · tap to select · hold an edge to repeat</div>`}
+            : inPanel
+              ? `${/* A mode with no visible state is a mode you will be stuck in.
+                      The hot key says one is on; this says what it is DOING,
+                      because the symptom of a forgotten panel mode is a pad
+                      that has quietly stopped driving what is on screen. */""}
+                 <div class="hint panel">the pad is in ${pcEsc(t.name)}&rsquo;s own menu · MENU exits</div>`
+              : `<div class="hint">swipe to move · tap to select · hold an edge to repeat</div>`}
 
           ${/* Input was added as an ALTERNATIVE to Menu and so deleted Menu on
-                exactly the sets that have a source list — both Samsungs — which
-                is where Menu is used: it is the route to the picture settings,
-                and turning the brightness down is a nightly thing here. A
-                picker and a hardware key are not two readings of one control;
-                they are two destinations, and one must not stand in for the
-                other. Both are drawn, and Input simply appears where there is
-                a list to pick from. */""}
+                exactly the sets that have a source list — both Samsungs, which
+                is every set here. A picker and a menu are two destinations,
+                not two readings of one control. Both are drawn now; each
+                appears where it has something behind it — Input where the set
+                publishes a source list, Menu where a `panel:` is configured.
+                A Menu key on a set with no panel remote is the dead key this
+                whole change is about. */""}
           <div class="krow">
             ${key("mdi:arrow-u-left-top", "BACK", "Back")}
             ${key("mdi:home", "HOME", "Home")}
             <button class="hero" type="button" data-cmd="MEDIA_PLAY_PAUSE" aria-label="Play or pause">
               <ha-icon icon="mdi:play-pause"></ha-icon><em>Play</em>
             </button>
-            ${key("mdi:menu", "MENU", "Menu")}
+            ${!t.panel ? "" : `
+              <button type="button" id="menu" class="${inPanel ? "hot" : ""}"
+                      aria-pressed="${inPanel ? "true" : "false"}"
+                      aria-label="${inPanel ? "Leave the television menu" : "Open the television menu"}">
+                <ha-icon icon="mdi:menu"></ha-icon><em>Menu</em>
+              </button>`}
             ${!srcList ? "" : `
               <button type="button" id="src" class="${this._srcOpen ? "hot" : ""}"
                       aria-expanded="${this._srcOpen ? "true" : "false"}" aria-label="Choose input">
@@ -1109,6 +1177,8 @@ class PurdyRemoteCard extends PcBaseCard {
     if (p) p.addEventListener("click", () => { pcHaptic("heavy"); this._power(); });
     const m = this.shadowRoot.getElementById("mute");
     if (m) m.addEventListener("click", () => { pcHaptic("medium"); this._toggleMute(); });
+    const mn = this.shadowRoot.getElementById("menu");
+    if (mn) mn.addEventListener("click", () => { pcHaptic("medium"); this._togglePanel(); });
     const s = this.shadowRoot.getElementById("src");
     if (s) s.addEventListener("click", () => {
       pcHaptic("light");
