@@ -144,6 +144,7 @@ class PurdyShellCard extends PcBaseCard {
     this._sched = null;
     this._dragging = false;   // a volume drag must survive the state repaint
     this._armed = null;       // key of a destructive control awaiting a second tap
+    this._seasonArm = null;   // season segment awaiting its confirming second tap
     this._logged = {};        // rule key -> firedAt already written to the log
     this._results = null;     // music search results, null until a query runs
     this._recent = [];
@@ -366,6 +367,8 @@ class PurdyShellCard extends PcBaseCard {
         push((s.hold || {}).remaining);
         push((s.schedule || {}).mode_entity);
         push((s.schedule || {}).switch_entity);
+        push((s.season || {}).entity);
+        push((s.season || {}).recommend);
       }
       if (s.type === "nursery") {
         push(s.hatch); push(s.door); push(s.hatch_wifi); push(s.light);
@@ -1391,6 +1394,32 @@ class PurdyShellCard extends PcBaseCard {
         this._goalSend = setTimeout(() => {
           this._hass.callService("climate", "set_temperature", { entity_id: id, temperature: next });
         }, 450);
+      });
+    });
+
+    this._each("[data-season]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sec = this._config.sections.find((s) => s.type === "climate");
+        if (!sec || !sec.season || !sec.season.entity) return;
+        const k = el.dataset.season;
+        const opts = this._seasonOpts(sec);
+        if (this._hass.states[sec.season.entity]?.state === opts[k]) return;
+        if (this._seasonArm !== k) {
+          pcHaptic("warning");
+          this._seasonArm = k;
+          clearTimeout(this._seasonArmTimer);
+          this._seasonArmTimer = setTimeout(() => { this._seasonArm = null; this._render(); }, 5000);
+          this._render();
+          return;
+        }
+        this._seasonArm = null;
+        clearTimeout(this._seasonArmTimer);
+        pcHaptic("medium");
+        this._hass.callService("select", "select_option", {
+          entity_id: sec.season.entity, option: opts[k],
+        });
+        this._render();
       });
     });
 

@@ -831,6 +831,12 @@ const PS_STYLES = `
       .ps-btn.primary { background: var(--ps-cool); color: #0f1317; }
       .ps-btn.danger { color: var(--ps-bad); }
       .ps-btn.armed { background: var(--ps-warn); color: #1a1a1a; }
+      .ps-season { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--pc-r-pill); background: var(--ps-fill); }
+      .ps-sbtn { padding: 8px 14px; border-radius: var(--pc-r-pill); font-size: var(--pc-fs-sm); font-weight: 650;
+                color: var(--ps-dim); background: transparent; }
+      .ps-sbtn.heat.on { background: var(--ps-heat); color: #1a1a1a; }
+      .ps-sbtn.cool.on { background: var(--ps-cool); color: #0f1317; }
+      .ps-sbtn.armed { background: var(--ps-warn); color: #1a1a1a; }
 
       /* graph scrubber */
       /* The small-ring modifier. It was used by the nursery nap rings from the
