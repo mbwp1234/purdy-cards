@@ -10273,5 +10273,41 @@ check('a hand-logged session is marked on the raster too', (() => {
 })());
 
 
+/* Season switch. The season decides which of a block's two numbers GTTC runs
+   and whether the wall unit heats or cools; switching it used to need the GTTC
+   panel's Settings tab. */
+const shse = new SH();
+shse.setConfig({ sections: [{ type: 'climate', key: 'c', goal: 'climate.g', schedule: { api: 'gttc' },
+  season: { entity: 'select.gttc_season_mode', recommend: 'binary_sensor.gttc_season_switch_recommended' } }] });
+shse._hass = { states: {
+  'climate.g': { state: 'heat', attributes: { current_temperature: 70, temperature: 71, hvac_action: 'idle' } },
+  'select.gttc_season_mode': { state: 'Heating', attributes: {} },
+  'binary_sensor.gttc_season_switch_recommended': { state: 'off', attributes: {} } } };
+const seHtml = () => shse._secClimate(shse._config.sections[0]);
+check('climate offers a season switch beside Schedule',
+  /data-sheet="schedule"[\s\S]*class="ps-season"/.test(seHtml()));
+check('the season switch marks the season in force',
+  /ps-sbtn heat on[^>]*aria-pressed="true"/.test(seHtml()) && /ps-sbtn cool [^>]*aria-pressed="false"/.test(seHtml()));
+check('no recommendation chip while GTTC recommends nothing', !/recommended/.test(seHtml()));
+shse._hass.states['binary_sensor.gttc_season_switch_recommended'].state = 'on';
+check('GTTC recommending a switch names the other season', /Cooling recommended/.test(seHtml()));
+shse._seasonArm = 'cool';
+check('the inactive side asks for a second tap', /ps-sbtn cool  armed[^>]*>Tap: Cool</.test(seHtml()));
+shse._seasonArm = 'heat';
+check('the side already in force is never armed', !/armed/.test(seHtml().match(/<div class="ps-season"[\s\S]*?<\/div>/)[0]));
+shse._seasonArm = null;
+shse._hass.states['select.gttc_season_mode'].state = 'unavailable';
+check('an unreadable season draws no switch, never a default side', !/ps-season/.test(seHtml()));
+check('an unreadable season draws no recommendation either', !/recommended/.test(seHtml()));
+check('the season switch is bound, and writes the select', (() => {
+  const src = shellSrc;
+  return /this\._each\("\[data-season\]"/.test(src) && /select", "select_option", \{\s*entity_id: sec\.season\.entity/.test(src);
+})());
+check('the season entities are watched', (() => {
+  shse._hass.states['select.gttc_season_mode'].state = 'Heating';
+  const w = shse._collectWatched();
+  return w.includes('select.gttc_season_mode') && w.includes('binary_sensor.gttc_season_switch_recommended');
+})());
+
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);

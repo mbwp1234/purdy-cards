@@ -560,7 +560,10 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }).join("");
 
-    const chips = (sec.chips || []).map((ch) => {
+    /* GTTC's own recommendation, said where the switch is. Only when it is
+       actually recommending — "no change" is not a fact worth a chip. */
+    const seasonRec = this._seasonRecommendation(sec);
+    const chips = (seasonRec ? `<span class="ps-chip warn">${psEsc(seasonRec)}</span>` : "") + (sec.chips || []).map((ch) => {
       /* `select.gttc_schedule_mode` names the BASE weekday/weekend lists, not
          the plan in force — GTTC runs a preset situationally and leaves
          active_preset null. A chip reading "Weekday/Weekend" while the `home`
@@ -624,10 +627,11 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-zpair">${zones}${outside}</div>
       ${this._holdHtml(sec)}
       <div class="ps-xtra">
-        ${sec.schedule ? `<div class="ps-btns">
-          <button class="ps-btn" type="button" data-sheet="schedule">
+        ${sec.schedule || sec.season ? `<div class="ps-btns">
+          ${sec.schedule ? `<button class="ps-btn" type="button" data-sheet="schedule">
             <svg viewBox="0 0 24 24" class="ps-ico"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9h17M8 3v3M16 3v3M12 12.5v3l2 1.2"/></svg>
-            Schedule</button>
+            Schedule</button>` : ""}
+          ${this._seasonHtml(sec)}
         </div>` : ""}
         <div class="ps-rmlist">${rooms}</div>
         ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
@@ -768,6 +772,43 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* A manual hold outranks the schedule, so it gets its own row with a
      two-tap cancel rather than hiding among the chips. */
+  /* Season — `season: {entity, recommend, options: {heat, cool}}`.
+     The season decides which of a schedule block's two numbers GTTC runs and
+     puts the wall unit in Heat or Cool, so it was worth a control here instead
+     of a trip to the GTTC panel's Settings tab. Switching is reversible, so it
+     is not the destructive arm (no heavy haptic) — but a stray tap would turn
+     the AC on in January, so the inactive side takes a second tap within 5s.
+     An unreadable select draws NO control, never a default side. */
+  _seasonOpts(sec) {
+    const o = (sec.season && sec.season.options) || {};
+    return { heat: o.heat || "Heating", cool: o.cool || "Cooling" };
+  },
+
+  _seasonHtml(sec) {
+    const cfg = sec.season;
+    if (!cfg || !cfg.entity) return "";
+    const st = pcState(this._hass, cfg.entity);
+    const opts = this._seasonOpts(sec);
+    if (st !== opts.heat && st !== opts.cool) return "";
+    const seg = (k, label) => {
+      const on = st === opts[k];
+      const armed = !on && this._seasonArm === k;
+      return `<button class="ps-sbtn ${k} ${on ? "on" : ""} ${armed ? "armed" : ""}" type="button"
+        data-season="${k}" aria-pressed="${on}">${armed ? `Tap: ${label}` : label}</button>`;
+    };
+    return `<div class="ps-season" role="group" aria-label="Season">${seg("heat", "Heat")}${seg("cool", "Cool")}</div>`;
+  },
+
+  _seasonRecommendation(sec) {
+    const cfg = sec.season;
+    if (!cfg || !cfg.recommend || pcState(this._hass, cfg.recommend) !== "on") return "";
+    const st = pcState(this._hass, cfg.entity);
+    const opts = this._seasonOpts(sec);
+    if (st === opts.heat) return "Cooling recommended";
+    if (st === opts.cool) return "Heating recommended";
+    return "";
+  },
+
   _holdHtml(sec) {
     const hold = sec.hold;
     if (!hold || !hold.remaining) return "";
