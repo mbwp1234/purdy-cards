@@ -206,7 +206,12 @@ function buildHass(states) {
         : { ...hass.user, ...asUser };
       note(`rendering as ${hass.user.name || hass.user.id}`);
     }
-    const tag = TAG.replace(/^custom:/, "");
+    /* `el=` renders the fetched config through a DIFFERENT element. It is how
+       a card that is not deployed yet is photographed against the config it
+       will be given — desk2 takes the phone's config plus stage:, so
+       `tag=custom:purdy-shell-card&view=phone2&el=purdy-desk2-card&patch=desk2`
+       shoots it before any dashboard write. */
+    const tag = (P.get("el") || TAG).replace(/^custom:/, "");
     await customElements.whenDefined(tag).catch(() => {});
     if (!customElements.get(tag)) throw new Error(`${tag} never registered — bundle failed to load?`);
 

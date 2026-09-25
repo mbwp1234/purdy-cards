@@ -31,6 +31,7 @@ const DPR = Number(flag("dpr", 1));
 const SHELL = "tag=custom:purdy-shell-card&view=phone2";
 const PHONE = [390, 844];
 const DESK = [1440, 900];
+const D2 = SHELL + "&el=purdy-desk2-card&patch=desk2";
 /* One entry per thing worth looking at. Phone first: it is the view that ships. */
 const PRESETS = {
   /* Section keys are the live config's: joel · clim · now · people · crew ·
@@ -127,6 +128,20 @@ const PRESETS = {
   "sys-perf":     [PHONE, SHELL + "&mode=systems&page=perf"],
   "sys-alerts":   [PHONE, SHELL + "&mode=systems&page=alerts"],
   desk:           [DESK, "tag=custom:purdy-desk-card&view=desktop"],
+  /* purdy-desk2-card, the desk as a subclass of the shell. Until the desk2
+     view exists these render the PHONE's deployed config through the desk2
+     element with `patch=desk2` adding stage:, viewport_offset and the
+     calendar — so the shots judge the config the view will actually get. */
+  "desk2-1280":   [[1280, 800],  D2],
+  "desk2-1440":   [DESK,         D2],
+  "desk2-1920":   [[1920, 1080], D2],
+  "desk2-joel":   [DESK, D2 + "&sheet=joel"],
+  "desk2-drawer-lights": [DESK, D2 + "&sheet=lights"],
+  "desk2-drawer-media":  [DESK, D2 + "&sheet=media&media=watch"],
+  "desk2-drawer-listen": [DESK, D2 + "&sheet=media&media=listen"],
+  "desk2-drawer-crew":   [DESK, D2 + "&sheet=crew"],
+  "desk2-drawer-alerts": [DESK, D2 + "&sheet=notifications"],
+  "desk2-nas":    [DESK, D2 + "&mode=systems&page=overview"],
   "desk-weather": [DESK, "tag=custom:purdy-desk-card&view=desktop&patch=weather-desk"],
 };
 

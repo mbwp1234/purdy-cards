@@ -7493,14 +7493,20 @@ class PurdyShellCard extends PcBaseCard {
     this._hostedKey = key;
   }
 
-  _render() {
-    if (!this._hass || !this._config) return;
+  
+
+
+
+
+
+
+
+  _renderPre() {
+    if (!this._hass || !this._config) return null;
     
-    if (this._dragging) return;
+    if (this._dragging) return null;
     if (!this._mounted) this._mount();
-    const c = this._config;
     const now = new Date();
-    const who = this._who();
     const raised = this._raised();
     if (this._config.log_to) this._syncLog(raised);
     const faults = this._faults();
@@ -7511,6 +7517,15 @@ class PurdyShellCard extends PcBaseCard {
 
 
     this._paintSky(this._mode ? "sky-day" : this._skyBand(now.getHours()));
+    return { now, faults };
+  }
+
+  _render() {
+    const pre = this._renderPre();
+    if (!pre) return;
+    const { now, faults } = pre;
+    const c = this._config;
+    const who = this._who();
 
     
 
@@ -14293,7 +14308,12 @@ Object.assign(PurdyShellCard.prototype, {
     return `<div class="ps-jgap"><i></i><span>awake ${psEsc(psHM(mins))}${
       note ? ` · ${psEsc(note)}` : ""}</span><i></i></div>`;
   },
-  _secNursery(sec) {
+  
+
+
+
+
+  _nurseryModel(sec) {
     const h = this._hass;
     const playing = pcState(h, sec.hatch) === "playing";
     const doorOpen = pcState(h, sec.door) === "on";
@@ -14443,6 +14463,16 @@ Object.assign(PurdyShellCard.prototype, {
 
     const nightNoData = !loaded || !nightSession;
     const noData = !loaded || (!nightSession && !todayNaps.length);
+    
+    const statusL = live ? `Put down ${psClock(live.from)}` : "";
+    const statusR = live
+      ? (live.hadExit ? `left him ${psClock(live.settledAt)}` : "still settling…")
+      : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
+    return { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR };
+  },
+
+  _secNursery(sec) {
+    const { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR } = this._nurseryModel(sec);
     const ring = this._ringSvg(120, 9,
       [[nightMins / maxMins, "url(#ps-aur)"]],
       avg ? Math.min(1, avg / maxMins) : null);
@@ -14481,10 +14511,6 @@ Object.assign(PurdyShellCard.prototype, {
 
 
 
-    const statusL = live ? `Put down ${psClock(live.from)}` : "";
-    const statusR = live
-      ? (live.hadExit ? `left him ${psClock(live.settledAt)}` : "still settling…")
-      : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
 
     
 
@@ -17866,7 +17892,7 @@ Object.assign(PurdyShellCard.prototype, {
           <span class="ps-wxhi">${this._wxDeg(d.hi)}</span>
           ${this._wxCapsule(d.lo, d.hi, dom, mark)}
           <span class="ps-wxlo">${this._wxDeg(d.lo)}</span>
-          <span class="ps-wxpcp${pop ? "" : " none"}">${pop || "0%"}</span>
+          <span class="ps-wxpcp${pop ? "" : " none"}${d.pop != null && d.pop >= 50 ? " wet" : ""}">${pop || "0%"}</span>
           <span class="ps-wxdw">${psEsc(this._wxDow(d.ts, d.today))}</span>
         </div>`;
     }).join("");
@@ -23862,6 +23888,895 @@ Object.assign(PurdyDeskCard.prototype, {
 
 
 
+
+
+const PD2_STAGE = {
+  joel: ["nursery"],
+  climate: ["climate"],
+  weather: ["weather"],
+  side: ["nowplaying", "calendar", "crew"],
+};
+
+class PurdyDesk2Card extends PurdyShellCard {
+  static getStubConfig() {
+    return { weather: "weather.home", sections: [], stage: {} };
+  }
+
+  constructor() {
+    super();
+    
+
+    this._pd2Key = (e) => {
+      if (e && e.key === "Escape" && (this._sheet || this._pd2Joel)) {
+        this._sheet = null; this._mediaPick = null; this._napEdit = null;
+        this._render();
+      }
+    };
+  }
+
+  setConfig(config) {
+    const c = config || {};
+    const sections = Array.isArray(c.sections) ? c.sections : [];
+    const stage = c.stage || {};
+    Object.keys(stage).forEach((slot) => {
+      const allowed = PD2_STAGE[slot];
+      if (!allowed) {
+        throw new Error(`purdy-desk2-card: unknown stage slot '${slot}'. ` +
+          `Expected one of: ${Object.keys(PD2_STAGE).join(", ")}`);
+      }
+      const keys = Array.isArray(stage[slot]) ? stage[slot] : [stage[slot]];
+      keys.forEach((k) => {
+        const sec = sections.find((s) => s && (s.key || "") === k);
+        if (!sec) throw new Error(`purdy-desk2-card: stage.${slot} names '${k}', which is not a section key`);
+        if (allowed.indexOf(sec.type) < 0) {
+          throw new Error(`purdy-desk2-card: stage.${slot} cannot draw a '${sec.type}' section. ` +
+            `Expected one of: ${allowed.join(", ")}`);
+        }
+      });
+    });
+    super.setConfig({ ...c, sections });
+    
+
+    const off = Number(c.viewport_offset);
+    if (this.style && typeof this.style.setProperty === "function") {
+      this.style.setProperty("--pd-off", (Number.isFinite(off) ? off : 16) + "px");
+    }
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("keydown", this._pd2Key);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (typeof window !== "undefined" && window.removeEventListener) window.removeEventListener("keydown", this._pd2Key);
+  }
+
+  
+
+
+
+  _mount() {
+    this.shadowRoot.innerHTML = `
+      <style>${PurdyDesk2Card.styles}</style>
+      <div class="ps-ground" id="ps-ground"></div>
+      <div class="pd2-frame">
+        <nav class="pd2-rail" id="pd2-rail" aria-label="Dock"></nav>
+        <main class="pd2-glass">
+          <header class="pd2-head" id="pd2-head"></header>
+          <div class="pd2-hhair"></div>
+          <section class="pd2-stage" id="pd2-stage">
+            <article class="pd2-col pd2-joel" id="pd2-joel"></article>
+            <div class="pd2-vhair h1"></div>
+            <article class="pd2-col pd2-clim" id="pd2-clim"></article>
+            <article class="pd2-col pd2-wx" id="pd2-wx"></article>
+            <div class="pd2-vhair h2"></div>
+            <div class="pd2-vhair h3"></div>
+            <article class="pd2-col pd2-side" id="pd2-side"></article>
+          </section>
+          <section class="pd2-mode" id="pd2-mode">
+            <div class="ps-stat" id="ps-stat"></div>
+            <div class="ps-dockwrap" id="ps-dockwrap"></div>
+            <div class="ps-col" id="ps-col"></div>
+          </section>
+        </main>
+      </div>
+      <div id="ps-sheetslot"></div>`;
+    this._mounted = true;
+  }
+
+  
+
+  _pd2Sec(key) {
+    if (!key) return null;
+    const raw = (this._config.sections || []).find((s) => (s.key || "") === key);
+    if (!raw || !this._visible(raw)) return null;
+    return { ...raw, key: raw.key };
+  }
+
+  
+
+  _pd2Slot(sec) {
+    return {
+      nowplaying: () => this._dkNow(sec),
+      calendar: () => this._dkAhead(sec),
+      crew: () => this._dkHouse(sec),
+    }[sec.type]();
+  }
+
+  _render() {
+    const pre = this._renderPre();
+    if (!pre) return;
+    const { now, faults } = pre;
+    const c = this._config;
+    const st = c.stage || {};
+
+    this._patch("pd2-rail", this._dkRail(faults));
+
+    const glass = this.shadowRoot.querySelector(".pd2-glass");
+    const mode = this._mode === "systems" || this._mode === "health";
+    if (glass && glass.classList) glass.classList.toggle("moded", mode);
+    
+
+
+    if (this._mode === "systems") { this._renderSystems(faults); this._pd2Bind(); return; }
+    if (this._mode === "health") { this._renderHealth(faults); this._pd2Bind(); return; }
+
+    this._patch("pd2-head", this._dkHead(now, faults));
+
+    const joel = this._pd2Sec(st.joel);
+    const clim = this._pd2Sec(st.climate);
+    const wx = this._pd2Sec(st.weather);
+    this._patch("pd2-joel", joel ? this._dkJoel(joel) : "");
+    this._patch("pd2-clim", clim ? this._dkClimate(clim) : "");
+    this._patch("pd2-wx", wx ? this._dkWeather(wx) : "");
+    const side = (Array.isArray(st.side) ? st.side : [st.side])
+      .map((k) => this._pd2Sec(k)).filter(Boolean)
+      .map((s) => this._pd2Slot(s)).filter(Boolean);
+    this._patch("pd2-side", side.join(`<div class="pd2-hhair in"></div>`));
+
+    this._patchSheet(this._sheetHtml(faults));
+    this._mountSheetCard();
+
+    this._bind();
+    this._bindScrub();
+    this._bindLights();
+    this._bindCrew();
+    this._bindNapEdit();
+    this._bindNapOpen();
+    this._bindPeople();
+    this._bindNurseryLog();
+    this._bindSystems();
+    this._pd2Bind();
+    this._syncQueue();
+  }
+
+  
+
+
+
+  _sheetHtml(faults) {
+    if (this._sheet === "joel") {
+      const sec = this._pd2Sec((this._config.stage || {}).joel);
+      if (!sec) return "";
+      const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+      return `<div class="ps-scrim" id="ps-scrim"></div>
+        <div class="ps-sheet tall pd2-jsheet">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || "Joel")}</span>${close}</div>
+          <div class="ps-sect open">${this._secNursery(sec)}</div>
+        </div>`;
+    }
+    return super._sheetHtml(faults);
+  }
+
+  
+
+  
+
+
+
+
+
+
+  _dkRail(faults) {
+    const dock = this._config.dock || [];
+    const cur = this._mode
+      ? dock.findIndex((d) => d.mode === this._mode)
+      : this._sheet ? dock.findIndex((d) => d.sheet === this._sheet && !d.mode) : -1;
+    const items = dock.map((d, i) => ({ d, i })).filter(({ d }) => this._visible(d));
+    return items.map(({ d, i }, n) => {
+      const home = !!d.active;
+      const on = home ? cur < 0 : i === cur;
+      const alert = d.alert_when_faults && faults.length;
+      
+
+      const sep = n === items.length - 1 && items.length > 2 ? `<i class="pd2-rsep"></i>` : "";
+      return `${sep}<button class="pd2-rb ${on ? "on" : ""} ${alert ? "alert" : ""}" type="button"
+          ${home ? `data-pd2home="1"` : `data-dock="${i}"`} aria-label="${psEsc(d.name)}" title="${psEsc(d.name)}">
+          <ha-icon icon="${psEsc(d.icon)}"></ha-icon></button>`;
+    }).join("");
+  }
+
+  
+
+  
+
+
+
+  _dkHead(now, faults) {
+    const c = this._config;
+    const h = this._hass;
+    const wTemp = c.weather_temp && pcNum(h, c.weather_temp) != null
+      ? pcNum(h, c.weather_temp)
+      : (c.weather && h.states[c.weather] ? h.states[c.weather].attributes.temperature : null);
+    const wState = pcState(h, c.weather);
+    const wxSec = (c.sections || []).find((s) => s.type === "weather");
+    const feels = wxSec && wxSec.feels_from && h.states[wxSec.feels_from]
+      ? h.states[wxSec.feels_from].attributes.apparent_temperature : null;
+    const worst = faults.length
+      ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
+      : "good";
+    const who = this._who();
+    const chip = this._dkWxChip();
+    return `
+      <div class="pd2-hl">
+        <h1>${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</h1>
+        <div class="pd2-date">${now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
+          <i>·</i>${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
+      </div>
+      <div class="pd2-ppl">${this._hdrPeople()}</div>
+      <div class="pd2-hr">
+        ${wTemp == null ? "" : `<div class="pd2-wx" data-info="${psEsc(c.weather_temp || c.weather)}">
+          <ha-icon icon="${pcWxIcon(wState)}"></ha-icon>
+          <div><b>${Math.round(wTemp)}°</b><span>${psEsc(pcWxText(wState) || "")}${
+            feels == null ? "" : ` · feels ${Math.round(feels)}°`}</span></div></div>`}
+        ${chip}
+        ${pcOffline(h)
+          ? `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>`
+          : `<button class="ps-chip ${worst}" type="button" id="ps-alert">
+            <span class="ps-dot"></span>${faults.length
+              ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention` : "All clear"}</button>`}
+      </div>`;
+  }
+
+  
+
+
+  _dkWxChip() {
+    const wet = (this._wxFc || []).find((d) => d.pop != null && d.pop >= 50);
+    if (!wet) return "";
+    const when = wet.today ? (new Date(this._nowMs()).getHours() >= 17 ? "tonight" : "today")
+      : this._wxDow(wet.ts, false);
+    return `<span class="ps-chip warn">${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(when)} · ${Math.round(wet.pop)}%</span>`;
+  }
+
+  
+
+  
+
+
+  _dkJoel(sec) {
+    const m = this._nurseryModel(sec);
+    const { loaded, err, stats, live, nightSession, todayNaps, catnapUnder, avg, maxMins,
+      nightMins, nightNoData, statusL, statusR, sessions, todayKey, away, awayLabel } = m;
+    const napTarget = m.napTarget;
+    const ring = this._ringSvg(176, 11, [[nightMins / maxMins, "url(#ps-aur)"]],
+      avg ? Math.min(1, avg / maxMins) : null, "var(--ps-text)");
+    const naps = todayNaps.map((s) => {
+      const short = !s.active && s.asleepMinutes < catnapUnder;
+      const col = short ? "var(--ps-warn)" : "var(--ps-light)";
+      return `<div class="pd2-nap">
+          ${this._ringSvg(46, 5, [[s.asleepMinutes / napTarget, col]], null)}
+          <div><b>${psHM(s.asleepMinutes)}</b><span>Nap · ${s.active ? "now" : psClock(s.from)}${
+            s.manual ? " · logged" : s.edited ? " · edited" : ""}</span></div></div>`;
+    }).join("");
+    const napsEmpty = !loaded ? "loading…" : err ? "recorder unavailable"
+      : away ? `${awayLabel.toLowerCase()} — not recorded today` : "no naps yet";
+
+    const norms = psNurseryNorms(sessions, { days: sec.days || 7 });
+    
+
+
+    const done = sessions.filter((s) => s.night && !s.active);
+    const ln = done.length ? done[done.length - 1] : null;
+    const blind = ln && ln.blindMin;
+    const lastRow = !ln ? "" : `<div class="pd2-last">
+        <div><span>Last night</span><b>${psHM(ln.asleepMinutes)}</b></div>
+        <div><span>Woke</span><b>${ln.interventions == null ? "—"
+          : `${ln.interventions}${blind ? "+" : ""}×`}</b></div>
+        <div><span>Longest</span><b>${blind || ln.longestStretch == null ? "—" : psHM(ln.longestStretch)}</b></div>
+      </div>`;
+
+    
+
+
+    const band = norms.asleep;
+    let verdict = "";
+    if (ln && band) {
+      const d = Math.round(ln.asleepMinutes - band.mean);
+      const inBand = ln.asleepMinutes >= band.lo && ln.asleepMinutes <= band.hi;
+      const how = Math.abs(d) < 5 ? "right on his average"
+        : d > 0 ? `${psHM(d)} over his average` : `${psHM(-d)} under his average`;
+      verdict = `<div class="pd2-verdict ${inBand ? "good" : "warn"}">
+          <span class="ps-dot"></span><b>${inBand ? "Within his norm" : "Outside his norm"}</b>
+          <span>· ${psEsc(how)}</span></div>`;
+    }
+
+    return `<div class="pd2-jbtn" data-pd2joel="1" role="button" tabindex="0" aria-label="Open Joel">
+        <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Joel")}</span>
+          ${m.chipTxt && !(m.chipTxt === "Awake") ? `<span class="ps-chip ${m.chipCls}">${psEsc(m.chipTxt)}</span>` : ""}</div>
+        <div class="pd2-jtop">
+          <div class="pd2-ring">${ring}
+            <div class="pd2-rv">${nightNoData
+              ? `<b class="ps-nodata">—</b><small>${loaded ? "NO NIGHT YET" : "LOADING"}</small>`
+              : `<b>${psHM(nightMins)}</b><small>${nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
+          </div>
+          <div class="pd2-naps">${naps || `<span class="pd2-flat">${psEsc(napsEmpty)}</span>`}</div>
+        </div>
+        ${statusL || statusR ? `<div class="pd2-status">${psEsc(statusL)}${statusL && statusR ? ` <i>·</i> ` : ""}${psEsc(statusR)}</div>` : ""}
+        ${!loaded || (!sessions.length && stats.bedMean == null) ? ""
+          : this._nurseryDayRail(sessions, todayKey, stats.bedMean, norms)}
+        ${lastRow}
+        ${verdict}
+      </div>`;
+  }
+
+  
+
+  _dkClimate(sec) {
+    const h = this._hass;
+    const th = h.states[sec.goal] || h.states[sec.thermostat];
+    const cur = th && th.attributes.current_temperature;
+    const goal = this._optGoal(sec.goal || sec.thermostat, th && th.attributes.temperature);
+    const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
+    const rng = sec.ring || { min: 60, max: 80 };
+    const f = (v) => Math.max(0, Math.min(1, (v - rng.min) / (rng.max - rng.min)));
+    const heating = action === "heating";
+    const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
+    const hum = pcNum(h, (sec.rooms || [])[0] && (sec.rooms || [])[0].humidity);
+
+    
+    const diff = cur == null || goal == null ? null : Math.round(cur - goal);
+    const chip = diff == null || diff === 0 ? ""
+      : `<span class="ps-chip ${diff > 0 ? "warn" : "cool"}">${Math.abs(diff)}° ${diff > 0 ? "over" : "under"} goal</span>`;
+
+    const zc = sec.zones || {};
+    const activeZone = pcState(h, zc.select);
+    const zones = (zc.options || []).map((o) => {
+      const t = pcNum(h, o.temp);
+      return `<button class="pd2-seg ${activeZone === o.option ? "on" : ""}" type="button" data-zone="${psEsc(o.option)}">${
+        psEsc(o.label || o.option)}${t == null ? "" : ` · ${Math.round(t)}°`}</button>`;
+    }).join("");
+
+    
+
+
+    let lo = Infinity, hi = -Infinity;
+    (sec.rooms || []).forEach((r) => (this._history[r.temp] || []).forEach((p) => {
+      const v = parseFloat(p.s);
+      if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    }));
+    const scale = Number.isFinite(lo) && hi > lo ? { lo, hi } : null;
+    const rooms = (sec.rooms || []).map((r) => {
+      const rd = pcReading(h, r.temp);
+      const t = rd.ok ? pcNum(h, r.temp) : null;
+      const hu = pcNum(h, r.humidity);
+      const off = t == null;
+      return `<div class="pd2-room ${off ? "off" : ""}" data-info="${psEsc(r.temp)}">
+          <span class="pd2-rn">${psEsc(r.name || pcName(h, r.temp))}</span>
+          <span class="pd2-spark">${off ? "" : this._sparkSvg(r.temp, scale)}</span>
+          <span class="pd2-rt">${off ? "offline" : t.toFixed(1) + "°"}</span>
+          <span class="pd2-rh">${off || hu == null ? "" : Math.round(hu) + "%"}</span>
+        </div>`;
+    }).join("");
+
+    const wave = this._waveSvg(sec);
+    return `
+      <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Climate")}</span>${chip}</div>
+      <div class="pd2-chero">
+        <div class="pd2-ring sm" data-info="${psEsc(sec.goal || sec.thermostat)}">
+          ${this._ringSvg(150, 10, [[cur == null ? 0 : f(cur), col]], goal == null ? null : f(goal), "var(--ps-text)")}
+          <div class="pd2-rv"><b>${cur == null ? "—" : Math.round(cur) + "°"}</b><small>${
+            psEsc(this._humanize(action).toUpperCase())}${hum == null ? "" : ` · ${Math.round(hum)}% RH`}</small></div>
+        </div>
+        <div class="pd2-goal">
+          <span class="pd2-cap">${heating ? "HEAT TO" : "GOAL"}</span>
+          <div class="pd2-step">
+            <button class="ps-step" type="button" data-step="-1" aria-label="Lower goal">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
+            <b>${goal == null ? "—" : Math.round(goal) + "°"}</b>
+            <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div>
+          ${zones ? `<div class="pd2-segs">${zones}</div>` : ""}
+          ${sec.schedule ? `<button class="pd2-link" type="button" data-sheet="schedule">Schedule</button>` : ""}
+        </div>
+      </div>
+      ${this._holdHtml(sec)}
+      ${wave ? `<div class="pd2-wide pd2-graph">
+          <div class="pd2-lblrow"><span class="pd2-cap">LAST 24H</span></div>
+          <div class="ps-wave" data-scrub="wave"><div class="ps-cross" hidden></div>${wave}</div></div>` : ""}
+      <div class="pd2-rooms">
+        <div class="pd2-room hd"><span>ROOM</span><span>24H</span><span>TEMP</span><span>RH</span></div>
+        ${rooms}
+      </div>`;
+  }
+
+  
+
+  
+
+
+  _dkWeather(sec) {
+    const facts = this._wxDetailFacts(sec);
+    return `
+      <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Weather")}</span>
+        <span class="pd2-src">${psEsc(this._wxSrcName(sec))} · high / low</span></div>
+      ${this._wxForecastRail(sec)}
+      ${facts ? `<div class="pd2-wide pd2-facts">${facts}</div>` : ""}`;
+  }
+
+  
+
+  _wxDetailFacts(sec) {
+    const h = this._hass;
+    const rows = [];
+    const tn = (this._wxFc || []).find((d) => d.today);
+    if (tn && tn.lo != null) rows.push(["Tonight", `${pcWxText(tn.condition) || ""}${tn.condition ? ", " : ""}low ${Math.round(tn.lo)}°`]);
+    const fe = sec.feels_from && h.states[sec.feels_from] && h.states[sec.feels_from].attributes.apparent_temperature;
+    if (fe != null) rows.push(["Feels like", `${Math.round(fe)}°`]);
+    const fa = sec.forecast && h.states[sec.forecast] ? h.states[sec.forecast].attributes : {};
+    const bits = [fa.dew_point != null ? `${Math.round(fa.dew_point)}°` : null,
+      fa.wind_speed != null ? `${Math.round(fa.wind_speed)} ${fa.wind_speed_unit || "mph"}` : null].filter(Boolean);
+    if (bits.length) rows.push(["Dew point · wind", bits.join(" · ")]);
+    const sun = sec.sun && h.states[sec.sun];
+    const rise = sun && sun.attributes.next_rising;
+    if (rise) rows.push(["Sunrise", new Date(rise).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })]);
+    return rows.map(([k, v]) => `<div><span>${psEsc(k)}</span><b>${psEsc(v)}</b></div>`).join("");
+  }
+
+  
+
+  
+
+
+  _dkNow(sec) {
+    const h = this._hass;
+    const rows = [];
+    ((this._config.now_playing || {}).players || []).forEach((p) => {
+      const st = h.states[p.entity];
+      if (!psLiveMusic(st)) return;
+      const a = st.attributes;
+      const art = a.entity_picture_local;
+      rows.push(`<div class="pd2-np" ${this._playTarget("listen")} role="button" tabindex="0">
+          <div class="pd2-art">${art ? `<img src="${psEsc(art)}" alt="" />`
+            : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
+          <div class="ps-grow"><div class="pd2-npt">${psEsc(a.media_title || "Playing")}</div>
+            <div class="pd2-nps">${psEsc([a.media_artist, p.name].filter(Boolean).join(" · "))}</div></div>
+          <button class="ps-npb" type="button" data-mp="playpause" data-entity="${psEsc(p.entity)}"
+            aria-label="${st.state === "playing" ? "Pause" : "Play"}">
+            <svg viewBox="0 0 24 24" class="ps-ico">${st.state === "playing"
+              ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
+        </div>`);
+    });
+    (sec.tvs || []).forEach((t) => {
+      const st = pcState(h, t.media_player);
+      if (!st || st === "off" || st === "unavailable" || st === "unknown") return;
+      const app = pcState(h, t.app_sensor);
+      const shown = app && app !== "unknown" && app !== "unavailable" ? app : "On";
+      rows.push(`<div class="pd2-np" ${this._playTarget("watch")} role="button" tabindex="0">
+          <div class="pd2-art app">${this._appIcon(sec, app)}</div>
+          <div class="ps-grow"><div class="pd2-npt">${psEsc(shown)}</div>
+            <div class="pd2-nps">${psEsc(t.name)} TV</div></div>
+          <span class="pd2-pill">Remote</span>
+        </div>`);
+    });
+    const empty = `<div class="pd2-np quiet" ${this._playTarget("listen")} role="button" tabindex="0">
+        <div class="pd2-art"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg></div>
+        <div class="ps-grow"><div class="pd2-npt">Nothing playing</div><div class="pd2-nps">Music and televisions</div></div>
+      </div>`;
+    return `<div class="pd2-lbl">${psEsc(sec.title || "Now playing")}</div>${rows.join("") || empty}`;
+  }
+
+  
+
+  _dkAhead(sec) {
+    const days = sec.days || 5;
+    const t0 = new Date(this._nowMs()); t0.setHours(0, 0, 0, 0);
+    let out = "";
+    for (let d = 0; d < days; d++) {
+      const day = new Date(t0.getTime() + d * 86400000);
+      const evs = this._events.filter((e) => e.t >= day.getTime() && e.t < day.getTime() + 86400000);
+      if (!evs.length && d > 0) continue;
+      out += `<div class="pd2-aday"><span class="${d === 0 ? "today" : ""}">${d === 0 ? "TODAY"
+        : day.toLocaleDateString([], { weekday: "short" }).toUpperCase()}</span><div>${evs.length
+        ? evs.map((e) => `<div class="pd2-ev"><i style="background:${psEsc(e.color)}"></i><em>${e.allDay ? "all day"
+          : new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</em><span>${psEsc(e.name)}</span></div>`).join("")
+        : `<div class="pd2-ev none">Nothing scheduled</div>`}</div></div>`;
+    }
+    return `<div class="pd2-ahead"><div class="pd2-lbl">${psEsc(sec.title || "Ahead")}</div>${out}</div>`;
+  }
+
+  
+  _dkNext() {
+    const now = this._nowMs();
+    const e = this._events.find((x) => !x.allDay && x.t > now);
+    if (!e) return null;
+    const d = new Date(e.t);
+    const same = new Date(now).toDateString() === d.toDateString();
+    return `${same ? "" : d.toLocaleDateString([], { weekday: "short" }) + " "}${
+      d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · ${e.name}`;
+  }
+
+  
+
+
+
+  _dkHouse(sec) {
+    const h = this._hass;
+    const c = this._config;
+    const dock = c.dock || [];
+    const route = (pred) => {
+      const i = dock.findIndex(pred);
+      return i >= 0 && this._visible(dock[i]) ? `data-dock="${i}"` : "";
+    };
+    const needs = this._crewNeeds(sec);
+    const rows = [];
+
+    const ls = (c.sections || []).find((s) => s.type === "lights");
+    if (ls) {
+      const lights = this._lightList(ls);
+      const on = lights.filter((l) => l.on);
+      rows.push({ name: "Lights", dot: on.length ? "lit" : "", attrs: route((d) => d.sheet === "lights") || `data-sheet="lights"`,
+        detail: on.length ? `${on.length} on · ${on.map((l) => l.name).join(", ")}` : "All off" });
+    }
+    const v = sec.vacuum || {};
+    if (v.entity) {
+      const vs = pcState(h, v.entity);
+      const mine = needs.filter((n) => !/drawer|litter|washer|Washer|Litter/.test(n.text));
+      rows.push({ name: v.name || "Vacuum", dot: vs === "error" ? "bad" : mine.length ? "warn" : vs === "cleaning" ? "cool" : "good",
+        attrs: `data-sheet="${psEsc(sec.sheet || "crew")}"`,
+        detail: [this._humanize(vs || "unknown"), mine.length ? (mine[0].sub || mine[0].text) : null].filter(Boolean).join(" · ") });
+    }
+    const l = sec.litter || {};
+    if (l.entity) {
+      const drawer = pcNum(h, l.waste_drawer);
+      const visits = pcNum(h, (l.pet || {}).visits);
+      const lneed = needs.find((n) => /drawer|Litter|litter/.test(n.text));
+      rows.push({ name: (l.pet || {}).name || l.name || "Litter", dot: lneed ? (lneed.sev === "bad" ? "bad" : "warn") : "good",
+        attrs: `data-sheet="${psEsc(sec.sheet || "crew")}"`,
+        detail: [drawer == null ? null : `Drawer ${Math.round(drawer)}%`,
+          visits == null ? null : `${Math.round(visits)} visit${visits === 1 ? "" : "s"}`].filter(Boolean).join(" · ") || this._humanize(pcState(h, l.entity)) });
+    }
+    const w = sec.washer || {};
+    if (w.entity) {
+      const ws = pcState(h, w.entity);
+      rows.push({ name: w.name || "Washer", dot: ws === "Finished" ? "warn" : ws === "Running" ? "cool" : "",
+        attrs: `data-sheet="${psEsc(sec.sheet || "crew")}"`, detail: ws || "—" });
+    }
+    const srv = c.server;
+    if (srv) {
+      const arr = pcNum(h, (srv.storage || {}).array);
+      const run = pcState(h, (srv.docker || {}).running);
+      const sf = this._serverFaults ? this._serverFaults() : [];
+      rows.push({ name: srv.name || "Server", dot: sf.length ? "warn" : "good", attrs: route((d) => d.mode === "systems"),
+        detail: [arr == null ? null : `${Math.round(arr)}% full`, run && run !== "unknown" ? `${run} up` : null].filter(Boolean).join(" · ") || "—" });
+    }
+    const next = this._dkNext();
+    const nextRow = next ? `<div class="pd2-hrow compact-only"><span class="pd2-dot aur"></span><b>Next</b><span>${psEsc(next)}</span></div>` : "";
+    return `<div class="pd2-lbl">House</div><div class="pd2-house">${nextRow}${rows.map((r) =>
+      `<button class="pd2-hrow" type="button" ${r.attrs}><span class="pd2-dot ${r.dot}"></span><b>${psEsc(r.name)}</b>
+        <span class="${r.dot === "warn" || r.dot === "bad" ? r.dot : ""}">${psEsc(r.detail)}</span></button>`).join("")}</div>`;
+  }
+
+  
+
+  _pd2Bind() {
+    this._each("[data-pd2home]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._sheet = null; this._mediaPick = null; this._napEdit = null; this._mode = null;
+      this._render();
+    }));
+    this._each("[data-pd2joel]", (el) => {
+      const open = (e) => {
+        if (e && e.target && e.target.closest && e.target.closest("button, [data-info]") && e.target.closest("button, [data-info]") !== el) return;
+        this._sheet = this._sheet === "joel" ? null : "joel";
+        this._render();
+      };
+      el.addEventListener("click", open);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    });
+  }
+
+  getCardSize() { return 12; }
+
+  static get styles() {
+    return PurdyShellCard.styles + PD2_STYLES;
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+const PD2_STYLES = `
+      :host {
+        --pd-off: 16px;
+        display: block;
+        height: calc(100dvh - var(--pd-off));
+        min-height: 0;
+        padding: 0;
+        overflow: hidden;
+        container-type: size;
+        container-name: pd2;
+      }
+      .pd2-frame { position: relative; height: 100%; display: flex; gap: 16px; padding: 20px 20px 20px 16px; }
+
+      /* the rail: the phone's dock, stood on end */
+      .pd2-rail {
+        align-self: center; width: 64px; flex: 0 0 64px; border-radius: var(--pc-r-2xl);
+        padding: 12px 0; display: flex; flex-direction: column; align-items: center; gap: 8px;
+        background: linear-gradient(180deg, rgba(16,20,34,.42), rgba(10,12,22,.50));
+        backdrop-filter: blur(28px) saturate(1.5); -webkit-backdrop-filter: blur(28px) saturate(1.5);
+        border: 1px solid rgba(255,255,255,.09);
+        box-shadow: 0 20px 50px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.09);
+      }
+      .pd2-rb { width: 44px; height: 44px; border-radius: var(--pc-r-md); color: var(--ps-muted);
+        display: flex; align-items: center; justify-content: center; position: relative; }
+      .pd2-rb:hover { background: var(--pc-fill-1); color: var(--ps-text); }
+      .pd2-rb ha-icon { --mdc-icon-size: 21px; }
+      .pd2-rb.on { color: #fff; background: rgba(139,124,255,.14); }
+      .pd2-rb.on::after { content: ""; position: absolute; left: -12px; top: 12px; bottom: 12px; width: 3px;
+        border-radius: var(--pc-r-hair); background: linear-gradient(180deg, var(--ps-aur-a), var(--ps-aur-b));
+        box-shadow: 0 0 12px rgba(139,124,255,.9); }
+      .pd2-rb.alert { color: var(--ps-bad); }
+      .pd2-rb.alert ha-icon { filter: drop-shadow(0 0 6px rgba(242,122,131,.6)); }
+      .pd2-rsep { width: 24px; height: 1px; background: var(--pc-edge); margin: 4px 0; }
+
+      /* the glass: one smoked sheet, hairlines only, no per-panel backgrounds */
+      .pd2-glass {
+        flex: 1; min-width: 0; position: relative; border-radius: 28px; overflow: hidden;
+        display: flex; flex-direction: column;
+        background:
+          linear-gradient(0deg, rgba(9,11,20,.52), transparent 140px),
+          linear-gradient(180deg, rgba(16,20,34,.34), rgba(10,12,22,.28));
+        backdrop-filter: blur(30px) saturate(1.5); -webkit-backdrop-filter: blur(30px) saturate(1.5);
+        border: 1px solid rgba(255,255,255,.09);
+        box-shadow: 0 30px 70px -24px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.09);
+      }
+      .pd2-glass::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 120px; pointer-events: none;
+        background: linear-gradient(180deg, rgba(139,124,255,.07), transparent 85%); }
+      .pd2-hhair { height: 1px; flex: 0 0 1px; margin: 0 24px;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,.10) 10%, rgba(255,255,255,.10) 90%, transparent); }
+      .pd2-hhair.in { margin: 2px -8px; }
+      .pd2-vhair { width: 1px; background: linear-gradient(180deg, transparent, rgba(255,255,255,.10) 12%, rgba(255,255,255,.10) 88%, transparent); }
+
+      /* header — one line */
+      .pd2-head { display: flex; align-items: center; gap: 26px; padding: 22px 30px 18px; position: relative; flex: 0 0 auto; }
+      .pd2-hl h1 { margin: 0; font-size: var(--pc-fs-3xl); font-weight: 300; letter-spacing: -.025em; line-height: 1.05; white-space: nowrap; }
+      .pd2-hl h1 b { font-weight: 650; background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b));
+        -webkit-background-clip: text; background-clip: text; color: transparent; }
+      .pd2-date { margin-top: 7px; font-size: var(--pc-fs-md); color: var(--ps-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .pd2-date i, .pd2-status i { font-style: normal; color: var(--ps-dim); margin: 0 6px; }
+      .pd2-ppl .ps-pav { gap: 12px; }
+      .pd2-hr { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .pd2-wx { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+      .pd2-wx ha-icon { --mdc-icon-size: 30px; color: #9fb3c6; }
+      .pd2-wx b { display: block; font-size: var(--pc-fs-3xl); font-weight: 200; letter-spacing: -.03em; color: #BDEBF2; line-height: 1; font-variant-numeric: tabular-nums; }
+      .pd2-wx span { display: block; margin-top: 4px; font-size: var(--pc-fs-micro); font-weight: 650; letter-spacing: .1em;
+        text-transform: uppercase; color: var(--ps-dim); white-space: nowrap; }
+
+      /* the stage */
+      .pd2-stage { flex: 1; min-height: 0; display: grid;
+        grid-template-columns: minmax(0, 1.3fr) 1px minmax(0, 1fr) 1px minmax(0, .85fr);
+        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-areas: "joel h1 clim h2 side" "joel h1 wx h2 side"; }
+      .pd2-joel { grid-area: joel; } .pd2-clim { grid-area: clim; } .pd2-wx { grid-area: wx; }
+      .pd2-side { grid-area: side; }
+      .pd2-vhair.h1 { grid-area: h1; } .pd2-vhair.h2 { grid-area: h2; } .pd2-vhair.h3 { grid-area: h3; display: none; }
+      .pd2-col { min-width: 0; min-height: 0; padding: 22px 26px; display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
+      .pd2-col.pd2-wx { border-top: 1px solid rgba(255,255,255,.07); padding-top: 16px; gap: 10px; }
+      .pd2-wide { display: none; }
+      .pd2-glass.moded .pd2-stage, .pd2-glass.moded .pd2-head, .pd2-glass.moded > .pd2-hhair { display: none; }
+      .pd2-mode { display: none; }
+      .pd2-glass.moded .pd2-mode { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+      /* compact: 1366 and under */
+      @container pd2 (max-width: 1366px) {
+        .pd2-stage { grid-template-columns: minmax(0, 1.2fr) 1px minmax(0, 1fr) 1px minmax(0, .8fr); }
+        .pd2-col { padding: 18px 22px; gap: 13px; }
+        .pd2-ahead, .pd2-ahead + .pd2-hhair { display: none; }
+        .pd2-hl h1 { font-size: var(--pc-fs-2xl); }
+        .pd2-room { padding: 4px 0; }
+      }
+      .compact-only { display: none; }
+      @container pd2 (max-width: 1366px) { .compact-only { display: flex; } }
+      /* wide: 1800 and over — weather gets its own column */
+      @container pd2 (min-width: 1800px) {
+        .pd2-stage { grid-template-columns: minmax(0, 1.25fr) 1px minmax(0, 1fr) 1px minmax(0, 1fr) 1px minmax(0, .9fr);
+          grid-template-areas: "joel h1 clim h2 wx h3 side" "joel h1 clim h2 wx h3 side"; }
+        .pd2-vhair.h3 { display: block; }
+        .pd2-col.pd2-wx { border-top: 0; padding-top: 22px; }
+        .pd2-wide { display: flex; flex-direction: column; }
+      }
+
+      /* labels */
+      .pd2-lblrow { display: flex; align-items: center; gap: 10px; }
+      .pd2-lblrow .ps-chip { margin-left: auto; }
+      .pd2-lbl { font-size: var(--pc-fs-micro); letter-spacing: .15em; text-transform: uppercase; font-weight: 700;
+        color: var(--ps-dim); display: flex; align-items: center; gap: 7px; }
+      .pd2-lbl::before { content: ""; width: 10px; height: 2px; border-radius: var(--pc-r-hair);
+        background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b)); }
+      .pd2-cap { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .12em; color: var(--ps-dim); }
+      .pd2-src { margin-left: auto; font-size: var(--pc-fs-xs); color: var(--ps-dim); white-space: nowrap; }
+      .pd2-ring { position: relative; flex: 0 0 auto; }
+      .pd2-ring svg { display: block; }
+      .pd2-rv { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+      .pd2-rv b { font-size: var(--pc-fs-3xl); font-weight: 250; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+      .pd2-rv small { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .14em; color: var(--ps-dim); margin-top: 6px; white-space: nowrap; }
+      .pd2-ring.sm .pd2-rv b { font-weight: 200; }
+
+      /* joel */
+      .pd2-jbtn { display: flex; flex-direction: column; gap: 18px; cursor: pointer; min-height: 0; flex: 1;
+        border-radius: var(--pc-r-lg); margin: -6px; padding: 6px; }
+      .pd2-jbtn:hover { background: rgba(255,255,255,.02); }
+      .pd2-jbtn:focus-visible { outline: 2px solid var(--ps-cool); outline-offset: 2px; }
+      .pd2-jtop { display: flex; align-items: center; gap: 24px; }
+      .pd2-naps { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+      .pd2-nap { display: flex; align-items: center; gap: 12px; }
+      .pd2-nap b { display: block; font-size: var(--pc-fs-lg); font-weight: 500; font-variant-numeric: tabular-nums; }
+      .pd2-nap span { display: block; font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 1px; white-space: nowrap; }
+      .pd2-flat { font-size: var(--pc-fs-sm); color: var(--ps-dim); }
+      .pd2-status { font-size: var(--pc-fs-md); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .pd2-last { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 13px 16px;
+        border-radius: var(--pc-r-lg); background: var(--pc-fill-1); }
+      .pd2-last span { display: block; font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .12em;
+        text-transform: uppercase; color: var(--ps-dim); white-space: nowrap; }
+      .pd2-last b { display: block; margin-top: 4px; font-size: var(--pc-fs-xl); font-weight: 300; font-variant-numeric: tabular-nums; }
+      .pd2-verdict { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: var(--pc-r-md);
+        background: linear-gradient(90deg, rgba(86,212,228,.10), rgba(139,124,255,.13)); border: 1px solid rgba(139,124,255,.18);
+        font-size: var(--pc-fs-md); margin-top: auto; }
+      .pd2-verdict b { font-weight: 600; }
+      .pd2-verdict > span:last-child { color: var(--ps-muted); }
+      .pd2-verdict.good .ps-dot { background: var(--ps-good); box-shadow: 0 0 8px rgba(127,216,164,.8); }
+      .pd2-verdict.warn .ps-dot { background: var(--ps-warn); }
+
+      /* climate */
+      .pd2-chero { display: flex; align-items: center; gap: 20px; }
+      .pd2-goal { display: flex; flex-direction: column; gap: 9px; flex: 1; min-width: 0; }
+      .pd2-step { display: flex; align-items: center; gap: 8px; }
+      .pd2-step b { flex: 1; text-align: center; font-size: var(--pc-fs-2xl); font-weight: 300; font-variant-numeric: tabular-nums; }
+      .pd2-step .ps-step { width: 40px; height: 40px; border-radius: var(--pc-r-sm); background: var(--pc-fill-2);
+        display: flex; align-items: center; justify-content: center; }
+      .pd2-segs { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 3px; padding: 3px;
+        border-radius: var(--pc-r-sm); background: var(--pc-fill-1); }
+      .pd2-seg { padding: 7px 4px; font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-muted);
+        border-radius: var(--pc-r-xs); text-align: center; white-space: nowrap; }
+      .pd2-seg.on { background: rgba(86,212,228,.16); color: var(--ps-cool); }
+      .pd2-link { align-self: flex-start; font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-cool); padding: 2px 0; }
+      .pd2-rooms { display: flex; flex-direction: column; min-height: 0; }
+      .pd2-room { display: grid; grid-template-columns: minmax(0, 1fr) 60px 56px 38px; align-items: center; gap: 10px;
+        padding: 6px 0; font-size: var(--pc-fs-md); cursor: pointer; }
+      .pd2-room.hd { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .12em; color: var(--ps-dim); cursor: default; padding-bottom: 2px; }
+      .pd2-room.hd span:nth-child(3), .pd2-room.hd span:nth-child(4) { text-align: right; }
+      .pd2-rn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .pd2-spark { height: 22px; border-radius: 5px; background: rgba(255,255,255,.035); display: block; overflow: hidden; }
+      .pd2-spark svg { width: 100%; height: 100%; display: block; }
+      .pd2-rt { text-align: right; font-size: var(--pc-fs-lg); font-variant-numeric: tabular-nums; }
+      .pd2-rh { text-align: right; color: var(--ps-dim); font-variant-numeric: tabular-nums; }
+      .pd2-room.off .pd2-rn { color: var(--ps-muted); }
+      .pd2-room.off .pd2-rt { color: var(--ps-dim); font-size: var(--pc-fs-sm); }
+      .pd2-room.off .pd2-spark { background: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 3px, transparent 3px 7px); }
+      .pd2-graph .ps-wave { max-height: 240px; }
+
+      /* weather: the phone rail, sized for a column */
+      .pd2-wx .ps-railbox { padding: 8px 6px; }
+      .ps-wxpcp.wet { color: var(--ps-warn); }
+      .pd2-facts { gap: 8px; font-size: var(--pc-fs-md); margin-top: 4px; }
+      .pd2-facts div { display: flex; justify-content: space-between; gap: 12px; }
+      .pd2-facts span { color: var(--ps-muted); }
+      .pd2-facts b { font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+
+      /* side */
+      .pd2-np { display: flex; align-items: center; gap: 13px; padding: 11px; border-radius: var(--pc-r-lg);
+        background: var(--pc-fill-1); cursor: pointer; }
+      .pd2-np + .pd2-np { margin-top: -8px; }
+      .pd2-np.quiet { background: transparent; padding: 4px 0; }
+      .pd2-art { width: 46px; height: 46px; flex: 0 0 46px; border-radius: var(--pc-r-sm); overflow: hidden;
+        background: var(--pc-fill-2); display: flex; align-items: center; justify-content: center; color: var(--ps-dim); }
+      .pd2-art.app img, .pd2-art.app svg { width: 70%; height: 70%; object-fit: contain; }
+      .pd2-npt { font-size: var(--pc-fs-lg); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .pd2-nps { font-size: var(--pc-fs-sm); color: var(--ps-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .pd2-pill { padding: 9px 12px; border-radius: var(--pc-r-sm); background: var(--pc-fill-2); font-size: var(--pc-fs-sm); font-weight: 650; }
+      .pd2-ahead { display: flex; flex-direction: column; gap: 10px; }
+      .pd2-aday { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 10px; }
+      .pd2-aday > span { font-size: var(--pc-fs-xs); font-weight: 700; letter-spacing: .06em; color: var(--ps-muted); padding-top: 2px; }
+      .pd2-aday > span.today { color: var(--ps-text); }
+      .pd2-ev { display: flex; gap: 8px; align-items: baseline; font-size: var(--pc-fs-sm); line-height: 1.35; }
+      .pd2-ev + .pd2-ev { margin-top: 4px; }
+      .pd2-ev i { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; transform: translateY(-1px); }
+      .pd2-ev em { font-style: normal; color: var(--ps-dim); width: 54px; flex: 0 0 54px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .pd2-ev span { min-width: 0; }
+      .pd2-ev.none { color: var(--ps-dim); }
+      .pd2-house { display: flex; flex-direction: column; margin: -6px -12px 0; }
+      .pd2-hrow { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--pc-r-sm); text-align: left; min-width: 0; }
+      button.pd2-hrow:hover { background: var(--pc-fill-1); }
+      .pd2-hrow b { font-size: var(--pc-fs-md); font-weight: 600; width: 76px; flex: 0 0 76px; white-space: nowrap; }
+      .pd2-hrow > span:last-child { font-size: var(--pc-fs-sm); color: var(--ps-muted); flex: 1; min-width: 0;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+      .pd2-hrow > span.warn { color: var(--ps-warn); }
+      .pd2-hrow > span.bad { color: var(--ps-bad); }
+      .pd2-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: rgba(255,255,255,.25); }
+      .pd2-dot.good { background: var(--ps-good); }
+      .pd2-dot.warn { background: var(--ps-warn); }
+      .pd2-dot.bad { background: var(--ps-bad); }
+      .pd2-dot.cool { background: var(--ps-cool); }
+      .pd2-dot.lit { background: #ffc27d; box-shadow: 0 0 8px rgba(255,178,102,.7); }
+      .pd2-dot.aur { background: var(--ps-aur-b); }
+
+      /* the drawer: the shell's sheet, moved to the right edge at full stage
+         height. It slides over the side column; the scrim over the rest of the
+         stage is what a click outside it lands on. */
+      .ps-scrim { background: rgba(4,5,11,.40); backdrop-filter: none; }
+      .ps-sheet, .ps-sheet.tall {
+        left: auto; right: 24px; top: calc(var(--pd-off) + 24px); bottom: 24px; width: 460px; max-width: calc(100vw - 48px);
+        max-height: none; border-radius: 28px; padding: 20px 22px;
+        background: linear-gradient(180deg, rgba(18,22,38,.86), rgba(10,12,22,.93));
+        box-shadow: -30px 0 80px -20px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.09);
+      }
+      .ps-sheeth { margin-bottom: 12px; }
+      .pd2-jsheet .ps-sect { padding: 0; }
+      .pd2-jsheet .ps-sect > .ps-sh { display: none; }
+
+      /* the server, as tabs across the top of the panel instead of a dock */
+      .pd2-mode .ps-stat { padding: 22px 30px 6px; }
+      .pd2-mode .ps-dockwrap { position: static; padding: 0 26px 10px; }
+      .pd2-mode .ps-dockwrap::before, .pd2-mode .ps-mini { display: none; }
+      .pd2-mode .ps-dock { justify-content: flex-start; gap: 6px; background: none; border: 0; box-shadow: none;
+        backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; }
+      .pd2-mode .ps-db { flex: 0 0 auto; flex-direction: row; gap: 8px; padding: 9px 14px; border-radius: var(--pc-r-sm); }
+      .pd2-mode .ps-db span { font-size: var(--pc-fs-sm); }
+      .pd2-mode .ps-db.on { background: rgba(139,124,255,.14); }
+      .pd2-mode .ps-db.on::after { display: none; }
+      .pd2-mode .ps-db.home { display: none; }
+      .pd2-mode .ps-col { flex: 1; min-height: 0; overflow-y: auto; background: none; border: 0; box-shadow: none;
+        backdrop-filter: none; -webkit-backdrop-filter: none; border-radius: 0; padding: 0 16px 16px; }
+      .pd2-mode .ps-col::before { display: none; }
+      .pd2-mode .ps-sypage { max-width: 1100px; }
+    `;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const PD_STYLES = `
       :host {
         ${PC_TOKENS}
@@ -24728,6 +25643,7 @@ pcDefine("purdy-devices-card", PurdyDevicesCard);
 pcDefine("purdy-music-card", PurdyMusicCard);
 pcDefine("purdy-shell-card", PurdyShellCard);
 pcDefine("purdy-desk-card", PurdyDeskCard);
+pcDefine("purdy-desk2-card", PurdyDesk2Card);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -24755,7 +25671,8 @@ window.customCards.push(
   { type: "purdy-devices-card", name: "Purdy Devices Card", description: "Collapsible device groups with summary lines; faults stay visible while collapsed.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-music-card", name: "Purdy Music Card", description: "Music Assistant now-playing with transport, room switching and playlist presets. Set compact: true for the self-hiding home-screen headline.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-shell-card", name: "Purdy Shell Card", description: "The whole phone view as one element: gradient ground, one glass column of expanding sections, and a fixed dock with a now-playing bar.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
-  { type: "purdy-desk-card", name: "Purdy Desk Card", description: "The whole desktop view as one element: one glass sheet on one gradient, a status strip, a stage of panels that expand sideways, and a dock. Same section config as the shell.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
+  { type: "purdy-desk-card", name: "Purdy Desk Card", description: "The whole desktop view as one element: one glass sheet on one gradient, a status strip, a stage of panels that expand sideways, and a dock. Same section config as the shell.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-desk2-card", name: "Purdy Desk 2 Card", description: "The desktop as a subclass of the shell: a rail, a one-line header, a stage of columns (Joel, Climate, Weather, Now playing / Ahead / House) and a right-hand drawer hosting the phone's own sheets. Same config as the shell plus stage:.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
 );
 
 console.info(

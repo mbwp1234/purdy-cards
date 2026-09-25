@@ -2360,7 +2360,12 @@ Object.assign(PurdyShellCard.prototype, {
     return `<div class="ps-jgap"><i></i><span>awake ${psEsc(psHM(mins))}${
       note ? ` · ${psEsc(note)}` : ""}</span><i></i></div>`;
   },
-  _secNursery(sec) {
+  /* Everything the nursery face KNOWS, apart from how it is drawn.
+     Lifted out of _secNursery so the desk renders the same figures from the
+     same derivation: a second copy of the chip or the ring scale is how the
+     phone and the desk ended up disagreeing about one night (10h 45m against
+     11h 11m) before. Pure reads — no markup here. */
+  _nurseryModel(sec) {
     const h = this._hass;
     const playing = pcState(h, sec.hatch) === "playing";
     const doorOpen = pcState(h, sec.door) === "on";
@@ -2510,6 +2515,16 @@ Object.assign(PurdyShellCard.prototype, {
        all — the exact shape the sock taught us to avoid. */
     const nightNoData = !loaded || !nightSession;
     const noData = !loaded || (!nightSession && !todayNaps.length);
+    /* The Put down → left him dialect, one copy for every surface. */
+    const statusL = live ? `Put down ${psClock(live.from)}` : "";
+    const statusR = live
+      ? (live.hadExit ? `left him ${psClock(live.settledAt)}` : "still settling…")
+      : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
+    return { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR };
+  },
+
+  _secNursery(sec) {
+    const { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR } = this._nurseryModel(sec);
     const ring = this._ringSvg(120, 9,
       [[nightMins / maxMins, "url(#ps-aur)"]],
       avg ? Math.min(1, avg / maxMins) : null);
@@ -2548,10 +2563,6 @@ Object.assign(PurdyShellCard.prototype, {
        "settled" are the pair a stranger cannot tell apart, and fixing them only
        where there was room to explain them would leave the collapsed face, the
        face that is actually read every day, still speaking the old dialect. */
-    const statusL = live ? `Put down ${psClock(live.from)}` : "";
-    const statusR = live
-      ? (live.hadExit ? `left him ${psClock(live.settledAt)}` : "still settling…")
-      : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
 
     /* His own bands, and the meters that read against them. Built here rather
        than inside the expanded block because a renderer that is only called

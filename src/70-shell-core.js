@@ -775,14 +775,20 @@ class PurdyShellCard extends PcBaseCard {
     this._hostedKey = key;
   }
 
-  _render() {
-    if (!this._hass || !this._config) return;
+  /* _renderPre: THE PREAMBLE EVERY RENDER PATH SHARES.
+   *
+   * The phone and the desk (purdy-desk2-card, a subclass) lay out the same
+   * house differently, but what happens BEFORE layout must be one copy: the
+   * fault list, the notification-log sync, the sky. The old desk carried its
+   * own preamble and it drifted — it threw inside _logItems and so had never
+   * once synced the log. Returns null when there is nothing to paint (no hass
+   * yet, or a drag in flight). */
+  _renderPre() {
+    if (!this._hass || !this._config) return null;
     /* Repainting mid-drag would rip the slider out from under the thumb. */
-    if (this._dragging) return;
+    if (this._dragging) return null;
     if (!this._mounted) this._mount();
-    const c = this._config;
     const now = new Date();
-    const who = this._who();
     const raised = this._raised();
     if (this._config.log_to) this._syncLog(raised);
     const faults = this._faults();
@@ -793,6 +799,15 @@ class PurdyShellCard extends PcBaseCard {
        thing that changes. Modes get the day sky always: cooler, more
        instrument-panel. */
     this._paintSky(this._mode ? "sky-day" : this._skyBand(now.getHours()));
+    return { now, faults };
+  }
+
+  _render() {
+    const pre = this._renderPre();
+    if (!pre) return;
+    const { now, faults } = pre;
+    const c = this._config;
+    const who = this._who();
 
     /* Systems mode owns the same four slots — header, column, sheet and dock —
        so it branches here rather than being a section. Everything above this
