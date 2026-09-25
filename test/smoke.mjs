@@ -10309,5 +10309,200 @@ check('the season entities are watched', (() => {
   return w.includes('select.gttc_season_mode') && w.includes('binary_sensor.gttc_season_switch_recommended');
 })());
 
+
+/* ===========================================================================
+   purdy-desk2-card — the desk as a SUBCLASS of the shell
+   =========================================================================== */
+const D2 = defined['purdy-desk2-card'];
+const d2Src = fs.readFileSync(new URL('../src/86-desk2-core.js', import.meta.url), 'utf8');
+const d2StyleSrc = fs.readFileSync(new URL('../src/87-desk2-styles.js', import.meta.url), 'utf8');
+check('purdy-desk2-card defined', !!D2);
+check('purdy-desk2-card registered in customCards', window.customCards.some((c) => c.type === 'purdy-desk2-card'));
+check('desk2 IS a shell — a subclass, not a sibling that borrows', D2 && D2.prototype instanceof SH);
+check('desk2 carries no borrow list', !/PD_BORROW/.test(d2Src));
+
+/* The preamble is ONE copy. Both renders call it, and its marker appears
+   exactly once — a string patch that splices a second copy fails here. */
+check('_renderPre is called by the shell render and the desk2 render', (() => {
+  const core = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+  const shR = core.slice(core.indexOf('  _render() {'), core.indexOf('  _miniHtml() {'));
+  const dkR = d2Src.slice(d2Src.indexOf('  _render() {'), d2Src.indexOf('  _sheetHtml(faults) {'));
+  return /this\._renderPre\(\)/.test(shR) && /this\._renderPre\(\)/.test(dkR);
+})());
+check('the _renderPre marker comment appears exactly once',
+  (src.match(/_renderPre: THE PREAMBLE EVERY RENDER PATH SHARES/g) || []).length === 1);
+check('the nursery figures come from one model on both surfaces',
+  /_secNursery\(sec\) \{\s*const \{[^}]*\} = this\._nurseryModel\(sec\);/.test(src) &&
+  /this\._nurseryModel\(sec\)/.test(d2Src));
+
+/* The two-places rule, for the stage: the slot accept-list and the side
+   dispatch must name the same set. */
+check('desk2 side accept-list and dispatch name the same set', (() => {
+  const stageDecl = (/const PD2_STAGE = \{([\s\S]*?)\};/.exec(d2Src) || [])[1] || '';
+  const side = (/side: \[([^\]]*)\]/.exec(stageDecl) || [])[1] || '';
+  const accepted = (side.match(/"([a-z]+)"/g) || []).map((x) => x.replace(/"/g, '')).sort();
+  const disp = (/_pd2Slot\(sec\) \{\s*return \{([\s\S]*?)\}\[sec\.type\]\(\);/.exec(d2Src) || [])[1] || '';
+  const rendered = (disp.match(/^\s*([a-z]+):/gm) || []).map((x) => x.trim().replace(':', '')).sort();
+  return accepted.length === 3 && accepted.join(',') === rendered.join(',');
+})());
+const d2Base = () => ({
+  weather: 'weather.w', weather_temp: 'sensor.out',
+  dock: [
+    { icon: 'mdi:home', name: 'Home', active: true, link: '/lovelace/phone2' },
+    { icon: 'mdi:lightbulb', name: 'Lights', sheet: 'lights' },
+    { icon: 'mdi:play', name: 'Media', sheet: 'media' },
+    { icon: 'mdi:robot-vacuum', name: 'Jeeves', sheet: 'crew' },
+    { icon: 'mdi:server', name: 'NAS', mode: 'systems' },
+    { icon: 'mdi:bell', name: 'Alerts', alert_when_faults: true, sheet: 'notifications' },
+  ],
+  sheets: { media: { title: 'Media', card: { type: 'custom:purdy-remote-card', tvs: [], apps: [] } } },
+  now_playing: { players: [{ entity: 'media_player.k', name: 'Kitchen' }] },
+  sections: [
+    { type: 'nursery', key: 'joel', title: 'Joel', hatch: 'media_player.h', door: 'binary_sensor.d' },
+    { type: 'climate', key: 'clim', title: 'Climate', thermostat: 'climate.t',
+      rooms: [{ name: 'Living Room', temp: 'sensor.lr' }, { name: 'Kitchen', temp: 'sensor.kt' }] },
+    { type: 'weather', key: 'wx', title: 'Weather', sensor: 'sensor.out', forecast: 'weather.w' },
+    { type: 'nowplaying', key: 'now', title: 'Now playing', tvs: [] },
+    { type: 'crew', key: 'crew', title: 'Jeeves', sheet: 'crew', sheet_only: true,
+      vacuum: { entity: 'vacuum.j', name: 'Jeeves' }, washer: { entity: 'input_select.w', name: 'Washer' } },
+    { type: 'lights', key: 'lights', sheet_only: true, lights: [{ entity: 'light.a', name: 'Lamp' }] },
+  ],
+  stage: { joel: 'joel', climate: 'clim', weather: 'wx', side: ['now', 'crew'] },
+});
+check('desk2 accepts the phone config plus stage:', (() => {
+  try { new D2().setConfig(d2Base()); return true; } catch (e) { console.log('    ' + e.message); return false; }
+})());
+check('desk2 rejects a stage slot drawing the wrong type BY NAME', (() => {
+  const c = d2Base(); c.stage.side = ['joel'];
+  try { new D2().setConfig(c); return false; } catch (e) { return /cannot draw a 'nursery'/.test(e.message); }
+})());
+check('desk2 rejects an unknown stage slot', (() => {
+  const c = d2Base(); c.stage.dock = 'now';
+  try { new D2().setConfig(c); return false; } catch (e) { return /unknown stage slot 'dock'/.test(e.message); }
+})());
+check('desk2 rejects a stage key no section carries', (() => {
+  const c = d2Base(); c.stage.climate = 'nope';
+  try { new D2().setConfig(c); return false; } catch (e) { return /not a section key/.test(e.message); }
+})());
+
+const d2Hass = () => ({
+  states: {
+    'weather.w': { state: 'rainy', attributes: { temperature: 60 } },
+    'sensor.out': { state: '58.2', attributes: {} },
+    'climate.t': { state: 'cool', attributes: { current_temperature: 73, temperature: 70, hvac_action: 'idle' } },
+    'sensor.lr': { state: '71.4', attributes: {} },
+    'sensor.kt': { state: 'unavailable', attributes: {} },
+    'media_player.h': { state: 'idle', attributes: {} },
+    'binary_sensor.d': { state: 'off', attributes: {} },
+    'media_player.k': { state: 'idle', attributes: {} },
+    'vacuum.j': { state: 'docked', attributes: {} },
+    'input_select.w': { state: 'Off', attributes: {} },
+    'light.a': { state: 'on', attributes: { brightness: 128 } },
+  },
+  user: { id: 'u1', name: 'Brian' },
+  callService() {},
+});
+const d2 = new D2();
+d2.setConfig(d2Base());
+d2._hass = d2Hass();
+d2._testNow = new Date(2026, 8, 23, 15, 0).getTime();
+
+/* Zero vs missing, at the new surface. */
+const d2clim = d2._dkClimate(d2._pd2Sec('clim'));
+check('desk2: an offline room reads "offline", never a number', /pd2-room off[\s\S]*?Kitchen[\s\S]*?offline/.test(d2clim));
+check('desk2: an offline room draws no sparkline', !/pd2-room off[\s\S]*?<polyline[\s\S]*?Kitchen/.test(d2clim) &&
+  /class="pd2-spark"><\/span>\s*<span class="pd2-rt">offline/.test(d2clim));
+check('desk2: the climate chip is a comparison', /3° over goal/.test(d2clim));
+d2._hass.states['climate.t'].attributes.current_temperature = 70.2;
+check('desk2: at goal the climate draws no chip', !/goal<\/span>/.test(d2._dkClimate(d2._pd2Sec('clim'))) &&
+  !/ps-chip/.test(d2._dkClimate(d2._pd2Sec('clim')).split('pd2-chero')[0]));
+d2._nursery = null;
+const d2j0 = d2._dkJoel(d2._pd2Sec('joel'));
+check('desk2: a night not yet loaded reads — / LOADING, never 0m', /ps-nodata">—<\/b><small>LOADING/.test(d2j0));
+d2._nursery = { hatch: [], door: [] };
+const d2j1 = d2._dkJoel(d2._pd2Sec('joel'));
+check('desk2: no night yet reads — / NO NIGHT YET', /ps-nodata">—<\/b><small>NO NIGHT YET/.test(d2j1));
+check('desk2: no nap slot is drawn for a nap that has not happened', !/pd2-nap"/.test(d2j1));
+check('desk2: no band, no verdict — dropped, not hedged', !/pd2-verdict/.test(d2j1));
+check('desk2: the Joel column is ONE button onto the Joel sheet', /data-pd2joel="1"/.test(d2j1) &&
+  !/<button/.test(d2j1));
+check('desk2: the Joel chip never repeats the status line', (() => {
+  const chip = (/<span class="ps-chip[^"]*">([^<]*)</.exec(d2j1) || [])[1];
+  const line = (/<div class="pd2-status">([^<]*)</.exec(d2j1) || [])[1];
+  return !chip || !line || line.indexOf(chip) < 0;
+})());
+
+/* Routes: every door into a sheet resolves to the SAME key, through the
+   shell's own handlers. */
+const d2rail = d2._dkRail([]);
+check('desk2 rail: Home closes rather than navigating to the phone', /data-pd2home="1"/.test(d2rail) &&
+  !/data-dock="0"/.test(d2rail));
+check('desk2 rail: every other entry routes through the shell dock handler by config index',
+  [1, 2, 3, 4, 5].every((i) => new RegExp(`data-dock="${i}"`).test(d2rail)));
+check('desk2 rail: Home is the active slot when nothing is open', /pd2-rb on\s*"[^>]*data-pd2home/.test(d2rail));
+d2._sheet = 'lights';
+check('desk2 rail: an open drawer lights its own slot', /pd2-rb on\s*"[^>]*data-dock="1"/.test(d2._dkRail([])));
+d2._sheet = null;
+const d2house = d2._dkHouse(d2._pd2Sec('crew'));
+check('desk2 House: the Lights row opens the same entry the rail does', /data-dock="1"[^>]*>[\s\S]*?<b>Lights<\/b>/.test(d2house));
+check('desk2 House: the Jeeves and Washer rows open the crew drawer',
+  /data-sheet="crew"[^>]*>[\s\S]*?<b>Jeeves<\/b>/.test(d2house) && /data-sheet="crew"[^>]*>[\s\S]*?<b>Washer<\/b>/.test(d2house));
+check('desk2 House: the Jeeves amber comes from the crew rules, not new ones',
+  /this\._crewNeeds\(sec\)/.test(d2Src) && !/wear_below|drawer_above|water_above/.test(d2Src));
+check('desk2 Now playing routes are DERIVED (_playTarget), never read from config',
+  /_playTarget\("listen"\)/.test(d2Src) && /_playTarget\("watch"\)/.test(d2Src) && !/remote_sheet/.test(d2Src));
+check('desk2 Now playing with the house quiet still opens Media', /data-sheet="media" data-face="listen"/.test(d2._dkNow(d2._pd2Sec('now'))));
+check('desk2: the header fault chip is the shell alert chip', /id="ps-alert"/.test(d2._dkHead(new Date(), [])));
+d2._sheet = 'nope';
+check('desk2: an unknown sheet key renders nothing and does not throw', (() => {
+  try { return d2._sheetHtml([]) === ''; } catch (e) { return false; }
+})());
+d2._sheet = 'joel';
+check('desk2: the Joel sheet renders the phone nursery section open', /ps-sect open/.test(d2._sheetHtml([])) &&
+  /ps-xtra/.test(d2._sheetHtml([])));
+d2._sheet = null;
+
+/* A hidden rail entry must not shift its neighbours. */
+check('desk2 rail: a hidden entry does not renumber the ones after it', (() => {
+  const c = d2Base(); c.dock[2].visible_to = ['someone-else'];
+  const x = new D2(); x.setConfig(c); x._hass = d2Hass();
+  const r = x._dkRail([]);
+  return !/data-dock="2"/.test(r) && /data-dock="3"/.test(r) && /data-dock="5"/.test(r);
+})());
+
+/* A whole render against the mini-DOM: every slot written, nothing thrown. */
+check('desk2 renders every slot against a mini-DOM without throwing', (() => {
+  const saved = globalThis.document;
+  globalThis.document = { createElement: () => new MiniNode() };
+  const slots = {};
+  const x = new D2(); x.setConfig(d2Base()); x._hass = d2Hass(); x._nursery = { hatch: [], door: [] };
+  x.shadowRoot = {
+    getElementById: (id) => (slots[id] = slots[id] || new MiniNode()),
+    querySelector: () => null, querySelectorAll: () => [],
+  };
+  x._mounted = true;
+  let ok = true;
+  try { x._render(); } catch (e) { console.log('    ' + e.stack); ok = false; }
+  globalThis.document = saved;
+  return ok && /pd2-rb/.test(slots['pd2-rail']._html) && /Good/.test(slots['pd2-head']._html) &&
+    /pd2-jbtn/.test(slots['pd2-joel']._html) && /pd2-room/.test(slots['pd2-clim']._html) &&
+    /House/.test(slots['pd2-side']._html);
+})());
+
+/* Styles: pick a step, and no backtick anywhere but the two that open and
+   close the template. */
+check('desk2 styles introduce no loose font-size', !/font-size:\s*\d/.test(d2StyleSrc));
+check('the desk2 stylesheet carries exactly two backticks', (d2StyleSrc.match(/`/g) || []).length === 2);
+check('desk2 appends to the shell sheet rather than re-ordering it',
+  /return PurdyShellCard\.styles \+ PD2_STYLES;/.test(d2Src));
+check('desk2 keeps the shell ids its inherited methods look up',
+  ['ps-ground', 'ps-sheetslot', 'ps-stat', 'ps-col', 'ps-dockwrap'].every((id) => d2Src.includes(`id="${id}"`)));
+check('desk2 sizes to the viewport less the configured offset', /height: calc\(100dvh - var\(--pd-off\)\)/.test(d2StyleSrc));
+check('desk2 breakpoints are container queries, not media queries',
+  /@container pd2 \(max-width: 1366px\)/.test(d2StyleSrc) && /@container pd2 \(min-width: 1800px\)/.test(d2StyleSrc) &&
+  !/@media/.test(d2StyleSrc));
+check('Esc closes the drawer and the listener is removed on disconnect',
+  /window\.addEventListener\("keydown", this\._pd2Key\)/.test(d2Src) && /window\.removeEventListener\("keydown", this\._pd2Key\)/.test(d2Src));
+
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);

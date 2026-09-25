@@ -1,0 +1,30 @@
+{
+  "_note": "Copy to desk2.json with real calendar ids. Renders the phone config through purdy-desk2-card: stage: names section keys, log_to is dropped (one surface logs \u2014 the phone), and the calendar block the phone does not carry is appended.",
+  "viewport_offset": 16,
+  "log_to": null,
+  "stage": {
+    "joel": "joel",
+    "climate": "clim",
+    "weather": "wx",
+    "side": [
+      "now",
+      "ahead",
+      "crew"
+    ]
+  },
+  "$appendSections": [
+    {
+      "type": "calendar",
+      "key": "ahead",
+      "title": "Ahead",
+      "days": 5,
+      "sheet_only": true,
+      "entities": [
+        {
+          "entity": "calendar.<shared-calendar>",
+          "color": "#BB1C77"
+        }
+      ]
+    }
+  ]
+}

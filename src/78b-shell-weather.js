@@ -597,7 +597,7 @@ Object.assign(PurdyShellCard.prototype, {
           <span class="ps-wxhi">${this._wxDeg(d.hi)}</span>
           ${this._wxCapsule(d.lo, d.hi, dom, mark)}
           <span class="ps-wxlo">${this._wxDeg(d.lo)}</span>
-          <span class="ps-wxpcp${pop ? "" : " none"}">${pop || "0%"}</span>
+          <span class="ps-wxpcp${pop ? "" : " none"}${d.pop != null && d.pop >= 50 ? " wet" : ""}">${pop || "0%"}</span>
           <span class="ps-wxdw">${psEsc(this._wxDow(d.ts, d.today))}</span>
         </div>`;
     }).join("");
