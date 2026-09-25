@@ -19,7 +19,7 @@
  * No credentials live here: HOMEASSISTANT_URL / HOMEASSISTANT_TOKEN are read
  * from a .env found by walking up from cwd, and are never served to the page.
  *
- *   node dev/shoot/server.mjs [--port 8099] [--bundle path] [--env path]
+ *   node dev/shoot/server.mjs [--port 8099] [--bundle path] [--env path] [--url https://…]
  */
 import fs from "node:fs";
 import http from "node:http";
@@ -59,7 +59,10 @@ for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
   const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
   if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, "");
 }
-const HA = (env.HOMEASSISTANT_URL || "").replace(/\/+$/, "");
+/* `--url` overrides the address only. `homeassistant.local` resolves on the
+   home LAN and nowhere else, so away from home the harness needs a reachable
+   URL — and the token stays in the .env rather than on a command line. */
+const HA = (arg("url", null) || env.HOMEASSISTANT_URL || "").replace(/\/+$/, "");
 const TOKEN = env.HOMEASSISTANT_TOKEN;
 if (!HA || !TOKEN) { console.error("env is missing HOMEASSISTANT_URL or HOMEASSISTANT_TOKEN"); process.exit(1); }
 
