@@ -263,7 +263,7 @@ class PurdyDesk2Card extends PurdyShellCard {
       </div>
       <div class="pd2-ppl">${this._hdrPeople()}</div>
       <div class="pd2-hr">
-        ${wTemp == null ? "" : `<div class="pd2-wx" data-info="${psEsc(c.weather_temp || c.weather)}">
+        ${wTemp == null ? "" : `<div class="pd2-hwx" data-info="${psEsc(c.weather_temp || c.weather)}">
           <ha-icon icon="${pcWxIcon(wState)}"></ha-icon>
           <div><b>${Math.round(wTemp)}°</b><span>${psEsc(pcWxText(wState) || "")}${
             feels == null ? "" : ` · feels ${Math.round(feels)}°`}</span></div></div>`}
@@ -339,14 +339,21 @@ class PurdyDesk2Card extends PurdyShellCard {
           <span>· ${psEsc(how)}</span></div>`;
     }
 
+    /* The chip carries only what the column does not already draw. During a
+       NAP the phone's chip reads "Asleep 4m" because its ring is showing last
+       night — but here the nap row beside the ring says "4m · now", so the
+       chip would be the line beside it restated (the rule, a sixth time). A
+       bare "Awake" with nothing to add is dropped for the same reason. */
+    const chipOk = !!m.chipTxt && m.chipTxt !== "Awake" && !(live && !live.night);
+
     return `<div class="pd2-jbtn" data-pd2joel="1" role="button" tabindex="0" aria-label="Open Joel">
         <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Joel")}</span>
-          ${m.chipTxt && !(m.chipTxt === "Awake") ? `<span class="ps-chip ${m.chipCls}">${psEsc(m.chipTxt)}</span>` : ""}</div>
+          ${chipOk ? `<span class="ps-chip ${m.chipCls}">${psEsc(m.chipTxt)}</span>` : ""}</div>
         <div class="pd2-jtop">
           <div class="pd2-ring">${ring}
             <div class="pd2-rv">${nightNoData
               ? `<b class="ps-nodata">—</b><small>${loaded ? "NO NIGHT YET" : "LOADING"}</small>`
-              : `<b>${psHM(nightMins)}</b><small>${nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
+              : `<b>${this._dkHM(nightMins)}</b><small>${nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
           </div>
           <div class="pd2-naps">${naps || `<span class="pd2-flat">${psEsc(napsEmpty)}</span>`}</div>
         </div>
@@ -356,6 +363,12 @@ class PurdyDesk2Card extends PurdyShellCard {
         ${lastRow}
         ${verdict}
       </div>`;
+  }
+
+  /* "11h 32m" at the hero step does not fit inside the ring it sits in; the
+     digits carry the number, so the units step down rather than the figure. */
+  _dkHM(mins) {
+    return psEsc(psHM(mins)).replace(/(\d+)([hm])/g, "$1<u>$2</u>");
   }
 
   /* ----------------------------------------------------------- climate --- */
@@ -448,7 +461,7 @@ class PurdyDesk2Card extends PurdyShellCard {
     const facts = this._wxDetailFacts(sec);
     return `
       <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Weather")}</span>
-        <span class="pd2-src">${psEsc(this._wxSrcName(sec))} · high / low</span></div>
+        <span class="pd2-src">Forecast · high / low</span></div>
       ${this._wxForecastRail(sec)}
       ${facts ? `<div class="pd2-wide pd2-facts">${facts}</div>` : ""}`;
   }
@@ -465,7 +478,10 @@ class PurdyDesk2Card extends PurdyShellCard {
     const fa = sec.forecast && h.states[sec.forecast] ? h.states[sec.forecast].attributes : {};
     const bits = [fa.dew_point != null ? `${Math.round(fa.dew_point)}°` : null,
       fa.wind_speed != null ? `${Math.round(fa.wind_speed)} ${fa.wind_speed_unit || "mph"}` : null].filter(Boolean);
-    if (bits.length) rows.push(["Dew point · wind", bits.join(" · ")]);
+    /* The label names only what came back: NWS publishes wind and no dew
+       point, and "Dew point · wind — 6 mph" reads as a dew point of 6. */
+    if (bits.length) rows.push([[fa.dew_point != null ? "Dew point" : null, fa.wind_speed != null ? "wind" : null]
+      .filter(Boolean).join(" · ").replace(/^w/, (x) => (fa.dew_point != null ? x : "W")), bits.join(" · ")]);
     const sun = sec.sun && h.states[sec.sun];
     const rise = sun && sun.attributes.next_rising;
     if (rise) rows.push(["Sunrise", new Date(rise).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })]);

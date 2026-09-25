@@ -70,10 +70,10 @@ const PD2_STYLES = `
       .pd2-date i, .pd2-status i { font-style: normal; color: var(--ps-dim); margin: 0 6px; }
       .pd2-ppl .ps-pav { gap: 12px; }
       .pd2-hr { margin-left: auto; display: flex; align-items: center; gap: 16px; }
-      .pd2-wx { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-      .pd2-wx ha-icon { --mdc-icon-size: 30px; color: #9fb3c6; }
-      .pd2-wx b { display: block; font-size: var(--pc-fs-3xl); font-weight: 200; letter-spacing: -.03em; color: #BDEBF2; line-height: 1; font-variant-numeric: tabular-nums; }
-      .pd2-wx span { display: block; margin-top: 4px; font-size: var(--pc-fs-micro); font-weight: 650; letter-spacing: .1em;
+      .pd2-hwx { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+      .pd2-hwx ha-icon { --mdc-icon-size: 30px; color: #9fb3c6; }
+      .pd2-hwx b { display: block; font-size: var(--pc-fs-3xl); font-weight: 200; letter-spacing: -.03em; color: #BDEBF2; line-height: 1; font-variant-numeric: tabular-nums; }
+      .pd2-hwx span { display: block; margin-top: 4px; font-size: var(--pc-fs-micro); font-weight: 650; letter-spacing: .1em;
         text-transform: uppercase; color: var(--ps-dim); white-space: nowrap; }
 
       /* the stage */
@@ -95,12 +95,14 @@ const PD2_STYLES = `
       @container pd2 (max-width: 1366px) {
         .pd2-stage { grid-template-columns: minmax(0, 1.2fr) 1px minmax(0, 1fr) 1px minmax(0, .8fr); }
         .pd2-col { padding: 18px 22px; gap: 13px; }
-        .pd2-ahead, .pd2-ahead + .pd2-hhair { display: none; }
+        .pd2-side .pd2-ahead, .pd2-side .pd2-ahead + .pd2-hhair { display: none; }
+        .pd2-col.pd2-wx .ps-wxi { display: none; }
+        .pd2-col.pd2-wx .ps-wxday { gap: 3px; }
         .pd2-hl h1 { font-size: var(--pc-fs-2xl); }
         .pd2-room { padding: 4px 0; }
       }
-      .compact-only { display: none; }
-      @container pd2 (max-width: 1366px) { .compact-only { display: flex; } }
+      .pd2-hrow.compact-only { display: none; }
+      @container pd2 (max-width: 1366px) { .pd2-hrow.compact-only { display: flex; } }
       /* wide: 1800 and over — weather gets its own column */
       @container pd2 (min-width: 1800px) {
         .pd2-stage { grid-template-columns: minmax(0, 1.25fr) 1px minmax(0, 1fr) 1px minmax(0, 1fr) 1px minmax(0, .9fr);
@@ -108,6 +110,8 @@ const PD2_STYLES = `
         .pd2-vhair.h3 { display: block; }
         .pd2-col.pd2-wx { border-top: 0; padding-top: 22px; }
         .pd2-wide { display: flex; flex-direction: column; }
+        .pd2-col.pd2-wx .ps-railbox { flex: 0 0 auto; }
+        .pd2-col.pd2-wx .ps-wxtrack { flex: 0 0 auto; height: 240px; }
       }
 
       /* labels */
@@ -125,6 +129,8 @@ const PD2_STYLES = `
       .pd2-rv b { font-size: var(--pc-fs-3xl); font-weight: 250; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
       .pd2-rv small { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .14em; color: var(--ps-dim); margin-top: 6px; white-space: nowrap; }
       .pd2-ring.sm .pd2-rv b { font-weight: 200; }
+      .pd2-rv b u { text-decoration: none; font-size: var(--pc-fs-xl); font-weight: 400; margin: 0 1px; color: var(--ps-muted); }
+      .pd2-ppl .ps-pv { transform: scale(1.35); margin: 0 4px; }
 
       /* joel */
       .pd2-jbtn { display: flex; flex-direction: column; gap: 18px; cursor: pointer; min-height: 0; flex: 1;
@@ -180,7 +186,12 @@ const PD2_STYLES = `
       .pd2-graph .ps-wave { max-height: 240px; }
 
       /* weather: the phone rail, sized for a column */
-      .pd2-wx .ps-railbox { padding: 8px 6px; }
+      /* The phone's track is a fixed 116px; here the column's own height
+         decides, so the rail fills what the row leaves and never clips. */
+      .pd2-col.pd2-wx .ps-railbox { padding: 8px 6px; flex: 1 1 auto; min-height: 0; display: flex; }
+      .pd2-col.pd2-wx .ps-wxrail { flex: 1; min-height: 0; }
+      .pd2-col.pd2-wx .ps-wxday { min-height: 0; }
+      .pd2-col.pd2-wx .ps-wxtrack { flex: 1 1 auto; height: auto; min-height: 36px; max-height: 260px; }
       .ps-wxpcp.wet { color: var(--ps-warn); }
       .pd2-facts { gap: 8px; font-size: var(--pc-fs-md); margin-top: 4px; }
       .pd2-facts div { display: flex; justify-content: space-between; gap: 12px; }
@@ -212,8 +223,13 @@ const PD2_STYLES = `
       .pd2-hrow { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--pc-r-sm); text-align: left; min-width: 0; }
       button.pd2-hrow:hover { background: var(--pc-fill-1); }
       .pd2-hrow b { font-size: var(--pc-fs-md); font-weight: 600; width: 76px; flex: 0 0 76px; white-space: nowrap; }
+      /* Wraps to a second line rather than ellipsising: a truncated detail is a
+         MISSING detail ("F1 RACE…" said nothing about which race). */
+      .pd2-hrow { align-items: flex-start; }
+      .pd2-hrow .pd2-dot { margin-top: 6px; }
       .pd2-hrow > span:last-child { font-size: var(--pc-fs-sm); color: var(--ps-muted); flex: 1; min-width: 0;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+        line-height: 1.4; padding-top: 1px; font-variant-numeric: tabular-nums;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
       .pd2-hrow > span.warn { color: var(--ps-warn); }
       .pd2-hrow > span.bad { color: var(--ps-bad); }
       .pd2-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: rgba(255,255,255,.25); }
