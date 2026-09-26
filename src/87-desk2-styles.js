@@ -114,6 +114,42 @@ const PD2_STYLES = `
         .pd2-col.pd2-wx .ps-wxtrack { flex: 0 0 auto; height: 240px; }
       }
 
+      /* short: the width queries above pick the columns, these pick the
+         vertical rhythm. A laptop with the HA header showing leaves ~660px,
+         and every column clipped its last row — the verdict, the forecast,
+         the last House row. Squeeze the air first, the rings second. */
+      @container pd2 (max-height: 820px) {
+        .pd2-frame { padding-top: 14px; padding-bottom: 14px; }
+        .pd2-head { padding: 16px 28px 13px; }
+        .pd2-date { margin-top: 4px; }
+        .pd2-col { padding-top: 16px; padding-bottom: 16px; gap: 12px; }
+        .pd2-col.pd2-wx { padding-top: 12px; gap: 8px; }
+        .pd2-jbtn { gap: 12px; }
+        .pd2-clim .pd2-ring svg { width: 136px; height: 136px; }
+        .pd2-room { padding: 3px 0; }
+        .pd2-last { padding: 10px 16px; }
+        .pd2-verdict { padding: 9px 16px; }
+        .pd2-np { padding: 8px; }
+        .pd2-hrow { padding-top: 6px; padding-bottom: 6px; }
+      }
+      @container pd2 (max-height: 700px) {
+        /* The Joel column has air to spare; the climate column is the one
+           that runs out, so its ring gives the most. Each ring's figure
+           steps down with it so "11h 23m" stays inside the arc. */
+        .pd2-hl h1 { font-size: var(--pc-fs-2xl); }
+        .pd2-joel .pd2-ring svg { width: 156px; height: 156px; }
+        .pd2-clim .pd2-ring svg { width: 120px; height: 120px; }
+        .pd2-rv b { font-size: var(--pc-fs-2xl); }
+        .pd2-rv small { margin-top: 3px; }
+        .pd2-clim .pd2-rv small { letter-spacing: .04em; }
+        .pd2-jtop { gap: 18px; }
+        .pd2-goal { gap: 6px; }
+        .pd2-step .ps-step { width: 34px; height: 34px; }
+        .pd2-seg { padding: 5px 4px; }
+        .pd2-last b { font-size: var(--pc-fs-lg); }
+        .pd2-ahead { gap: 6px; }
+      }
+
       /* labels */
       .pd2-lblrow { display: flex; align-items: center; gap: 10px; }
       .pd2-lblrow .ps-chip { margin-left: auto; }
