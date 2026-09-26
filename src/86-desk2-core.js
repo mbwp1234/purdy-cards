@@ -47,6 +47,18 @@ class PurdyDesk2Card extends PurdyShellCard {
         this._render();
       }
     };
+    /* The HA header comes and goes (kiosk, edit mode, the app vs a browser),
+       so a fixed offset was right on one screen and ran the stage off the
+       bottom of the next. Measured instead: where the card starts on the page
+       is exactly what the header and view padding took. */
+    this._pd2Fit = () => {
+      if (this._pd2Fixed || !this.isConnected || !this.getBoundingClientRect || typeof window === "undefined") return;
+      const top = Math.max(0, Math.round(this.getBoundingClientRect().top + (window.scrollY || 0)));
+      if (top !== this._pd2Top) {
+        this._pd2Top = top;
+        this.style.setProperty("--pd-off", top + "px");
+      }
+    };
   }
 
   setConfig(config) {
@@ -70,22 +82,32 @@ class PurdyDesk2Card extends PurdyShellCard {
       });
     });
     super.setConfig({ ...c, sections });
-    /* What the HA header, view padding and kiosk mode take off the top is a
-       fact about the install, not the card — 16 here, with the header hidden. */
+    /* viewport_offset pins the offset by hand; left out, _pd2Fit measures it. */
     const off = Number(c.viewport_offset);
+    this._pd2Fixed = c.viewport_offset != null && Number.isFinite(off);
+    this._pd2Top = null;
     if (this.style && typeof this.style.setProperty === "function") {
-      this.style.setProperty("--pd-off", (Number.isFinite(off) ? off : 16) + "px");
+      this.style.setProperty("--pd-off", (this._pd2Fixed ? off : 16) + "px");
     }
+    this._pd2Fit();
   }
 
   connectedCallback() {
     super.connectedCallback();
-    if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("keydown", this._pd2Key);
+    if (typeof window !== "undefined" && window.addEventListener) {
+      window.addEventListener("keydown", this._pd2Key);
+      window.addEventListener("resize", this._pd2Fit);
+      /* HA lays the view out after connecting the card; measure once it has. */
+      if (window.requestAnimationFrame) window.requestAnimationFrame(() => window.requestAnimationFrame(this._pd2Fit));
+    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (typeof window !== "undefined" && window.removeEventListener) window.removeEventListener("keydown", this._pd2Key);
+    if (typeof window !== "undefined" && window.removeEventListener) {
+      window.removeEventListener("keydown", this._pd2Key);
+      window.removeEventListener("resize", this._pd2Fit);
+    }
   }
 
   /* The skeleton. `ps-ground`, `ps-sheetslot`, `ps-stat`, `ps-col` and

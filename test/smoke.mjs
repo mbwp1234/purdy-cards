@@ -10498,6 +10498,24 @@ check('desk2 appends to the shell sheet rather than re-ordering it',
 check('desk2 keeps the shell ids its inherited methods look up',
   ['ps-ground', 'ps-sheetslot', 'ps-stat', 'ps-col', 'ps-dockwrap'].every((id) => d2Src.includes(`id="${id}"`)));
 check('desk2 sizes to the viewport less the configured offset', /height: calc\(100dvh - var\(--pd-off\)\)/.test(d2StyleSrc));
+check('desk2 measures its own top when viewport_offset is left out, and honours it when set', (() => {
+  const mk = (cfg, top) => {
+    const d = new D2(); const set = {};
+    d.style = { setProperty: (k, v) => { set[k] = v; } };
+    Object.defineProperty(d, 'isConnected', { value: true });
+    d.getBoundingClientRect = () => ({ top });
+    d.setConfig({ ...d2Base(), ...cfg });
+    return set['--pd-off'];
+  };
+  const oldWin = global.window; global.window = { ...(oldWin || {}), scrollY: 0 };
+  const measured = mk({}, 56), pinned = mk({ viewport_offset: 16 }, 56);
+  global.window = oldWin;
+  return measured === '56px' && pinned === '16px';
+})());
+check('desk2 re-measures on resize and drops the listener on disconnect',
+  /window\.addEventListener\("resize", this\._pd2Fit\)/.test(d2Src) && /window\.removeEventListener\("resize", this\._pd2Fit\)/.test(d2Src));
+check('desk2 tightens on a short stage by container height, in two steps',
+  /@container pd2 \(max-height: 820px\)/.test(d2StyleSrc) && /@container pd2 \(max-height: 700px\)/.test(d2StyleSrc));
 check('desk2 breakpoints are container queries, not media queries',
   /@container pd2 \(max-width: 1366px\)/.test(d2StyleSrc) && /@container pd2 \(min-width: 1800px\)/.test(d2StyleSrc) &&
   !/@media/.test(d2StyleSrc));
