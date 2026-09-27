@@ -302,9 +302,19 @@ const PD2_STYLES = `
         .pd2-col.pd2-wx .ps-railbox { flex: 0 0 auto; }
         .pd2-col.pd2-wx .ps-wxtrack { flex: 0 0 auto; height: 220px; max-height: none; }
       }
-      .pd2-wxrows { display: none; gap: 2px; padding: 6px 10px; border-radius: var(--pc-r-md); background: var(--pc-fill-1); }
+      /* The week's capsules need ~220px of column (content box) to read, so the switch to
+         rows is asked of the weather column itself, not of the window. Keyed
+         to window height it guessed: a 701px window got capsules squashed to
+         36px pills with the rain line clipped, and a 660px one got rows with
+         Saturday off the bottom. The column is a grid cell sized by the
+         grid, never by its content, so it can be a size container. */
+      .pd2-col.pd2-wx { container: pd2wx / size; }
+      /* The rows share what the column has left rather than each taking a
+         fixed height — tracks shrink evenly and cap at 20px. */
+      .pd2-wxrows { display: none; gap: 2px; padding: 6px 10px; border-radius: var(--pc-r-md); background: var(--pc-fill-1);
+        flex: 0 1 auto; min-height: 0; grid-auto-rows: minmax(0, 20px); }
       .pd2-wxr { display: grid; grid-template-columns: 44px 30px minmax(0, 1fr) 30px 34px; align-items: center; gap: 8px;
-        height: 20px; font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+        min-height: 0; font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
       .pd2-wxr > span:first-child { color: var(--ps-text); font-weight: 600; }
       .pd2-wxr.now > span:first-child { color: var(--ps-cool); }
       .pd2-wxr b { color: var(--ps-text); font-weight: 600; text-align: right; }
@@ -317,6 +327,16 @@ const PD2_STYLES = `
       .pd2-wxr .rng i.meas { outline: 1px dashed rgba(255,255,255,.5); outline-offset: 1px; }
       .pd2-wxr .pp { color: var(--ps-cool); font-weight: 600; text-align: right; }
       .pd2-wxr .pp.wet { color: var(--ps-warn); }
+      /* After the base rules above, which it overrides at equal specificity. */
+      @container pd2wx (max-height: 220px) {
+        .pd2-col.pd2-wx .ps-railbox { display: none; }
+        .pd2-wxrows { display: grid; }
+      }
+      /* Under ~16px a row, the 11px figures touch their neighbours. */
+      @container pd2wx (max-height: 140px) {
+        .pd2-wxrows { padding-top: 2px; padding-bottom: 2px; }
+        .pd2-wxr { font-size: var(--pc-fs-micro); line-height: 1; }
+      }
       .pd2-facts { gap: 8px; font-size: var(--pc-fs-md); margin-top: 4px; }
       .pd2-facts div { display: flex; justify-content: space-between; gap: 12px; }
       .pd2-facts span { color: var(--ps-muted); }
@@ -463,9 +483,6 @@ const PD2_STYLES = `
          rule of equal specificity, and the first cut of this block sat
          mid-sheet, where the base rules below it quietly won. */
       @container pd2 (max-height: 700px) {
-        /* The week's capsules need ~250px to read; here they get rows. */
-        .pd2-col.pd2-wx .ps-railbox { display: none; }
-        .pd2-wxrows { display: grid; }
         /* House rows at one line each, carrying the first fact only: seven
            full rows, two of them wrapping, ran off the bottom of the glass. */
         .pd2-hrow { padding-top: 4px; padding-bottom: 4px; align-items: center; }
@@ -477,8 +494,7 @@ const PD2_STYLES = `
            cannot spare. The room stays — it is the point of the card. */
         .pd2-nplbl { display: none; }
         .pd2-nps { display: none; }
-        .pd2-wxr { height: 16px; }
-        .pd2-wxrows { padding: 4px 10px; gap: 1px; }
+        .pd2-wxrows { padding: 4px 10px; gap: 1px; grid-auto-rows: minmax(0, 16px); }
         .pd2-col.pd2-wx { padding-bottom: 10px; }
         .pd2-clim .pd2-ring svg { width: 110px; height: 110px; }
         .pd2-rn small { display: inline; margin-left: 6px; }

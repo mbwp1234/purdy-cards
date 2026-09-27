@@ -10788,8 +10788,20 @@ check('desk2 Joel column carries his week at every height, drawn thin below 820p
   check('desk2 short-window rules come LAST, so they beat the base rules they override', (() => {
     const i = d2StyleSrc.lastIndexOf('@container pd2 (max-height: 700px)');
     const tail = d2StyleSrc.slice(i);
-    return i > 0 && /\.pd2-wxrows \{ display: grid; \}/.test(tail) && /\.pd2-short \{ display: inline; \}/.test(tail)
+    return i > 0 && /\.pd2-short \{ display: inline; \}/.test(tail)
       && d2StyleSrc.lastIndexOf('.pd2-short { display: none; }') < i && d2StyleSrc.lastIndexOf('.pd2-house { display: flex;') < i;
+  })());
+  check('desk2 weather: rows vs capsules is asked of the COLUMN, not the window', (() => {
+    const q = d2StyleSrc.indexOf('@container pd2wx (max-height: 220px)');
+    const base = d2StyleSrc.indexOf('.pd2-wxrows { display: none;');
+    const sw = d2StyleSrc.slice(q, d2StyleSrc.indexOf('}', d2StyleSrc.indexOf('.pd2-wxrows { display: grid; }', q)) + 1);
+    return /\.pd2-col\.pd2-wx \{ container: pd2wx \/ size; \}/.test(d2StyleSrc) && base > 0 && q > base
+      && /\.ps-railbox \{ display: none; \}/.test(sw) && /\.pd2-wxrows \{ display: grid; \}/.test(sw)
+      && d2StyleSrc.split('.pd2-wxrows { display: grid; }').length === 2;
+  })());
+  check('desk2 weather: the rows shrink to the column rather than clipping Saturday', (() => {
+    const rows = d2StyleSrc.slice(d2StyleSrc.indexOf('.pd2-wxrows { display: none;'), d2StyleSrc.indexOf('.pd2-wxr > span:first-child'));
+    return /flex: 0 1 auto; min-height: 0; grid-auto-rows: minmax\(0, 20px\)/.test(rows) && !/\.pd2-wxr \{[^}]*\bheight: \d+px/.test(d2StyleSrc);
   })());
   check('desk2 Ahead: off days are marked, and Ahead is no longer hidden when compact', /this\._dayOff\(day\.getTime\(\)\)/.test(d2Src) && !/\.pd2-side \.pd2-ahead, /.test(d2StyleSrc));
 }
