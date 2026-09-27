@@ -839,6 +839,7 @@ Object.assign(PurdyShellCard.prototype, {
     this._bind();
     this._bindScrub();
     this._bindHealth();
+    this._watchNowPlaying();
     this._reserve();
   },
 

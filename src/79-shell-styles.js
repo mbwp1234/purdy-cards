@@ -596,6 +596,12 @@ const PS_STYLES = `
       .ps-jgap i:last-child { flex: 1; }
 
       .ps-jmet { margin-top: 13px; }
+      /* last night against his usual, in numbers, under the meters */
+      .ps-jvs { display: grid; gap: 7px; margin-top: 13px; padding: 11px 12px; border-radius: var(--pc-r-md); background: var(--pc-fill-1); }
+      .ps-jvs > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; font-size: var(--pc-fs-sm); }
+      .ps-jvs > div span { color: var(--ps-muted); }
+      .ps-jvs > div b { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .ps-jvs > div em { font-style: normal; color: var(--ps-dim); font-size: var(--pc-fs-xs); min-width: 84px; text-align: right; }
 
       /* The night in the words a person would use, replacing five labelled
          rows. The arrows carry the sequence, which is the thing "down" and
@@ -1417,6 +1423,8 @@ const PS_STYLES = `
                  background: rgba(14,17,30,.42); border: 1px solid var(--pc-edge); cursor: pointer;
                  backdrop-filter: blur(28px) saturate(1.5); -webkit-backdrop-filter: blur(28px) saturate(1.5);
                  box-shadow: 0 12px 30px -8px rgba(0,0,0,.6); }
+      /* Now playing is on screen: the bar keeps its space so the dock stays put */
+      .ps-dockwrap.np-seen .ps-mini { visibility: hidden; }
       .ps-mart { width: 32px; height: 32px; border-radius: var(--pc-r-sm); background: var(--pc-fill-2);
                  display: grid; place-items: center; color: var(--ps-dim); flex: 0 0 auto; overflow: hidden; }
       .ps-mart .ps-ico { width: 15px; height: 15px; }
@@ -1443,6 +1451,10 @@ const PS_STYLES = `
                          background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b));
                          box-shadow: 0 0 12px rgba(139,124,255,.9); }
       .ps-db.alert { color: var(--ps-bad); }
+      .ps-dbadge { position: absolute; top: 0; right: calc(50% - 20px); min-width: 15px; height: 15px; padding: 0 4px;
+                   border-radius: var(--pc-r-pill); background: var(--ps-bad); color: #fff; font-style: normal;
+                   font-size: var(--pc-fs-micro); font-weight: 700; line-height: 15px; text-align: center; }
+      .ps-dbadge.log { background: var(--ps-warn); color: #1b1300; }
       .ps-db.alert ha-icon { filter: drop-shadow(0 0 6px rgba(242,122,131,.6)); }
 
       /* a sheet hosting an existing card — the card brings its own surface,
@@ -1469,6 +1481,8 @@ const PS_STYLES = `
       /* App logos are authored full-bleed, so they fill the tile. */
       .ps-npapp { background: transparent; }
       .ps-npapp svg { width: 100%; height: 100%; }
+      .ps-npw { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+                color: var(--pc-aur-a); margin-bottom: 2px; }
       .ps-npt { font-size: var(--pc-fs-md); font-weight: 600; }
       .ps-nps { font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: 1px; }
       .ps-npb {

@@ -2525,6 +2525,33 @@ Object.assign(PurdyShellCard.prototype, {
     return { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR };
   },
 
+  /* The night against his own usual, in NUMBERS — what the meters place on
+   * a band but never state: how long the put-down took against his average,
+   * and when he usually first wakes. Each row only when both halves exist, so
+   * every row is a comparison and never a restatement. Returns null when
+   * there is nothing to compare. Shared by the phone's expanded section and
+   * the desk's Joel drawer. */
+  _nurseryVsUsual(m, N) {
+    const { sessions, stats } = m;
+    const ref = m.nightSession;
+    const done = sessions.filter((x) => x.night && !x.active && x !== ref).slice(-N);
+    const clockOf = (t) => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes(); };
+    const settleObs = done.filter((x) => !x.manual && x.settleMinutes != null);
+    const settleAvg = settleObs.length ? Math.round(settleObs.reduce((a, x) => a + x.settleMinutes, 0) / settleObs.length) : null;
+    const firsts = done.filter((x) => !x.manual && x.events && x.events.length).map((x) => {
+      const c = clockOf(x.events[0]); return c < 720 ? c + 1440 : c;
+    });
+    const firstAvg = firsts.length >= 2 ? Math.round(firsts.reduce((a, b) => a + b, 0) / firsts.length) % 1440 : null;
+    const rows = [];
+    if (ref && stats.bedMean != null) rows.push(["Put down", psClock(ref.from), `usual ${psMinsToClock(stats.bedMean)}`]);
+    if (ref && !ref.manual && ref.hadExit && ref.settleMinutes != null && settleAvg != null) {
+      rows.push(["Settled in", psHM(ref.settleMinutes), `usual ${psHM(settleAvg)}`]);
+    }
+    if (firstAvg != null) rows.push(["First wake, usually", psMinsToClock(firstAvg), `${firsts.length} of ${done.length} nights`]);
+    if (!rows.length) return null;
+    return { label: `${ref && ref.active ? "Tonight" : "Last night"} vs his usual`, rows };
+  },
+
   _secNursery(sec, opts) {
     /* `omit` lets a surface that already draws a part leave it out here: the
        desk's Joel drawer sits beside a column that shows the day rail and the
@@ -2692,6 +2719,11 @@ Object.assign(PurdyShellCard.prototype, {
               sentence had nothing left that was not already drawn twice. */""}
         ${omit.has("raster") ? "" : this._nurseryRaster(sessions, norms, sec, this._awayDays(sec))}
         ${meters}
+        ${omit.has("vs") ? "" : (() => {
+    const vu = this._nurseryVsUsual({ sessions, stats, nightSession }, sec.days || 7);
+    return !vu ? "" : `<div class="ps-jvs"><span class="ps-lbl">${psEsc(vu.label)}</span>
+      ${vu.rows.map(([k, a, b]) => `<div><span>${psEsc(k)}</span><b>${psEsc(a)}</b><em>${psEsc(b)}</em></div>`).join("")}</div>`;
+  })()}
         ${/* The night's own shape, with the moments marked ON it. What was here
               was two lines of prose — "Put down 7:36 PM → left him 7:48 PM →
               woke 6:51 AM", then the settling minutes and a list of the times

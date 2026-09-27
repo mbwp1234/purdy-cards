@@ -302,9 +302,22 @@ Object.assign(PurdyShellCard.prototype, {
   _lightChip(lights) {
     const counted = lights.filter((l) => !l.cfg.protect && !l.gone);
     const on = counted.filter((l) => l.on);
-    if (on.length) return `<span class="ps-chip lit">${on.length} of ${counted.length} on</span>`;
-    if (lights.some((l) => l.on && l.cfg.protect)) return `<span class="ps-chip">Night light only</span>`;
-    return `<span class="ps-chip">All off</span>`;
+    /* Lamps that have dropped off the network are COUNTED here. Each row names
+       its own in the sub-line, but the chip said "All off" over two dead lamps,
+       so you found out only by opening the sheet. */
+    const dead = this._lightDead(lights);
+    const tail = dead ? ` · ${dead} offline` : "";
+    if (on.length) return `<span class="ps-chip lit">${on.length} of ${counted.length} on${tail}</span>`;
+    if (lights.some((l) => l.on && l.cfg.protect)) return `<span class="ps-chip">Night light only${tail}</span>`;
+    return `<span class="ps-chip">All off${tail}</span>`;
+  },
+
+  /* Lamps not answering: a whole light that is gone, or the members of a
+     group that are. Shared with the desk's House row. */
+  _lightDead(lights) {
+    const h = this._hass;
+    return lights.reduce((n, l) => n + (l.gone ? 1
+      : (l.cfg.members || []).filter((m) => !pcReading(h, m).ok).length), 0);
   },
 
   /* Moods and rows, with no header — so the sheet chrome can name itself

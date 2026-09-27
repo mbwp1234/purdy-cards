@@ -743,17 +743,22 @@ Object.assign(PurdyShellCard.prototype, {
          title. */
       const album = a.media_album_name && a.media_album_name !== a.media_title
         ? a.media_album_name : null;
-      /* The room is always named. With one row it was implied and could be
-         left out; with two it is the only thing telling them apart. */
-      const sub = [[a.media_artist, album].filter(Boolean).join(" — "), np.name]
+      /* WHERE, first — the room, with the volume beside it, as a small label
+         above the title. At the end of the sub-line the room was the part a
+         long artist cut off, and on a nursery-first screen white noise with no
+         room reads as the Hatch. The desk learned this first. */
+      const vol = a.volume_level == null ? null : Math.round(Number(a.volume_level) * 100);
+      const where = [np.name || pcName(h, p.entity), vol == null || !Number.isFinite(vol) ? null : `vol ${vol}`]
         .filter(Boolean).join(" · ");
+      const sub = [a.media_artist, album].filter(Boolean).join(" — ");
       rows.push(`<div class="ps-npr" ${this._playTarget("listen")} role="button" tabindex="0">
           <div class="ps-npart">${art
             ? `<img src="${psEsc(art)}" alt="" />`
             : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
           <div class="ps-grow">
+            <div class="ps-npw ps-trunc">${psEsc(where)}</div>
             <div class="ps-npt ps-trunc">${psEsc(a.media_title || "Playing")}</div>
-            <div class="ps-nps ps-trunc">${psEsc(sub)}</div>
+            ${sub ? `<div class="ps-nps ps-trunc">${psEsc(sub)}</div>` : ""}
           </div>
           <button class="ps-npb" type="button" data-mp="playpause" data-entity="${psEsc(np.entity)}"
             aria-label="${np.playing ? "Pause" : "Play"}">
@@ -779,8 +784,8 @@ Object.assign(PurdyShellCard.prototype, {
       rows.push(`<div class="ps-npr" ${open} role="button" tabindex="0">
           <div class="ps-npart ps-npapp">${this._appIcon(sec, app)}</div>
           <div class="ps-grow">
+            <div class="ps-npw ps-trunc">${psEsc(t.name)}</div>
             <div class="ps-npt ps-trunc">${psEsc(shown)}</div>
-            <div class="ps-nps ps-trunc">${psEsc(t.name)}</div>
           </div>
           <button class="ps-npb" type="button" data-tvoff="${psEsc(t.remote || t.media_player)}"
             aria-label="Turn off ${psEsc(t.name)}">

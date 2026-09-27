@@ -10727,6 +10727,39 @@ check('desk2 Joel column carries his week at every height, drawn thin below 820p
   check('NAS: the CPU trace is cut to 24h before it is drawn', /p\.t >= from/.test(src));
   check('NAS: the docker page labels its figures as the containers\'', /Containers CPU/.test(src) && /vDisk pool/.test(src));
 
+  /* phone lessons from the desk2 audit */
+  const pl = new SH();
+  pl.setConfig({ sections: [{ type: 'nowplaying', key: 'now' }], now_playing: { players: [{ entity: 'media_player.bed', name: 'Bedroom' }] } });
+  pl._hass = { states: {
+    'media_player.bed': { state: 'playing', attributes: { media_title: 'Ocean sounds', media_artist: 'The soothing sounds of the ocean', media_content_type: 'music', volume_level: 0.2 } },
+    'light.a': { state: 'on', attributes: {} }, 'light.m1': { state: 'unavailable', attributes: {} }, 'light.m2': { state: 'off', attributes: {} },
+  } };
+  check('header chip: one fault reads as itself, not a count', pl._faultChipText([{ title: 'Kitchen + Office offline', short: 'Kitchen + Office offline · 2d' }]) === 'Kitchen + Office offline · 2d');
+  check('header chip: several faults name the worst and count the rest', pl._faultChipText([{ title: 'Kitchen offline', short: 'x' }, { title: 'a' }, { title: 'b' }]) === 'Kitchen offline +2');
+  check('header chip: nothing raised is All clear', pl._faultChipText([]) === 'All clear');
+  const npHtml = pl._secNowplaying({ key: 'now', title: 'Now playing', expandable: false });
+  check('now playing: the room and volume lead, above the title', /ps-npw[^>]*>Bedroom · vol 20<\/div>\s*<div class="ps-npt[^>]*>Ocean sounds/.test(npHtml));
+  check('now playing: the room is no longer on the artist line', !/ocean · Bedroom/.test(npHtml));
+  const lts = [{ id: 'light.a', on: true, gone: false, cfg: { entity: 'light.a', members: ['light.m1', 'light.m2'] } }];
+  check('lights chip: dropped-off lamps are counted', /1 of 1 on · 1 offline/.test(pl._lightChip(lts)));
+  check('lights chip: nothing offline adds nothing', !/offline/.test(pl._lightChip([{ id: 'light.a', on: false, gone: false, cfg: { entity: 'light.a' } }])));
+  check('mini bar: hidden only while Now playing is seen and no sheet is open', (() => {
+    const t = pl._paintMini.toString();
+    return /this\._npSeen && this\._npNode && !this\._sheet/.test(t) && /np-seen \.ps-mini \{ visibility: hidden; \}/.test(src);
+  })());
+  check('mini bar: the watcher runs on every render path, before the dock is measured', (src.match(/this\._watchNowPlaying\(\);\n\s*this\._reserve\(\);/g) || []).length === 3);
+  check('dock bell: the phone counts open log warnings in amber when nothing is raised', /ps-dbadge log/.test(src) && /this\._logOpenCount\(\)/.test(src));
+  {
+    const at = (d, h, m) => { const x = new Date(2026, 8, d, h, m); return x.getTime(); };
+    const past = [20, 21, 22].map((d) => ({ night: true, from: at(d, 19, 30), settleMinutes: 14, events: [at(d + 1, 0, 30)] }));
+    const ref = { night: true, from: at(26, 19, 38), settleMinutes: 25, hadExit: true, events: [] };
+    const vu = pl._nurseryVsUsual({ sessions: [...past, ref], stats: { bedMean: 19 * 60 + 29 }, nightSession: ref }, 7);
+    check('Joel vs usual: put-down, settle and first wake, each against his own', !!vu && vu.label === 'Last night vs his usual'
+      && vu.rows.length === 3 && vu.rows[1][0] === 'Settled in' && vu.rows[1][2] === 'usual 14m' && vu.rows[2][2] === '3 of 3 nights');
+    check('Joel vs usual: a hand-logged night states no settle time', !pl._nurseryVsUsual({ sessions: [...past, { ...ref, manual: true }], stats: { bedMean: null }, nightSession: { ...ref, manual: true } }, 7).rows.some((r) => r[0] === 'Settled in'));
+    check('Joel vs usual: nothing to compare draws nothing', pl._nurseryVsUsual({ sessions: [], stats: { bedMean: null }, nightSession: null }, 7) === null);
+  }
+
   /* desk2 */
   const dq = new D2();
   const dcfg = d2Base();
@@ -10741,14 +10774,14 @@ check('desk2 Joel column carries his week at every height, drawn thin below 820p
   check('desk2 weather: rows exist for the short window', typeof dq._dkWxRows === 'function' && /pd2-wxrows/.test(d2StyleSrc) && /\.pd2-wxrows \{ display: grid; \}/.test(d2StyleSrc));
   check('desk2 House: a short value exists for the two-column grid', /pd2-short/.test(dq._dkHouse(dq._pd2Sec('crew'))));
   check('desk2 Now playing names the room above the title', /pd2-npw/.test(d2Src) && /vol \$\{vol\}/.test(d2Src));
-  check('desk2 Joel drawer leaves out what the column already draws', /omit: \["raster", "day"\]/.test(d2Src) && /omit\.has\("raster"\)/.test(src) && /omit\.has\("day"\)/.test(src));
+  check('desk2 Joel drawer leaves out what the column already draws', /omit: \["raster", "day", "vs"\]/.test(d2Src) && /omit\.has\("vs"\)/.test(src) && /omit\.has\("raster"\)/.test(src) && /omit\.has\("day"\)/.test(src));
   check('desk2 Joel drawer carries the trend plots', /_dkJoelTrends\(sec\)/.test(d2Src) && /pd2-tplot/.test(d2StyleSrc));
   check('desk2 NAS overview lays the server out on one page, power behind a disclosure', (() => {
     dq._pd2Pow = false;
     const ov = dq._syOverview.toString();
     return /pd2-nas/.test(ov) && /data-pd2pow="1"/.test(ov) && /this\._syPerf\(s\)/.test(ov);
   })());
-  check('desk2 rail: the bell counts open warn+ log entries when nothing is raised', /pd2-badge log/.test(d2Src) && /\(critical\|warn\)/.test(d2Src));
+  check('desk2 rail: the bell counts open warn+ log entries when nothing is raised', /pd2-badge log/.test(d2Src) && /_logOpenCount\(\)/.test(d2Src) && /\(critical\|warn\)/.test(src));
   check('desk2 short-window rules come LAST, so they beat the base rules they override', (() => {
     const i = d2StyleSrc.lastIndexOf('@container pd2 (max-height: 700px)');
     const tail = d2StyleSrc.slice(i);
