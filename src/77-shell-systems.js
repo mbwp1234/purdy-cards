@@ -418,7 +418,15 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* ------------------------------------------------------------ overview --*/
 
+  /* The page as parts, so a surface with room can arrange them — the desk
+     lays Overview out across three columns — while the phone keeps them in
+     this order. */
   _syOverview(s) {
+    const p = this._syOverviewParts(s);
+    return `${p.id}${p.faults}${p.meters}${p.cells}${p.parity}${p.power}`;
+  },
+
+  _syOverviewParts(s) {
     const h = this._hass;
     const up = pcState(h, s.uptime);
     const ver = pcState(h, s.version);
@@ -489,11 +497,14 @@ Object.assign(PurdyShellCard.prototype, {
       return this._syCell(x.label, txt, "", x.entity);
     }).join("");
 
-    return `${idBlock}${faultBlock}
-      ${meters ? `<div class="ps-sycard">${meters}</div>` : ""}
-      ${cells ? `<div class="ps-vits">${cells}</div>` : ""}
-      ${this._syParity(s)}
-      ${this._syPower(s)}`;
+    return {
+      id: idBlock,
+      faults: faultBlock,
+      meters: meters ? `<div class="ps-sycard">${meters}</div>` : "",
+      cells: cells ? `<div class="ps-vits">${cells}</div>` : "",
+      parity: this._syParity(s),
+      power: this._syPower(s),
+    };
   },
 
   _syParity(s) {
@@ -587,11 +598,16 @@ Object.assign(PurdyShellCard.prototype, {
 
     const mem = pcNum(h, d.memory);
     const cells = [
-      this._syCell("CPU", psFig(pcNum(h, d.cpu), 1, "%"), "", d.cpu),
+      /* "CPU 0.7%" here beside "CPU 7.6%" on Perf read as the server
+         disagreeing with itself. These are the CONTAINERS' share, and say so. */
+      this._syCell("Containers CPU", psFig(pcNum(h, d.cpu), 1, "%"), "", d.cpu),
       /* The sensor is megabytes; five significant digits of megabyte is not a
          number anyone reads. */
-      this._syCell("Memory", mem == null ? "—" : `${(mem / 1024).toFixed(1)}<small>GB</small>`, "", d.memory),
-      this._syCell("vDisk", psFig(pcNum(h, d.vdisk), 1, "%"), "", d.vdisk),
+      this._syCell("Containers RAM", mem == null ? "—" : `${(mem / 1024).toFixed(1)}<small>GB</small>`, "", d.memory),
+      /* The integration reports the POOL the image lives on, not the image —
+         it is the cache pool's figure to the tenth, and unlabelled it read as
+         a second disk at exactly the cache's usage. */
+      d.vdisk ? this._syCell("vDisk pool", psFig(pcNum(h, d.vdisk), 1, "%"), "", d.vdisk) : "",
     ].join("");
 
     const chips = [
@@ -767,12 +783,24 @@ Object.assign(PurdyShellCard.prototype, {
           ? ` <b>${f.rpm}</b>`
           : f.duty > 0 ? ` <em>no tach</em>` : ""}</span>`).join("");
 
+    /* bond0 and eth0 printed the same two numbers to the kilobit — eth0 is
+       the bond's only member. A row identical to one above it says nothing
+       new, so it folds into that row's label instead. */
+    const seen = [];
     const net = (pf.network || []).map((n) => {
       const rx = pcNum(h, n.rx), tx = pcNum(h, n.tx);
       if (rx == null && tx == null) return "";
-      return `<div class="ps-syrow ps-sysub"><span>${psEsc(n.name)}</span>
+      /* Compared as DRAWN — the raw figures differ in the decimals the row
+         never shows, which is exactly the difference nobody can see. */
+      const twin = seen.find((x) => Math.round(x.rx) === Math.round(rx) && Math.round(x.tx) === Math.round(tx));
+      if (twin) { twin.also.push(n.name); return ""; }
+      seen.push({ rx, tx, also: [], name: n.name });
+      return `<div class="ps-syrow ps-sysub"><span>${psEsc(n.name)}@@ALSO:${psEsc(n.name)}@@</span>
         <b>↓ ${rx == null ? "—" : Math.round(rx)} &nbsp; ↑ ${tx == null ? "—" : Math.round(tx)}</b></div>`;
-    }).join("");
+    }).join("").replace(/@@ALSO:([^@]*)@@/g, (m, nm) => {
+      const t = seen.find((x) => x.name === nm);
+      return t && t.also.length ? ` <i class="ps-syq2">= ${psEsc(t.also.join(", "))}</i>` : "";
+    });
     const netUnit = pf.network && pf.network.length && h.states[pf.network[0].rx]
       ? h.states[pf.network[0].rx].attributes.unit_of_measurement : "";
 
@@ -839,9 +867,12 @@ Object.assign(PurdyShellCard.prototype, {
         ? psEsc("History unavailable — " + this._histErr)
         : "Waiting for history"}</div>`;
     }
+    /* The shared fetch reaches back 26h so a 24h graph has a sample to start
+       from; drawn uncut it captioned itself "26h" beside every other 24h. */
+    const from = Date.now() - 24 * 3600000;
     const pts = series
       .map((p) => ({ t: p.t, v: parseFloat(p.s) }))
-      .filter((p) => Number.isFinite(p.v));
+      .filter((p) => Number.isFinite(p.v) && p.t >= from);
     if (pts.length < 2) return `<div class="ps-nohist">No numeric history yet</div>`;
 
     const W = 260, H = 46;
@@ -867,7 +898,7 @@ Object.assign(PurdyShellCard.prototype, {
         </svg>
         <span class="ps-cross" hidden></span>
       </div>
-      <div class="ps-sysub">${Math.round((Date.now() - down[0].t) / 3600000)}h · ${this._scrubHint()}</div>`;
+      <div class="ps-sysub">${Math.max(1, Math.round((Date.now() - down[0].t) / 3600000))}h · ${this._scrubHint()}</div>`;
   },
 
   /* ------------------------------------------------------- notifications --*/

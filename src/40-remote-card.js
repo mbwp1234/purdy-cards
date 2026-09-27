@@ -1014,6 +1014,8 @@ class PurdyRemoteCard extends PcBaseCard {
           padding: 2px; margin: -2px;
         }
         .apps::-webkit-scrollbar { display: none; }
+        .apps.wrap { flex-wrap: wrap; overflow: visible; }
+        .apps.wrap .app { flex: 1 0 64px; }
         .app {
           /* Sized so FIVE tiles and the edge of a sixth sit in the strip, which
              is the count the mockup draws — the partly-visible tile is the only
@@ -1219,7 +1221,10 @@ class PurdyRemoteCard extends PcBaseCard {
                 the apps; on a cold one, "Turn on and open" is the whole
                 instruction and there is no off-note beneath it to repeat it. */""}
           ${on ? "" : '<span class="lbl">Turn on and open</span>'}
-          <div class="apps" id="apps">
+          ${/* `apps_wrap: true` for a surface driven by a mouse: a wheel
+                scrolls vertically and cannot reach a sideways strip, so on the
+                desk the seventh tile sat cut in half at the edge for good. */""}
+          <div class="apps${this._config.apps_wrap ? " wrap" : ""}" id="apps">
             ${apps.map((a) => `
               <button class="app ${on && a.name && app === a.name ? "live" : ""}"
                       type="button" data-app="${a.activity}">

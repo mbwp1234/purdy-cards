@@ -267,6 +267,36 @@ function pcDayKey(ms) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/* A calendar title with the decoration taken off its ENDS. "🏎️ F1 RACE —
+   Azerbaijan GP 🇦🇿" wrapped the flag onto a second line under the car on
+   every width the desk draws, doubling the row for two glyphs that repeat the
+   words between them. Only the ends: an emoji inside a title is part of what
+   somebody typed. An all-emoji title keeps itself rather than becoming "". */
+const PC_EV_DECOR = /^[\s\p{Extended_Pictographic}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}️‍⃣]+|[\s\p{Extended_Pictographic}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}️‍⃣]+$/gu;
+function pcEvTitle(s) {
+  const raw = String(s == null ? "" : s);
+  const t = raw.replace(PC_EV_DECOR, "").trim();
+  return t || raw.trim();
+}
+
+/* A temperature at the precision it was REPORTED at. GTTC publishes whole
+   degrees, and "71.0°" claims a tenth nobody measured; a room sensor publishes
+   tenths, and rounding 70.2 away hides the only digit that is moving. */
+function pcDeg(v) {
+  if (v == null || !Number.isFinite(Number(v))) return null;
+  const n = Number(v);
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+/* How long ago, in the one unit that reads: "40m", "5h", "2d". */
+function pcAgo(ms) {
+  if (!ms) return "";
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (m < 60) return `${m}m`;
+  if (m < 48 * 60) return `${Math.round(m / 60)}h`;
+  return `${Math.round(m / 1440)}d`;
+}
+
 /* ============================================================================
  * Haptics — the companion app's Taptic bridge.
  *

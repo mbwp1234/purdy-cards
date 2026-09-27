@@ -108,6 +108,8 @@ const PD_BORROW = [
      copied for the usual reason: it is a claim about what the data can support,
      and the desk's chip tells exactly the same lie without it. */
   "_ruleWatched", "_staleWhy", "_staleSince", "_staleClear", "_staleRow", "_staleGroupRow",
+  /* The offline rule's row builder — `_raised` calls it. */
+  "_offlineRow",
   /* Dependencies of the three above, added when a test started walking what
      borrowed methods CALL rather than only whether they resolve. All three
      were reachable and none of them worked: _dismiss threw on any desk

@@ -1976,9 +1976,11 @@ Object.assign(PurdyShellCard.prototype, {
     : `<i style="background:var(--ps-light);opacity:.5"></i>settling<i style="background:var(--ps-deep);margin-left:9px"></i>asleep`}</span>
           ${/* A hand-logged night has no door behind it. "0 in" would be a
                 claim; naming the source is the honest thing in the same slot. */""}
+          ${/* "0 in" needed you to already know it counted door visits. */""}
           <b>${night.manual ? "logged"
-    : night.blindMin ? `${night.interventions}+ in`
-      : `${night.interventions} in`}</b>
+    : night.blindMin ? `${night.interventions}+ visits`
+      : night.interventions === 0 ? "no visits"
+        : `${night.interventions} visit${night.interventions === 1 ? "" : "s"}`}</b>
         </div>
         <div class="ps-railbox">
           <div class="ps-hypplot" data-scrub="night">
@@ -2523,7 +2525,11 @@ Object.assign(PurdyShellCard.prototype, {
     return { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR };
   },
 
-  _secNursery(sec) {
+  _secNursery(sec, opts) {
+    /* `omit` lets a surface that already draws a part leave it out here: the
+       desk's Joel drawer sits beside a column that shows the day rail and the
+       week raster, and drawing both twice made the drawer the column again. */
+    const omit = new Set((opts && opts.omit) || []);
     const { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR } = this._nurseryModel(sec);
     const ring = this._ringSvg(120, 9,
       [[nightMins / maxMins, "url(#ps-aur)"]],
@@ -2635,7 +2641,7 @@ Object.assign(PurdyShellCard.prototype, {
             status line under it now carries only what the picture cannot.
             Drawn only once there is something to draw — an axis with no marks
             on it is a plot claiming a day nothing happened in. */""}
-      ${!loaded || (!sessions.length && stats.bedMean == null) ? ""
+      ${omit.has("day") || !loaded || (!sessions.length && stats.bedMean == null) ? ""
     : this._nurseryDayRail(sessions, todayKey, stats.bedMean, norms)}
       ${/* The one thing done in this room every single day, and the card could
             not do it: start the Hatch to put him down, stop it to get him up.
@@ -2684,7 +2690,7 @@ Object.assign(PurdyShellCard.prototype, {
               and the days with nothing recorded, and the ring on the collapsed
               face is still the duration against his own average — so the
               sentence had nothing left that was not already drawn twice. */""}
-        ${this._nurseryRaster(sessions, norms, sec, this._awayDays(sec))}
+        ${omit.has("raster") ? "" : this._nurseryRaster(sessions, norms, sec, this._awayDays(sec))}
         ${meters}
         ${/* The night's own shape, with the moments marked ON it. What was here
               was two lines of prose — "Put down 7:36 PM → left him 7:48 PM →

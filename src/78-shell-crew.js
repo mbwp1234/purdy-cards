@@ -478,8 +478,11 @@ Object.assign(PurdyShellCard.prototype, {
     return `<div class="ps-cwpanel">
         <button class="ps-cwhero" type="button" data-crewgo="${psEsc(v.entity)}"
           data-script="${psEsc(v.room_script || "")}">
+          ${/* FILLED bars, not stroked lines: .ps-cwplay fills its paths and
+                turns strokes off, so the two-line pause glyph every other
+                button uses drew nothing at all — a bare cyan disc. */""}
           <span class="ps-cwplay">${busy
-            ? `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 5v14M15 5v14"/></svg>`
+            ? `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>`
             : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M7 4.5 19 12 7 19.5Z"/></svg>`}</span>
           <span class="ps-grow">
             <span class="ps-cwt">${busy ? "Pause" : pick ? `Clean ${psEsc(pick)}` : "Start cleaning"}</span>

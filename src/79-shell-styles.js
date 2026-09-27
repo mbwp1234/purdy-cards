@@ -414,6 +414,8 @@ const PS_STYLES = `
       .ps-spark { flex: 0 0 56px; height: 18px; display: block; }
       .ps-spark svg { width: 56px; height: 18px; display: block; }
       .ps-rml .ps-v { font-weight: 660; font-variant-numeric: tabular-nums; }
+      .ps-rml .ps-via { font-style: normal; color: var(--ps-dim); font-weight: 400; }
+      .ps-rml.off .ps-v { color: var(--ps-dim); font-weight: 500; font-size: var(--pc-fs-xs); }
       .ps-rml .ps-h { color: var(--ps-dim); font-size: var(--pc-fs-xs); font-variant-numeric: tabular-nums;
                       width: 46px; text-align: right; }
 
@@ -677,6 +679,7 @@ const PS_STYLES = `
       .ps-dw { font-size: var(--pc-fs-micro); letter-spacing: .12em; text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
       .ps-dn { font-size: var(--pc-fs-xl); font-weight: 660; font-variant-numeric: tabular-nums; line-height: 1.2; }
       .ps-cdt.today .ps-dn { color: var(--ps-cool); }
+      .ps-doff { font-size: var(--pc-fs-micro); font-weight: 650; letter-spacing: .08em; color: var(--ps-dim); text-transform: uppercase; }
       .ps-cev { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; justify-content: center; }
       .ps-ev { display: flex; align-items: center; gap: 8px; font-size: var(--pc-fs-sm); }
       .ps-ev i { width: 3px; height: 14px; border-radius: var(--pc-r-hair); flex: 0 0 auto; }
@@ -1016,6 +1019,9 @@ const PS_STYLES = `
       /* One end published and the other not: a marker at what is known, never a
          capsule running off to the edge of the track. */
       .ps-wxcap.stub { height: 4px; opacity: .75; }
+      /* Today's high from the thermometer, once the provider has dropped it:
+         the same capsule, marked as measured rather than forecast. */
+      .ps-wxcap.meas { outline: 1px dashed rgba(255,255,255,.5); outline-offset: 2px; }
       .ps-wxmark { position: absolute; left: -3px; right: -3px; height: 2px; z-index: 2;
                    background: #fff; border-radius: var(--pc-r-hair);
                    box-shadow: 0 0 6px rgba(255,255,255,.7); }
@@ -1153,7 +1159,7 @@ const PS_STYLES = `
       .ps-vrow { display: flex; align-items: center; gap: 10px; padding: 8px 0;
                  border-top: 1px solid var(--ps-hair-soft); }
       .ps-vrow:first-of-type { border-top: 0; }
-      .ps-vname { flex: 0 0 96px; font-size: var(--pc-fs-sm); font-weight: 650; color: var(--ps-muted);
+      .ps-vname { flex: 0 0 110px; font-size: var(--pc-fs-sm); font-weight: 650; color: var(--ps-muted);
                   display: flex; align-items: center; gap: 6px; position: relative; }
       .ps-vname::after { content: ""; position: absolute; inset: -8px -4px; }
       .ps-vrow.on .ps-vname { color: var(--ps-text); }
@@ -1441,7 +1447,10 @@ const PS_STYLES = `
 
       /* a sheet hosting an existing card — the card brings its own surface,
          so the host adds nothing but room */
-      .ps-host { margin: 2px -4px 0; }
+      /* No negative inset: hosted cards are drawn bare now, and the -4px
+         pushed a hosted card's own controls 4px past the sheet's tabs on
+         both sides — two segmented controls stacked, edges not meeting. */
+      .ps-host { margin: 2px 0 0; }
       .ps-host > * { display: block; }
 
       /* now playing — music and television in one list */

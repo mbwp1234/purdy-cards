@@ -541,6 +541,50 @@ Object.assign(PurdyShellCard.prototype, {
     }).join("");
   },
 
+  /* What a room reads, and where the number came from.
+   *
+   * A room whose own sensor has gone dark is not a room with no temperature
+   * when something else in it still reports one. The kitchen's Aqara dropped
+   * off the mesh and the desk called the kitchen "offline" while the Climate
+   * sheet, one click away, printed the thermostat on the kitchen wall. Two
+   * surfaces, two answers about one room. `fallback:` names the other sensor
+   * (a climate entity is read for its current_temperature) and `fallback_label`
+   * says which it is, so the substitute is never passed off as the original.
+   * `offSince` is when the room's own sensor stopped, for the "2d" beside it. */
+  _roomRead(r) {
+    const h = this._hass;
+    const own = pcReading(h, r.temp);
+    const t = own.ok ? pcNum(h, r.temp) : null;
+    const hu = pcNum(h, r.humidity);
+    const raw = h.states[r.temp];
+    const offSince = own.ok || !raw ? null : new Date(raw.last_changed).getTime() || null;
+    if (t != null || !r.fallback) return { t, hu, via: null, offSince };
+    const fs = h.states[r.fallback];
+    const fv = !fs ? null : r.fallback.indexOf("climate.") === 0
+      ? Number(fs.attributes.current_temperature) : parseFloat(fs.state);
+    return {
+      t: Number.isFinite(fv) ? fv : null, hu: null,
+      via: r.fallback_label || pcName(h, r.fallback), offSince, viaId: r.fallback,
+    };
+  },
+
+  /* The ring's caption: WHOSE number it is.
+   *
+   * `climate.gttc` publishes the active zone's temperature as its own, so with
+   * the 2nd floor selected the ring read 71 and was captioned KITCHEN — the
+   * thermostat's room — while the thermostat itself read 70. When the reading
+   * matches a configured zone's sensor, that zone is what it is. Otherwise the
+   * configured `hero_label` stands. */
+  _climateSource(sec, cur) {
+    const h = this._hass;
+    const zc = sec.zones || {};
+    const act = pcState(h, zc.select);
+    const z = (zc.options || []).find((o) => o.option === act);
+    const zt = z ? pcNum(h, z.temp) : null;
+    if (z && cur != null && zt != null && Math.abs(zt - cur) < 0.6) return z.label || z.option;
+    return sec.hero_label || "now";
+  },
+
   _secClimate(sec) {
     const h = this._hass;
     const th = h.states[sec.goal] || h.states[sec.thermostat];
@@ -591,11 +635,15 @@ Object.assign(PurdyShellCard.prototype, {
       return Number.isFinite(lo) && Number.isFinite(hi) && hi > lo ? { lo, hi } : null;
     })() : null;
     const rooms = (sec.rooms || []).map((r) => {
-      const t = pcNum(h, r.temp), hu = pcNum(h, r.humidity);
-      return `<div class="ps-rml" data-info="${psEsc(r.temp)}">
-          <span class="ps-rn ps-trunc">${psEsc(r.name || pcName(h, r.temp))}</span>
-          ${spark ? `<span class="ps-spark">${this._sparkSvg(r.temp, sparkScale)}</span>` : ""}
-          <span class="ps-v">${t == null ? "—" : t.toFixed(1) + "°"}</span>
+      const { t, hu, via, offSince } = this._roomRead(r);
+      /* One word for a room that has no reading, on every surface: the desk
+         said "offline" and this said "—" about the same dead sensor. */
+      const dead = t == null && offSince != null;
+      return `<div class="ps-rml${dead ? " off" : ""}" data-info="${psEsc(r.temp)}">
+          <span class="ps-rn ps-trunc">${psEsc(r.name || pcName(h, r.temp))}${
+            via ? `<i class="ps-via"> · ${psEsc(via)}</i>` : ""}</span>
+          ${spark ? `<span class="ps-spark">${via ? "" : this._sparkSvg(r.temp, sparkScale)}</span>` : ""}
+          <span class="ps-v">${t == null ? (dead ? "offline" : "—") : pcDeg(t) + "°"}</span>
           <span class="ps-h">${hu == null ? "" : hu.toFixed(1) + "%"}</span>
         </div>`;
     }).join("");
@@ -623,8 +671,8 @@ Object.assign(PurdyShellCard.prototype, {
                 caption has about seven characters, which a room name fits and
                 a job title does not. Defaults to "now" so an install that
                 does not set it is unchanged. */""}
-          <div class="ps-rv"><b>${cur == null ? "—" : Number(cur).toFixed(1) + "°"}</b><small>${
-            psEsc(sec.hero_label || "now")}</small></div>
+          <div class="ps-rv"><b>${cur == null ? "—" : pcDeg(cur) + "°"}</b><small>${
+            psEsc(this._climateSource(sec, cur))}</small></div>
         </div>
         <div class="ps-grow">
           <div class="ps-row">
@@ -927,6 +975,7 @@ Object.assign(PurdyShellCard.prototype, {
         <div class="ps-cdt ${d === 0 ? "today" : ""}">
           <div class="ps-dw">${day.toLocaleDateString([], { weekday: "short" })}</div>
           <div class="ps-dn">${day.getDate()}</div>
+          ${this._dayOff(day.getTime()) ? `<div class="ps-doff">off</div>` : ""}
         </div>
         <div class="ps-cev">${evs.length
           ? evs.map((e) => `<div class="ps-ev"><i style="background:${psEsc(e.color)}"></i>

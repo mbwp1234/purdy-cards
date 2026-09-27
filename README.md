@@ -293,6 +293,23 @@ An entity that is *gone* has no `last_changed` to fire at, and `0` would be wors
 
 `purdy-shell-card` and `purdy-desk-card` take the same two keys in their `attention:` block, and apply them to `server:` faults as well.
 
+#### `offline:` — sensors nothing else is watching
+
+`watch_stale` covers a rule's *own* entity. An `offline:` rule covers the sensors no other rule is about — room temperatures, a door contact — for the case where the absence is the fault. A battery rule cannot catch a sensor that has fallen off the mesh: its low-battery flag goes `unknown` along with the device.
+
+```yaml
+attention:
+  - key: off                         # keep keys short — the dismissal store is 255 chars
+    severity: warn
+    for_min: 120                     # a restart or a blip must not raise a row
+    offline:
+      - entity: sensor.<room>_temperature
+        name: Kitchen
+      - binary_sensor.<door>          # a bare id works too; the friendly name is used
+```
+
+One row names up to two sensors ("Kitchen + Office offline · 2d") and counts beyond that. The wording carries the **oldest** outage; `firedAt` is the **newest**, so a second sensor dropping re-raises a dismissed row while the first one's age stays honest.
+
 #### Offline
 
 Losing the websocket changes no entity's state — every one keeps its last-known-good value. Which is exactly why the card could not previously say so: nothing re-rendered, because the only thing that would have was an entity change, and entity changes are what had stopped arriving. The connection state now leads the render signature.
@@ -378,6 +395,8 @@ unread:
 ```
 
 Items are split into **Active** and **Dismissed**. Active rows can be dismissed; dismissed rows can be restored. *Clear history* removes completed items for good.
+
+**Update notices fold into one row.** Unraid writes a `Version update …` notice per container per release and a `Plugins` notice per plugin. They are one job, not fifty rows, so every active info-level update notice becomes a single "N updates waiting" row that names what is waiting and carries one **Clear updates** action. `group_updates: false` opts out.
 
 `unread` is an optional row of counter chips for an upstream system that tracks its own unread state — Unraid, for instance. Zero counts are dropped, so a quiet source shows nothing.
 
@@ -930,6 +949,27 @@ A sheet hosts either a foreign card (`card:`) or one of our own sections (`secti
 
 One definition, three widths. Above 1180px it is the fixed three-tier sheet. Below that the strip wraps and the stage becomes two columns, then one, and the sheet stops being viewport-height. It never tries to become the phone view — that already exists.
 
+### Shared config keys added for the desk audit
+
+These keys belong to the phone's section blocks, so both cards honour them.
+
+```yaml
+# calendar section: a workday calendar is a day flag, not events
+entities:
+  - entity: calendar.<workday-sensor>
+    workday: true                    # days it leaves empty are marked "off"
+# climate section: a room whose own sensor is dark reads a substitute, named
+rooms:
+  - name: Kitchen
+    temp: sensor.<kitchen>_temperature
+    fallback: climate.<thermostat>   # a climate entity is read for current_temperature
+    fallback_label: thermostat
+# a hosted purdy-remote-card on a mouse-driven screen
+apps_wrap: true                      # wrap the app tiles instead of a sideways strip
+```
+
+Calendar titles lose emoji at their **ends** (an inner emoji is part of what was typed). The climate ring's caption names the **zone** it is reading when the reading matches a configured zone's sensor, and falls back to `hero_label` otherwise. Temperatures are drawn at the precision they were published at.
+
 ## `purdy-desk2-card` — the desk as a subclass of the shell
 
 The phone's config, drawn for a desk. It is a subclass of `purdy-shell-card`, so
@@ -964,12 +1004,25 @@ house:                         # optional extra House rows
 - **A correction steps back to where it came from.** A nap edit or a
   sleep-log entry opened from the Joel drawer returns to the Joel drawer when it
   closes.
-- **"All clear" opens the notification log** rather than an empty sheet.
+- **The faults are named in the header's middle**, one chip each, worst first,
+  three at most and the rest as `+N`. With nothing raised the middle is empty.
+  The absence of chips is the all-clear. With nothing raised, the rail's bell
+  counts the notification log's open warnings and alerts (not its info rows).
+- **Now playing names the room and volume** above the title.
+- **The Joel drawer adds rather than repeats.** It leaves out the day rail and
+  week raster the column already draws (`_secNursery(sec, {omit})`), and adds
+  trend plots over the fetch window: asleep against his band, visits a night,
+  naps a day, and last night against his usual in numbers.
+- **PurdyNAS Overview is the server on one page**: identity, pools and every
+  array disk; CPU, fans, network and power; running containers and parity.
+  Power sits behind a disclosure.
 - **Graphs scrub on hover.** The captions say so.
 - **Breakpoints are container queries.** They respond to the card's own size,
   not the window's. At 1800px wide, weather gets its own column with the hourly
-  strip. Under 1366px wide, Ahead folds into a single "Next" row in House. Under
-  820px and 700px tall, the stage tightens in two steps.
+  strip. At 1000px tall, the extra height goes to the night rail, the 24h
+  climate graph and the crew's rings. Under 820px tall, his week draws thin.
+  Under 700px tall, the week's weather becomes rows and each House row drops to
+  one fact (an amber row keeps its reason).
 - **The server's pages lay out in columns**, and the container list becomes a
   grid. The now-playing bar stays in the tab row, so entering a mode never takes
   away the pause button.

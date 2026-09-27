@@ -362,8 +362,9 @@ Object.assign(PurdyShellCard.prototype, {
    * in the data draws as a stub, an absent day hatches, a flat day still shows)
    * are the zero-versus-missing rules, and a second copy of them on the desk
    * could regress on its own without anything saying so. */
-  _wxCapsule(lo, hi, dom, markAt, p) {
+  _wxCapsule(lo, hi, dom, markAt, p, extra) {
     const c = p || "ps-wx";
+    const x = extra ? " " + extra : "";
     const pct = (v) => ((v - dom.lo) / dom.span) * 100;
     const clamp = (v) => Math.max(0, Math.min(100, v));
     const mark = markAt == null ? "" :
@@ -384,7 +385,7 @@ Object.assign(PurdyShellCard.prototype, {
        cap rather than a zero-height div. */
     const h = Math.max(5, clamp(pct(hi)) - b);
     return `<div class="${c}track">
-        <i class="${c}cap" style="bottom:${b.toFixed(1)}%;height:${h.toFixed(1)}%"></i>${mark}
+        <i class="${c}cap${x}" style="bottom:${b.toFixed(1)}%;height:${h.toFixed(1)}%"></i>${mark}
       </div>`;
   },
 
@@ -571,6 +572,25 @@ Object.assign(PurdyShellCard.prototype, {
     return `<div class="ps-railbox"><div class="ps-wxrail" style="--n:${rows.length}">${cells}</div></div>`;
   },
 
+  /* The forecast's days, with TODAY made whole.
+   *
+   * Late in the day NWS drops the daytime period, so today arrives as a low
+   * with no high and the column drew an empty tube under an orange dash —
+   * on an evening when the yard had measured 82°. The house KNOWS today:
+   * `_wxTodayRange()` is already the envelope of the measured statistics and
+   * whatever the forecast still holds. Today takes it, and `meas` says the
+   * high came from the thermometer rather than the provider, so the column
+   * can draw that difference instead of hiding it. */
+  _wxFcDays(sec) {
+    const shown = (this._wxFc || []).slice(0, sec.forecast_days || 7);
+    return shown.map((d) => {
+      if (!d.today || d.hi != null) return d;
+      const r = this._wxTodayRange();
+      if (r.hi == null) return d;
+      return { ...d, hi: r.hi, lo: r.lo == null ? d.lo : r.lo, meas: true };
+    });
+  },
+
   _wxForecastRail(sec) {
     if (this._wxFcErr) {
       return this._wxBox(`The forecast would not load — ${psEsc(this._wxFcErr)}`, true);
@@ -581,7 +601,7 @@ Object.assign(PurdyShellCard.prototype, {
       return this._wxBox(`${psEsc(sec.forecast || "The provider")} returned no ${
         psEsc(this._wxKind(sec).replace("_", " "))} forecast.`);
     }
-    const shown = rows.slice(0, sec.forecast_days || 7);
+    const shown = this._wxFcDays(sec);
     const dom = this._wxDomain(shown, "fc");
     if (!dom) return this._wxBox("The forecast carried no temperatures.");
 
@@ -595,7 +615,7 @@ Object.assign(PurdyShellCard.prototype, {
       return `<div class="ps-wxday${d.today ? " now" : ""}">
           <ha-icon class="ps-wxi" icon="${psEsc(pcWxIcon(d.condition))}"></ha-icon>
           <span class="ps-wxhi">${this._wxDeg(d.hi)}</span>
-          ${this._wxCapsule(d.lo, d.hi, dom, mark)}
+          ${this._wxCapsule(d.lo, d.hi, dom, mark, null, d.meas ? "meas" : "")}
           <span class="ps-wxlo">${this._wxDeg(d.lo)}</span>
           <span class="ps-wxpcp${pop ? "" : " none"}${d.pop != null && d.pop >= 50 ? " wet" : ""}">${pop || "0%"}</span>
           <span class="ps-wxdw">${psEsc(this._wxDow(d.ts, d.today))}</span>
@@ -703,7 +723,8 @@ Object.assign(PurdyShellCard.prototype, {
      what they publish — NWS has no apparent temperature and no UV index at all,
      so a fixed row list would be half dashes on the most accurate provider
      available. */
-  _wxRows(sec) {
+  _wxRows(sec, skip) {
+    const drop = skip || new Set();
     const h = this._hass;
     const fc = sec.forecast && h.states[sec.forecast];
     const feels = sec.feels_from && h.states[sec.feels_from];
@@ -716,7 +737,9 @@ Object.assign(PurdyShellCard.prototype, {
     };
 
     const rows = [];
-    const add = (k, v, cls) => { if (v != null && v !== "") rows.push([k, v, cls || ""]); };
+    /* A fact already standing in a tile above is not repeated as a row below
+       it — the sheet printed Humidity 93% and Sunrise 7:03 AM twice each. */
+    const add = (k, v, cls) => { if (v != null && v !== "" && !drop.has(k)) rows.push([k, v, cls || ""]); };
 
     /* No "Feels like" row. It is the section's CHIP — and the chip is on screen
        whether this list is expanded or not, three centimetres above it. The desk
@@ -726,7 +749,9 @@ Object.assign(PurdyShellCard.prototype, {
     const hum = pick("humidity");
     const dew = pick("dew_point");
     if (hum != null || dew != null) {
-      add(dew != null ? "Humidity · dew point" : "Humidity",
+      const humTile = drop.has("Humidity");
+      if (humTile && dew != null) add("Dew point", this._wxDeg(dew));
+      else add(dew != null ? "Humidity · dew point" : "Humidity",
         [hum == null ? null : `${Math.round(hum)}%`, dew == null ? null : this._wxDeg(dew)]
           .filter(Boolean).join(" · "));
     }
@@ -959,7 +984,9 @@ Object.assign(PurdyShellCard.prototype, {
       : `<span class="ps-wxlb">Measured</span><span class="ps-wxrb">${
         psEsc(nHist > st.days ? "min–max, plus today so far" : "min–max range")}</span>`;
 
-    return `${this._wxTodayFacts(sec, todayR)}
+    const factsHtml = this._wxTodayFacts(sec, todayR);
+    const tiles = new Set((factsHtml.match(/<span>([^<]+)<\/span>/g) || []).map((x) => x.replace(/<\/?span>/g, "")));
+    return `${factsHtml}
       ${this._wxNote(sec)}
       ${/* The window is named ONCE, here, rather than three times as "MIN 7D
             / AVG 7D / MAX 7D" — which is what it was, and each of the three
@@ -975,7 +1002,7 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-wxrh">${railLabel}</div>
       ${rail === "forecast" ? this._wxForecastRail(sec) : this._wxHistoryRail(sec, live)}
       ${this._wxHourly(sec)}
-      ${this._wxRows(sec)}`;
+      ${this._wxRows(sec, tiles)}`;
   },
 
   _secWeather(sec) {
