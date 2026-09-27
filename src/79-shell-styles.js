@@ -1657,6 +1657,9 @@ const PS_STYLES = `
       .ps-sygraph svg { width: 100%; height: 46px; display: block; }
 
       .ps-syfans { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; }
+      /* A bar elsewhere on the page spans its card's grid; in the fan grid it
+         is the middle column, or every label lands under the previous bar. */
+      .ps-syfans .ps-sybar { grid-column: auto; }
       .ps-syfk { font-size: var(--pc-fs-micro); color: var(--ps-dim); font-variant-numeric: tabular-nums; }
       .ps-syfv { font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums;
                  white-space: nowrap; }

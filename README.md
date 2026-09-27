@@ -929,3 +929,47 @@ A sheet hosts either a foreign card (`card:`) or one of our own sections (`secti
 ### Folding down
 
 One definition, three widths. Above 1180px it is the fixed three-tier sheet. Below that the strip wraps and the stage becomes two columns, then one, and the sheet stops being viewport-height. It never tries to become the phone view — that already exists.
+
+## `purdy-desk2-card` — the desk as a subclass of the shell
+
+The phone's config, drawn for a desk. It is a subclass of `purdy-shell-card`, so
+every section renderer, sheet, handler and derivation is the phone's own. The
+file adds layout and nothing else: a labelled rail, a one-line header, a stage of
+columns, and a drawer on the right that is the phone's sheet.
+
+```yaml
+type: custom:purdy-desk2-card
+# …every top-level key the phone card takes, plus:
+stage:
+  joel: joel                   # section KEYS, not copied blocks
+  climate: clim
+  weather: wx
+  side: [now, ahead, crew]
+house:                         # optional extra House rows
+  - entity: sensor.<doors-and-windows>
+    name: Doors
+    alert_when: ["1 open", "2 open"]
+  - entity: input_select.<occupancy>
+    name: Occupancy
+    on_when: [Away]
+```
+
+- **Every column opens its full phone section in the drawer.** Joel opens the
+  nursery section at twice phone width in two columns. The Climate label opens
+  the climate section, including the scrubbable 24h graph. The Weather column
+  opens the week sheet, with the hourly strip and measured vs forecast.
+- **The rail is the phone's `dock:`, stood on end and labelled.** Keys `1`–`9`
+  press the entries in the order they are drawn. They never fire while you are
+  typing in a field or holding a modifier key. `Esc` closes the drawer.
+- **A correction steps back to where it came from.** A nap edit or a
+  sleep-log entry opened from the Joel drawer returns to the Joel drawer when it
+  closes.
+- **"All clear" opens the notification log** rather than an empty sheet.
+- **Graphs scrub on hover.** The captions say so.
+- **Breakpoints are container queries.** They respond to the card's own size,
+  not the window's. At 1800px wide, weather gets its own column with the hourly
+  strip. Under 1366px wide, Ahead folds into a single "Next" row in House. Under
+  820px and 700px tall, the stage tightens in two steps.
+- **The server's pages lay out in columns**, and the container list becomes a
+  grid. The now-playing bar stays in the tab row, so entering a mode never takes
+  away the pause button.

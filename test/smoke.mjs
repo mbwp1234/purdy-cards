@@ -10522,5 +10522,105 @@ check('desk2 breakpoints are container queries, not media queries',
 check('Esc closes the drawer and the listener is removed on disconnect',
   /window\.addEventListener\("keydown", this\._pd2Key\)/.test(d2Src) && /window\.removeEventListener\("keydown", this\._pd2Key\)/.test(d2Src));
 
+
+/* v1.87.0 — every feature, translated. */
+check('desk2: closing a nap correction opened from Joel steps back to Joel', (() => {
+  const x = new D2(); x.setConfig(d2Base()); x._hass = d2Hass();
+  x._sheet = 'joel'; x._pd2Track();
+  x._sheet = 'napedit'; x._pd2Track();
+  x._sheet = null; x._pd2Track();
+  const back = x._sheet === 'joel';
+  x._sheet = null; x._pd2Track();
+  return back && x._sheet === null;
+})());
+check('desk2: Home from a nap correction closes outright rather than stepping back', (() => {
+  const x = new D2(); x.setConfig(d2Base()); x._hass = d2Hass();
+  x._sheet = 'joel'; x._pd2Track(); x._sheet = 'napedit'; x._pd2Track();
+  x._sheet = null; x._pd2Home = true; x._pd2Track();
+  return x._sheet === null;
+})());
+check('desk2: a sheet opened from anywhere else closes to the stage', (() => {
+  const x = new D2(); x.setConfig(d2Base()); x._hass = d2Hass();
+  x._sheet = 'lights'; x._pd2Track(); x._sheet = 'napedit'; x._pd2Track();
+  x._sheet = null; x._pd2Track();
+  return x._sheet === null;
+})());
+check('desk2 rail: labelled, and numbered in drawn order for the keyboard', (() => {
+  const r = d2._dkRail([]);
+  return /<span>Lights<\/span>/.test(r) && /data-key="1"/.test(r) && /data-dock="1"[^>]*data-key="2"/.test(r);
+})());
+check('desk2 rail: a hidden entry takes no number, so the keys follow what is drawn', (() => {
+  const c = d2Base(); c.dock[2].visible_to = ['someone-else'];
+  const x = new D2(); x.setConfig(c); x._hass = d2Hass();
+  return /data-dock="3"[^>]*data-key="3"/.test(x._dkRail([]));
+})());
+check('desk2 keys: a digit typed into a field is never a shortcut', (() => {
+  const x = new D2(); x.setConfig(d2Base()); x._hass = d2Hass();
+  let clicked = 0;
+  x.shadowRoot = { querySelector: () => ({ click: () => { clicked++; } }) };
+  const ev = (path) => ({ key: '2', composedPath: () => path, preventDefault() {} });
+  x._pd2Key(ev([{ tagName: 'INPUT' }]));
+  const typed = clicked;
+  x._pd2Key(ev([{ tagName: 'DIV' }]));
+  x._pd2Key({ key: '2', metaKey: true, composedPath: () => [] });
+  return typed === 0 && clicked === 1;
+})());
+check('desk2 rail: the bell carries a count when something is raised',
+  /pd2-badge">2</.test(d2._dkRail([{ severity: 'warn' }, { severity: 'info' }])));
+check('desk2: the climate column opens the phone climate section in the drawer', (() => {
+  const x = new D2(); x.setConfig(d2Base()); x._hass = d2Hass();
+  x._sheet = 'climate';
+  const h = x._sheetHtml([]);
+  return /data-sheet="climate"/.test(x._dkClimate(x._pd2Sec('clim'))) && /pd2-csheet/.test(h) && /ps-rmlist/.test(h);
+})());
+check('desk2: the climate drawer chrome draws no chip the section already draws', (() => {
+  const x = new D2(); x.setConfig(d2Base()); x._hass = d2Hass();
+  x._sheet = 'climate';
+  return !/pd2-shchips/.test(x._sheetHtml([]));
+})());
+check('desk2: the climate column carries the season switch when one is configured', (() => {
+  const c = d2Base(); c.sections[1].season = { entity: 'select.season' };
+  const x = new D2(); x.setConfig(c); const hs = d2Hass(); hs.states['select.season'] = { state: 'Cooling', attributes: {} }; x._hass = hs;
+  return /ps-season/.test(x._dkClimate(x._pd2Sec('clim'))) && /data-season="heat"/.test(x._dkClimate(x._pd2Sec('clim')));
+})());
+check('desk2 and phone draw the same climate chips from one method',
+  /this\._climateChips\(sec\)/.test(d2Src) &&
+  /const chips = this\._climateChips\(sec\);/.test(fs.readFileSync(new URL('../src/71-shell-sections.js', import.meta.url), 'utf8')));
+check('desk2: the weather column is one door onto the week sheet', /data-pd2open="wx"/.test(d2._dkWeather(d2._pd2Sec('wx'))));
+check('desk2: the thermometer history is still reachable from the week sheet', (() => {
+  const c = d2Base(); c.weather_temp = 'sensor.out';
+  const x = new D2(); x.setConfig(c); x._hass = d2Hass(); x._sheet = 'wx';
+  return /data-info="sensor\.out"/.test(x._sheetHtml([]));
+})());
+check('desk2: "All clear" opens the notification log instead of an empty sheet', (() => {
+  const c = d2Base(); c.sheets.notifications = { title: 'Log', card: { type: 'custom:purdy-notifications-card' } };
+  const x = new D2(); x.setConfig(c); x._hass = d2Hass(); x._sheet = 'alerts';
+  const h = x._sheetHtml([]);
+  return x._sheet === 'notifications' && /ps-host/.test(h);
+})());
+check('desk2 House: extra rows name the state, go amber on alert_when, and open more-info', (() => {
+  const c = d2Base(); c.house = [{ entity: 'sensor.doors', name: 'Doors', alert_when: ['2 open'] },
+    { entity: 'sensor.gone', name: 'Gone' }];
+  const x = new D2(); x.setConfig(c); const hs = d2Hass();
+  hs.states['sensor.doors'] = { state: '2 open', attributes: {} };
+  hs.states['sensor.gone'] = { state: 'unavailable', attributes: {} };
+  x._hass = hs;
+  const h = x._dkHouse(x._pd2Sec('crew'));
+  return /pd2-dot warn"><\/span><b>Doors[\s\S]*?2 open/.test(h) && /data-info="sensor\.doors"/.test(h) &&
+    /<b>Gone<\/b>[\s\S]*?Not reporting/.test(h) && x._collectWatched().includes('sensor.doors');
+})());
+check('desk2 scrub hint names hover, the phone names a hold',
+  new D2()._scrubHint() === 'hover to scrub' && new SH()._scrubHint() === 'press and hold to scrub');
+check('scrub readout is looked up beside its plot first', (() => {
+  const src = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+  return /box\.parentElement\.querySelector\(`\[data-readout="\$\{kind\}"\]`\)/.test(src);
+})());
+check('desk2 wide climate graph has its own readout to scrub into', /pd2-wlg" data-readout="wave"/.test(d2clim));
+check('the fan bars sit in the middle column of their grid, not across it',
+  /\.ps-syfans \.ps-sybar \{ grid-column: auto; \}/.test(fs.readFileSync(new URL('../src/79-shell-styles.js', import.meta.url), 'utf8')));
+check('desk2 Joel column carries his week when the screen is tall enough', (() => {
+  return /pd2-week/.test(d2Src) && /@container pd2 \(min-height: 880px\) \{ \.pd2-week \{ display: block; \} \}/.test(d2StyleSrc);
+})());
+
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);

@@ -315,6 +315,11 @@ Object.assign(PurdyShellCard.prototype, {
 
   /* snake_case out of an integration is not a label. `manual_override` was
      rendering verbatim as the only such string on the screen. */
+  /* How a graph asks to be read. A phone has to be held; a pointer hovers.
+     The desk overrides this, so a hint never names a gesture the surface
+     it is drawn on does not use. */
+  _scrubHint() { return "press and hold to scrub"; },
+
   _humanize(s) {
     const t = String(s == null ? "" : s).replace(/[_-]+/g, " ").trim();
     return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
@@ -501,6 +506,41 @@ Object.assign(PurdyShellCard.prototype, {
       <div class="ps-xtra">${idle ? `<div class="ps-vits" style="margin-top:0">${vitals}</div>${this._hypnoSvg(sec)}` : ""}${rows}</div>`;
   },
 
+  /* The climate chips — GTTC's season recommendation and the configured ones.
+     Lifted out of _secClimate so the desk's climate column draws the SAME
+     chips rather than a second list of them. */
+  _climateChips(sec) {
+    const h = this._hass;
+    /* GTTC's own recommendation, said where the switch is. Only when it is
+       actually recommending — "no change" is not a fact worth a chip. */
+    const seasonRec = this._seasonRecommendation(sec);
+    return (seasonRec ? `<span class="ps-chip warn">${psEsc(seasonRec)}</span>` : "") + (sec.chips || []).map((ch) => {
+      /* `select.gttc_schedule_mode` names the BASE weekday/weekend lists, not
+         the plan in force — GTTC runs a preset situationally and leaves
+         active_preset null. A chip reading "Weekday/Weekend" while the `home`
+         preset drives the house is worse than no chip. This one asks the
+         schedule which scope actually owns the live window. */
+      if (ch.source === "schedule_preset") {
+        const scope = this._detectScope();
+        const labels = (this._sched && this._sched.preset_labels) || {};
+        if (!this._sched) return "";
+        const txt = scope ? (labels[scope] || scope) : "Base";
+        return `<span class="ps-chip">${psEsc(ch.name || "Running:")} ${psEsc(this._humanize(txt))}</span>`;
+      }
+      const vis = ch.visible;
+      if (vis) {
+        const list = Array.isArray(vis) ? vis : [vis];
+        const ok = list.every((v) => {
+          const st = pcState(h, v.entity);
+          return v.state !== undefined ? st === v.state : st !== v.state_not;
+        });
+        if (!ok) return "";
+      }
+      const val = ch.show_state ? " " + pcState(h, ch.entity) : "";
+      return `<span class="ps-chip ${ch.style === "warn" ? "warn" : ""}">${psEsc(ch.name)}${psEsc(val)}</span>`;
+    }).join("");
+  },
+
   _secClimate(sec) {
     const h = this._hass;
     const th = h.states[sec.goal] || h.states[sec.thermostat];
@@ -560,34 +600,7 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }).join("");
 
-    /* GTTC's own recommendation, said where the switch is. Only when it is
-       actually recommending — "no change" is not a fact worth a chip. */
-    const seasonRec = this._seasonRecommendation(sec);
-    const chips = (seasonRec ? `<span class="ps-chip warn">${psEsc(seasonRec)}</span>` : "") + (sec.chips || []).map((ch) => {
-      /* `select.gttc_schedule_mode` names the BASE weekday/weekend lists, not
-         the plan in force — GTTC runs a preset situationally and leaves
-         active_preset null. A chip reading "Weekday/Weekend" while the `home`
-         preset drives the house is worse than no chip. This one asks the
-         schedule which scope actually owns the live window. */
-      if (ch.source === "schedule_preset") {
-        const scope = this._detectScope();
-        const labels = (this._sched && this._sched.preset_labels) || {};
-        if (!this._sched) return "";
-        const txt = scope ? (labels[scope] || scope) : "Base";
-        return `<span class="ps-chip">${psEsc(ch.name || "Running:")} ${psEsc(this._humanize(txt))}</span>`;
-      }
-      const vis = ch.visible;
-      if (vis) {
-        const list = Array.isArray(vis) ? vis : [vis];
-        const ok = list.every((v) => {
-          const st = pcState(h, v.entity);
-          return v.state !== undefined ? st === v.state : st !== v.state_not;
-        });
-        if (!ok) return "";
-      }
-      const val = ch.show_state ? " " + pcState(h, ch.entity) : "";
-      return `<span class="ps-chip ${ch.style === "warn" ? "warn" : ""}">${psEsc(ch.name)}${psEsc(val)}</span>`;
-    }).join("");
+    const chips = this._climateChips(sec);
 
     const wave = this._waveSvg(sec);
     const inNow = pcNum(h, (sec.graph || {}).inside);
