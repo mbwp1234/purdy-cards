@@ -10332,7 +10332,7 @@ check('_renderPre is called by the shell render and the desk2 render', (() => {
 check('the _renderPre marker comment appears exactly once',
   (src.match(/_renderPre: THE PREAMBLE EVERY RENDER PATH SHARES/g) || []).length === 1);
 check('the nursery figures come from one model on both surfaces',
-  /_secNursery\(sec\) \{\s*const \{[^}]*\} = this\._nurseryModel\(sec\);/.test(src) &&
+  /_secNursery\(sec(, opts)?\) \{[\s\S]{0,600}?const \{[^}]*\} = this\._nurseryModel\(sec\);/.test(src) &&
   /this\._nurseryModel\(sec\)/.test(d2Src));
 
 /* The two-places rule, for the stage: the slot accept-list and the side
@@ -10452,7 +10452,23 @@ check('desk2 House: the Jeeves amber comes from the crew rules, not new ones',
 check('desk2 Now playing routes are DERIVED (_playTarget), never read from config',
   /_playTarget\("listen"\)/.test(d2Src) && /_playTarget\("watch"\)/.test(d2Src) && !/remote_sheet/.test(d2Src));
 check('desk2 Now playing with the house quiet still opens Media', /data-sheet="media" data-face="listen"/.test(d2._dkNow(d2._pd2Sec('now'))));
-check('desk2: the header fault chip is the shell alert chip', /id="ps-alert"/.test(d2._dkHead(new Date(), [])));
+/* The header names each fault in its middle, and with nothing raised draws
+   NO chip — the absence is the all-clear. */
+check('desk2 header: nothing raised draws no fault chip and no "All clear"', (() => {
+  const hd = d2._dkHead(new Date(), []);
+  return /class="pd2-att"><\/div>/.test(hd) && !/All clear/.test(hd);
+})());
+check('desk2 header: each raised fault is its own named chip, three at most', (() => {
+  const f = (t, sev) => ({ key: t, title: t, detail: '', severity: sev });
+  const hd = d2._dkHead(new Date(), [f('Kitchen offline', 'warn'), f('Parity', 'critical'), f('Washer', 'warn'), f('Drawer', 'warn')]);
+  const att = (/class="pd2-att">([\s\S]*?)<\/div>\s*<div class="pd2-hr">/.exec(hd) || [])[1] || '';
+  return /Kitchen offline/.test(att) && /Parity/.test(att) && /Washer/.test(att) && !/Drawer/.test(att)
+    && />\+1</.test(att) && (att.match(/data-sheet="alerts"/g) || []).length === 4;
+})());
+check('desk2 header: a fault chip prefers the row\'s short wording', (() => {
+  const hd = d2._dkHead(new Date(), [{ key: 'off', title: 'Kitchen offline', short: 'Kitchen offline · 2d', severity: 'warn' }]);
+  return /Kitchen offline · 2d/.test(hd);
+})());
 d2._sheet = 'nope';
 check('desk2: an unknown sheet key renders nothing and does not throw', (() => {
   try { return d2._sheetHtml([]) === ''; } catch (e) { return false; }
@@ -10618,9 +10634,129 @@ check('scrub readout is looked up beside its plot first', (() => {
 check('desk2 wide climate graph has its own readout to scrub into', /pd2-wlg" data-readout="wave"/.test(d2clim));
 check('the fan bars sit in the middle column of their grid, not across it',
   /\.ps-syfans \.ps-sybar \{ grid-column: auto; \}/.test(fs.readFileSync(new URL('../src/79-shell-styles.js', import.meta.url), 'utf8')));
-check('desk2 Joel column carries his week when the screen is tall enough', (() => {
-  return /pd2-week/.test(d2Src) && /@container pd2 \(min-height: 880px\) \{ \.pd2-week \{ display: block; \} \}/.test(d2StyleSrc);
+check('desk2 Joel column carries his week at every height, drawn thin below 820px', (() => {
+  return /pd2-week/.test(d2Src) && /\.pd2-week \{ display: block; \}/.test(d2StyleSrc)
+    && /@container pd2 \(max-height: 819px\) \{\s*\.pd2-week \.ps-jrsl/.test(d2StyleSrc)
+    && !/\.pd2-week \{ display: none; \}/.test(d2StyleSrc);
 })());
+
+/* ============================================================ desk audit ==
+ * v1.88.0 — the desk2 audit (2026-09-26). Each of these was found in a render
+ * against the live house, not in a test, so each gets one here. */
+{
+  const H = SH.helpers;
+  check('calendar titles lose emoji at their ends only', H.evTitle('\u{1F3CE}️ F1 RACE — Azerbaijan GP \u{1F1E6}\u{1F1FF}') === 'F1 RACE — Azerbaijan GP'
+    && H.evTitle('Pizza \u{1F355} night') === 'Pizza \u{1F355} night' && H.evTitle('\u{1F382}') === '\u{1F382}');
+  check('a temperature keeps the precision it was published at', H.deg(71) === '71' && H.deg(70.24) === '70.2' && H.deg(null) === null);
+  check('ago reads in one unit', H.ago(Date.now() - 30 * 60000) === '30m' && H.ago(Date.now() - 50 * 3600000) === '2d');
+
+  /* offline rule */
+  const oc = new SH();
+  oc.setConfig({ attention: [{ key: 'off', offline: [{ entity: 'sensor.k', name: 'Kitchen' }, { entity: 'sensor.o', name: 'Office' }, 'sensor.ok'], for_min: 60 }], sections: [] });
+  const ago = (m) => new Date(Date.now() - m * 60000).toISOString();
+  oc._hass = { states: {
+    'sensor.k': { state: 'unavailable', last_changed: ago(2 * 1440), attributes: {} },
+    'sensor.o': { state: 'unavailable', last_changed: ago(2 * 1440 - 5), attributes: {} },
+    'sensor.ok': { state: '70', last_changed: ago(5), attributes: {} },
+  } };
+  const orow = oc._raised().find((r) => r.key === 'off');
+  check('offline rule: sensors dark past for_min raise ONE row naming them', !!orow && /Kitchen \+ Office offline/.test(orow.title) && orow.severity === 'warn');
+  check('offline rule: the wording carries the OLDEST outage, firedAt the NEWEST', !!orow && /· 2d$/.test(orow.short)
+    && orow.firedAt === Math.floor(new Date(oc._hass.states['sensor.o'].last_changed).getTime() / 1000));
+  oc._hass.states['sensor.k'].last_changed = ago(20); oc._hass.states['sensor.o'].state = '68';
+  check('offline rule: a blip under for_min raises nothing', !oc._raised().some((r) => r.key === 'off'));
+  check('offline rule: its entities are watched', oc._collectWatched().includes('sensor.k') && oc._collectWatched().includes('sensor.ok'));
+
+  /* room fallback + zone caption */
+  const rc = new SH();
+  rc.setConfig({ sections: [] });
+  rc._hass = { states: {
+    'sensor.kt': { state: 'unavailable', last_changed: ago(3000), attributes: {} },
+    'climate.t6': { state: 'heat', attributes: { current_temperature: 70 } },
+    'select.z': { state: '2nd Floor', attributes: {} }, 'sensor.z2': { state: '71.4', attributes: {} },
+  } };
+  const rr = rc._roomRead({ temp: 'sensor.kt', fallback: 'climate.t6', fallback_label: 'thermostat' });
+  check('a dead room sensor falls back to the named substitute, and says so', rr.t === 70 && rr.via === 'thermostat' && rr.offSince > 0);
+  check('with no fallback, a dead room reads missing — never a number', rc._roomRead({ temp: 'sensor.kt' }).t === null);
+  const zsec = { hero_label: 'Kitchen', zones: { select: 'select.z', options: [{ label: '2nd Floor', option: '2nd Floor', temp: 'sensor.z2' }] } };
+  check('the climate ring is captioned by the zone it is actually reading', rc._climateSource(zsec, 71) === '2nd Floor' && rc._climateSource(zsec, 65) === 'Kitchen');
+
+  /* workday flag */
+  const wc = new SH();
+  wc.setConfig({ sections: [{ type: 'calendar', key: 'c', entities: [{ entity: 'calendar.a' }, { entity: 'calendar.w', workday: true }] }] });
+  const mon = new Date(); mon.setHours(0, 0, 0, 0);
+  wc._hass = { states: {}, callApi: async (m, url) => url.indexOf('calendar.w') >= 0
+    ? [{ summary: 'Workday Sensor', start: { date: H.localDayKey(mon.getTime()) } }]
+    : [{ summary: '\u{1F382} Birthday', start: { date: H.localDayKey(mon.getTime() + 86400000) } }] };
+  wc._render = () => {};
+  await wc._fetchEvents();
+  if (wc._eventTimer) clearInterval(wc._eventTimer);
+  check('a workday calendar is a day flag, never events', wc._events.length === 1 && wc._events[0].name === 'Birthday');
+  check('_dayOff marks the days the workday calendar left empty', wc._dayOff(mon.getTime()) === false && wc._dayOff(mon.getTime() + 86400000) === true);
+  check('with no workday calendar, no day is marked off', new SH()._dayOff(Date.now()) === null);
+
+  /* weather: today from the thermometer once the provider drops its high */
+  const xc = new SH();
+  xc.setConfig({ sections: [] });
+  xc._wxFc = [{ today: true, ts: Date.now(), hi: null, lo: 58, pop: 24 }, { ts: Date.now() + 86400000, hi: 72, lo: 60 }];
+  xc._wxStats = [{ partial: true, min: 53.6, max: 81.9 }];
+  const fd = xc._wxFcDays({});
+  check('weather: today takes the measured range when the forecast has dropped its high', fd[0].hi === 81.9 && fd[0].lo === 53.6 && fd[0].meas === true && !fd[1].meas);
+  check('weather: a measured today is drawn as measured', /ps-wxcap meas/.test(xc._wxForecastRail({ forecast_days: 7 })));
+  check('weather sheet: a fact standing in a tile is not repeated as a row', (() => {
+    const t = xc._wxRows.toString();
+    return /drop\.has\(k\)/.test(t);
+  })());
+
+  /* crew: the pause glyph is drawn FILLED */
+  check('crew: the start/pause disc draws a glyph its fill-only style can show', (() => {
+    const crewSrc = fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8');
+    const i = crewSrc.indexOf('<span class="ps-cwplay">');
+    const seg = crewSrc.slice(i, i + 400);
+    return i > 0 && !/M9 5v14M15 5v14/.test(seg) && /M7 5h3\.5v14H7z/.test(seg);
+  })());
+
+  /* nursery: visits in words */
+  check('night rail says "no visits", never "0 in"', /"no visits"/.test(src) && !/\$\{night\.interventions\} in`/.test(src));
+
+  /* notifications: updates fold into one row */
+  check('notification log folds update notices into one row with one action', /id="clearupd"/.test(src) && /version update\|plugins\?/.test(src));
+
+  /* NAS */
+  check('NAS: identical network rows fold into the first', /twin\.also\.push/.test(src));
+  check('NAS: the CPU trace is cut to 24h before it is drawn', /p\.t >= from/.test(src));
+  check('NAS: the docker page labels its figures as the containers\'', /Containers CPU/.test(src) && /vDisk pool/.test(src));
+
+  /* desk2 */
+  const dq = new D2();
+  const dcfg = d2Base();
+  dcfg.sections[1].rooms[1].fallback = 'climate.t';
+  dcfg.sections[1].rooms[1].fallback_label = 'thermostat';
+  dq.setConfig(dcfg);
+  dq._hass = d2Hass();
+  dq._testNow = d2._testNow;
+  const dclim = dq._dkClimate(dq._pd2Sec('clim'));
+  check('desk2 climate: the fallback room shows the substitute, named', /Kitchen<small>thermostat<span class="pd2-offage"> · sensor off<\/span><\/small>/.test(dclim) && /73°/.test(dclim));
+  check('desk2 climate: no humidity under the ring — it was one room\'s', !/% RH/.test(dclim));
+  check('desk2 weather: rows exist for the short window', typeof dq._dkWxRows === 'function' && /pd2-wxrows/.test(d2StyleSrc) && /\.pd2-wxrows \{ display: grid; \}/.test(d2StyleSrc));
+  check('desk2 House: a short value exists for the two-column grid', /pd2-short/.test(dq._dkHouse(dq._pd2Sec('crew'))));
+  check('desk2 Now playing names the room above the title', /pd2-npw/.test(d2Src) && /vol \$\{vol\}/.test(d2Src));
+  check('desk2 Joel drawer leaves out what the column already draws', /omit: \["raster", "day"\]/.test(d2Src) && /omit\.has\("raster"\)/.test(src) && /omit\.has\("day"\)/.test(src));
+  check('desk2 Joel drawer carries the trend plots', /_dkJoelTrends\(sec\)/.test(d2Src) && /pd2-tplot/.test(d2StyleSrc));
+  check('desk2 NAS overview lays the server out on one page, power behind a disclosure', (() => {
+    dq._pd2Pow = false;
+    const ov = dq._syOverview.toString();
+    return /pd2-nas/.test(ov) && /data-pd2pow="1"/.test(ov) && /this\._syPerf\(s\)/.test(ov);
+  })());
+  check('desk2 rail: the bell counts open warn+ log entries when nothing is raised', /pd2-badge log/.test(d2Src) && /\(critical\|warn\)/.test(d2Src));
+  check('desk2 short-window rules come LAST, so they beat the base rules they override', (() => {
+    const i = d2StyleSrc.lastIndexOf('@container pd2 (max-height: 700px)');
+    const tail = d2StyleSrc.slice(i);
+    return i > 0 && /\.pd2-wxrows \{ display: grid; \}/.test(tail) && /\.pd2-short \{ display: inline; \}/.test(tail)
+      && d2StyleSrc.lastIndexOf('.pd2-short { display: none; }') < i && d2StyleSrc.lastIndexOf('.pd2-house { display: flex;') < i;
+  })());
+  check('desk2 Ahead: off days are marked, and Ahead is no longer hidden when compact', /this\._dayOff\(day\.getTime\(\)\)/.test(d2Src) && !/\.pd2-side \.pd2-ahead, /.test(d2StyleSrc));
+}
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);

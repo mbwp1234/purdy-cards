@@ -869,8 +869,31 @@ class PurdyNotificationsCard extends PcBaseCard {
     if (!this._hass || !this._config || !this._items) return;
     const parsed = this._items.map((it) => this._parse(it));
     parsed.sort((a, b) => (b.at || 0) - (a.at || 0));
-    const active = parsed.filter((p) => !p.done).slice(0, this._config.max);
+    /* Update notices are ONE thing to do, not fifty. Unraid writes a
+       "Version update <hash>" per container per release and a "Plugins" line
+       per plugin, and they filled 50 of 64 active rows — each one saying the
+       NAS page's "1 update" again, burying the alert and the two warnings
+       among them. They fold into a single row naming what is waiting, with
+       one action that clears them all. `group_updates: false` opts out. */
+    const isUpd = (p) => this._config.group_updates !== false && p.severity === "info"
+      && /^(version update|plugins?)\b/i.test(p.summary);
+    const upd = parsed.filter((p) => !p.done && isUpd(p));
+    const updNames = [...new Set(upd.map((p) => {
+      const m = /new version of (.+?) is available/i.exec(p.detail) || /available for:?\s*(.+)$/i.exec(p.detail);
+      return m ? m[1].trim() : null;
+    }).filter(Boolean))];
+    const active = parsed.filter((p) => !p.done && !upd.includes(p)).slice(0, this._config.max);
     const done = parsed.filter((p) => p.done).slice(0, this._config.max);
+    const updRow = !upd.length ? "" : `
+      <div class="n upd">
+        <span class="dot info"></span>
+        <div class="grow">
+          <div class="t">${upd.length} update${upd.length > 1 ? "s" : ""} waiting</div>
+          <div class="d">${pcEsc(updNames.slice(0, 8).join(" · "))}${updNames.length > 8 ? ` · +${updNames.length - 8}` : ""}</div>
+        </div>
+        <span class="when num">${this._rel(upd[0].at)}</span>
+        <button class="clear" type="button" id="clearupd">Clear updates</button>
+      </div>`;
 
     const row = (p) => `
       <div class="n ${p.done ? "done" : ""}">
@@ -896,6 +919,7 @@ class PurdyNotificationsCard extends PcBaseCard {
         .sec:first-of-type { margin-top: 6px; }
         .n { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--pc-line); }
         .n:first-of-type { border-top: none; }
+        .n.upd .d { white-space: normal; }
         .n .t { font-size: 13.5px; font-weight: 600; }
         .n .d { font-size: 12px; color: var(--pc-muted); }
         .n.done .t, .n.done .d { color: var(--pc-muted); }
@@ -939,10 +963,18 @@ class PurdyNotificationsCard extends PcBaseCard {
         </div>
         ${this._unreadHtml()}
 
-        ${active.length ? `
+        ${active.length || updRow ? `
           <div class="sec">
-            <span class="lbl">Active · ${active.length}</span>
-            ${active.map(row).join("")}
+            <span class="lbl">Active · ${active.length + (updRow ? 1 : 0)}</span>
+            ${/* The updates row takes its place by its newest notice, like
+                  every other row, rather than sinking to the bottom. */""}
+            ${(() => {
+    const at = upd.length ? (upd[0].at || 0) : -1;
+    const i = active.findIndex((p) => (p.at || 0) < at);
+    const rows = active.map(row);
+    if (updRow) rows.splice(i < 0 ? rows.length : i, 0, updRow);
+    return rows.join("");
+  })()}
           </div>` : `<div class="empty">Nothing active — the house is quiet.</div>`}
 
         ${done.length ? `
@@ -964,6 +996,14 @@ class PurdyNotificationsCard extends PcBaseCard {
     this.shadowRoot.querySelectorAll("[data-restore]").forEach((el) => {
       el.addEventListener("click", () => { call(el.dataset.restore, "needs_action"); this._fetch(); });
     });
+    const cu = this.shadowRoot.getElementById("clearupd");
+    if (cu) {
+      cu.addEventListener("click", () => {
+        cu.disabled = true;
+        upd.forEach((p) => call(p.uid, "completed"));
+        setTimeout(() => this._fetch(), 500);
+      });
+    }
     const clear = this.shadowRoot.getElementById("clear");
     if (clear) {
       clear.addEventListener("click", () => {

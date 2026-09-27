@@ -260,6 +260,52 @@ Object.assign(PurdyShellCard.prototype, {
     };
   },
 
+  /* `offline:` — sensors that have stopped answering, as ONE row.
+   *
+   * The two Aqara room sensors fell off the mesh at a restart and stayed dark
+   * for two days while the header read "All clear". Nothing was watching for
+   * it: the battery rule reads Battery Notes' `_battery_plus_low`, which goes
+   * `unknown` along with its device, so a sensor that dies takes its own
+   * low-battery alarm down with it. `watch_stale` covers a RULE's entity; this
+   * covers the sensors nothing else raises on — room temperatures, the nursery
+   * door — for the case where the absence is the fault.
+   *
+   * `for_min` (60) keeps a Zigbee blip or a restart from raising a row; the
+   * row carries the OLDEST outage in its wording ("2d") and the NEWEST in
+   * `firedAt`, so a second sensor dropping re-raises a dismissed row while the
+   * first one's age stays honest. A listed entity that is gone from the
+   * registry counts as dark, stamped when first noticed. */
+  _offlineRow(r, key, hass) {
+    const min = r.for_min == null ? 60 : Number(r.for_min);
+    const now = Date.now();
+    const dead = [].concat(r.offline).filter(Boolean)
+      .map((e) => (typeof e === "string" ? { entity: e } : e))
+      .map((e) => {
+        const st = hass.states[e.entity];
+        if (st && st.state !== "unavailable" && st.state !== "unknown") {
+          this._staleClear("of:" + e.entity);
+          return null;
+        }
+        const since = st ? new Date(st.last_changed).getTime() : this._staleSince("of:" + e.entity, null) * 1000;
+        return { entity: e.entity, since, name: e.name || (st && st.attributes.friendly_name) || e.entity };
+      })
+      .filter((e) => e && now - e.since >= min * 60000);
+    if (!dead.length) return null;
+    const oldest = Math.min(...dead.map((d) => d.since));
+    const newest = Math.max(...dead.map((d) => d.since));
+    const who = dead.length <= 2 ? dead.map((d) => d.name).join(" + ") : `${dead.length} sensors`;
+    const when = new Date(oldest).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+    return {
+      key,
+      severity: r.severity || "warn",
+      title: `${who} ${r.title || "offline"}`,
+      detail: `${dead.length > 2 ? dead.map((d) => d.name).join(" · ") + " · " : ""}not reporting since ${when}`,
+      short: `${who} ${r.title || "offline"} · ${pcAgo(oldest)}`,
+      entity: dead.length === 1 ? dead[0].entity : null,
+      firedAt: Math.floor(newest / 1000),
+    };
+  },
+
   /* When did this rule's condition last change? A dismissal older than that
      means the fault re-fired, so the row comes back.
 
@@ -346,6 +392,11 @@ Object.assign(PurdyShellCard.prototype, {
         ? this._staleGroupRow(r, key, hass)
         : this._staleRow(r, key, hass);
       if (stale) out.push(stale);
+      if (r.offline) {
+        const row = this._offlineRow(r, key, hass);
+        if (row) out.push(row);
+        return;
+      }
       if (r.match) {
         const re = new RegExp(r.match);
         const names = Object.keys(hass.states)
@@ -552,7 +603,14 @@ Object.assign(PurdyShellCard.prototype, {
       return `<div class="ps-scrim" id="ps-scrim"></div>
         <div class="ps-sheet tall">
           <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || "Weather")}</span>
-            ${this._wxChip(sec)}${close}</div>
+            ${/* The chip is a roll-up the sheet's own note already opens with
+                  ("Rain Fri · a 14° swing…"), directly beneath it — the chip
+                  rule. It stays only when it says something the note does not. */""}
+            ${(() => {
+    const chip = this._wxChip(sec);
+    const txt = chip.replace(/<[^>]+>/g, "").trim();
+    return txt && this._wxNoteText(sec).indexOf(txt) === 0 ? "" : chip;
+  })()}${close}</div>
           <div class="ps-wxsheet">${this._wxDetailBody(sec)}</div>
         </div>`;
     }

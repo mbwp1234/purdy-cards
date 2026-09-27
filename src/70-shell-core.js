@@ -335,7 +335,10 @@ class PurdyShellCard extends PcBaseCard {
          told. */
       push(p.steps); push(p.distance); push(p.floors); push(p.activity); push(p.watch);
     });
-    (c.attention || []).forEach((r) => push(r.entity));
+    (c.attention || []).forEach((r) => {
+      push(r.entity);
+      [].concat(r.offline || []).forEach((e) => push(typeof e === "string" ? e : e && e.entity));
+    });
     (c.dock || []).forEach((d) => push(d.entity));
     ((c.now_playing || {}).players || []).forEach((p) => push(p.entity));
     c.sections.forEach((sx) => { if (sx.type === "music" && sx.pins) push(sx.pins.store); });
@@ -544,26 +547,39 @@ class PurdyShellCard extends PcBaseCard {
     start.setHours(0, 0, 0, 0);
     const end = new Date(start.getTime() + days * 86400000);
     const out = [];
+    /* `workday: true` on a calendar entity reads it as a DAY FLAG rather than
+       as events. The Workday integration's calendar puts "Workday Sensor" on
+       every weekday, and drawn as events it filled four of six Ahead rows with
+       the news that Monday is a Monday. What it actually knows is which days
+       are OFF, so it becomes a set of working days and each renderer marks
+       the others. Null until a workday calendar has answered, so an install
+       without one draws no "off" anywhere. */
+    let work = null;
     try {
       for (const e of sec.entities) {
         const id = typeof e === "string" ? e : e.entity;
         const color = typeof e === "string" ? null : e.color;
+        const isWork = typeof e === "object" && !!e.workday;
         const res = await this._hass.callApi(
           "GET",
           `calendars/${id}?start=${start.toISOString()}&end=${end.toISOString()}`
         );
+        if (isWork) work = work || new Set();
         (res || []).forEach((ev) => {
           const s = ev.start && (ev.start.dateTime || ev.start.date);
           if (!s) return;
+          const t = new Date(String(s).length <= 10 ? s + "T00:00:00" : s).getTime();
+          if (isWork) { work.add(pcDayKey(t)); return; }
           out.push({
-            name: ev.summary || "Busy",
+            name: pcEvTitle(ev.summary || "Busy"),
             color: color || "var(--ps-cool)",
             allDay: !(ev.start && ev.start.dateTime),
-            t: new Date(String(s).length <= 10 ? s + "T00:00:00" : s).getTime(),
+            t,
           });
         });
       }
       out.sort((a, b) => a.t - b.t);
+      this._workdays = work;
       this._events = out;
       this._last = null;
       this._render();
@@ -572,6 +588,12 @@ class PurdyShellCard extends PcBaseCard {
     }
     if (this._eventTimer) clearInterval(this._eventTimer);
     this._eventTimer = setInterval(() => this._fetchEvents(), 30 * 60 * 1000);
+  }
+
+  /* True for a day the workday calendar left empty, false for a working day,
+     null when no workday calendar is configured or it has not answered. */
+  _dayOff(ms) {
+    return this._workdays ? !this._workdays.has(pcDayKey(ms)) : null;
   }
 
   /* Which sky the hour wears. Dawn 5–9, day 9–17, dusk 17–22, night 22–5 —
@@ -1891,6 +1913,7 @@ class PurdyShellCard extends PcBaseCard {
       wokeAt: psWokeAt,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
       wxIcon: pcWxIcon, wxText: pcWxText, localDayKey: pcDayKey,
+      evTitle: pcEvTitle, deg: pcDeg, ago: pcAgo,
       stepDays: psStepDays, stepStats: psStepStats, stepsBy: psStepsBy,
       healthMeter: psHealthMeter, hmDur: psHmDur, hmDomain: psHmDomain, hmPos: psHmPos,
       /* Haptics come out here because `dev/shoot` cannot see them: a shot has

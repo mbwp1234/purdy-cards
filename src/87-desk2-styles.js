@@ -38,6 +38,7 @@ const PD2_STYLES = `
       .pd2-badge { position: absolute; top: 3px; right: 9px; min-width: 15px; height: 15px; padding: 0 4px;
         border-radius: var(--pc-r-pill); background: var(--ps-bad); color: #fff; font-style: normal;
         font-size: var(--pc-fs-micro); font-weight: 700; line-height: 15px; text-align: center; }
+      .pd2-badge.log { background: var(--ps-warn); color: #1b1300; }
       .pd2-rb:hover { background: var(--pc-fill-1); color: var(--ps-text); }
       .pd2-rb ha-icon { --mdc-icon-size: 20px; }
       .pd2-rb.on { color: #fff; background: rgba(139,124,255,.14); }
@@ -74,6 +75,10 @@ const PD2_STYLES = `
       .pd2-date { margin-top: 7px; font-size: var(--pc-fs-md); color: var(--ps-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
       .pd2-date i, .pd2-status i { font-style: normal; color: var(--ps-dim); margin: 0 6px; }
       .pd2-ppl .ps-pav { gap: 12px; }
+      /* The faults, named, in the header's middle. Empty when nothing is
+         raised — the absence of chips is the all-clear. */
+      .pd2-att { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+      .pd2-att .ps-chip { margin: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .pd2-hr { margin-left: auto; display: flex; align-items: center; gap: 16px; }
       .pd2-hwx { display: flex; align-items: center; gap: 10px; cursor: pointer; }
       .pd2-hwx ha-icon { --mdc-icon-size: 30px; color: #9fb3c6; }
@@ -100,14 +105,11 @@ const PD2_STYLES = `
       @container pd2 (max-width: 1366px) {
         .pd2-stage { grid-template-columns: minmax(0, 1.2fr) 1px minmax(0, 1fr) 1px minmax(0, .8fr); }
         .pd2-col { padding: 18px 22px; gap: 13px; }
-        .pd2-side .pd2-ahead, .pd2-side .pd2-ahead + .pd2-hhair { display: none; }
         .pd2-col.pd2-wx .ps-wxi { display: none; }
         .pd2-col.pd2-wx .ps-wxday { gap: 3px; }
         .pd2-hl h1 { font-size: var(--pc-fs-2xl); }
         .pd2-room { padding: 4px 0; }
       }
-      .pd2-hrow.compact-only { display: none; }
-      @container pd2 (max-width: 1366px) { .pd2-hrow.compact-only { display: flex; } }
       /* wide: 1800 and over — weather gets its own column */
       @container pd2 (min-width: 1800px) {
         .pd2-stage { grid-template-columns: minmax(0, 1.25fr) 1px minmax(0, 1fr) 1px minmax(0, 1fr) 1px minmax(0, .9fr);
@@ -118,6 +120,19 @@ const PD2_STYLES = `
         .pd2-col.pd2-wx .ps-railbox { flex: 0 0 auto; }
         .pd2-col.pd2-wx .ps-wxtrack { flex: 0 0 auto; height: 240px; }
       }
+
+      /* tall: 1000px of glass and more. The extra height goes to real content
+         — the night's own rail under Joel, the 24h graph in Climate, the
+         crew's rings under House — rather than to gaps above each column's
+         last row. */
+      .pd2-tall { display: none; }
+      @container pd2 (min-height: 1000px) {
+        .pd2-tall { display: block; }
+        .pd2-clim .pd2-wide.pd2-graph { display: flex; flex-direction: column; }
+      }
+      .pd2-crewmini { cursor: pointer; border-radius: var(--pc-r-lg); }
+      .pd2-crewmini > * { pointer-events: none; }
+      .pd2-crewmini:hover { background: rgba(255,255,255,.02); }
 
       /* short: the width queries above pick the columns, these pick the
          vertical rhythm. A laptop with the HA header showing leaves ~660px,
@@ -177,8 +192,18 @@ const PD2_STYLES = `
       .pd2-chips { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
       .pd2-lblrow .pd2-chips .ps-chip { margin-left: 0; }
       .pd2-reason { font-size: var(--pc-fs-sm); color: var(--ps-muted); }
-      .pd2-week { display: none; }
-      @container pd2 (min-height: 880px) { .pd2-week { display: block; } }
+      /* His week at every height — hidden, it left the Joel column an 80px
+         gap above the verdict on exactly the windows used most. Below 880px
+         it draws thin: bars without the legend. */
+      .pd2-week { display: block; }
+      @container pd2 (max-height: 819px) {
+        .pd2-week .ps-jrsl { height: 10px; }
+        .pd2-week .ps-jrsb, .pd2-week .ps-jrsgh { height: 8px; top: 1px; }
+        .pd2-week .ps-jrsw { gap: 2px; }
+        .pd2-week .ps-jrsd { line-height: 10px; }
+        .pd2-week .ps-jrslg, .pd2-week .ps-jrsx { display: none; }
+        .pd2-week .ps-hypt { display: none; }
+      }
       .pd2-week .ps-lbl { font-size: var(--pc-fs-micro); }
       .pd2-mode .ps-sygraph svg { height: 110px; }
       .pd2-cbtns { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -203,6 +228,7 @@ const PD2_STYLES = `
       .pd2-ring svg { display: block; }
       .pd2-rv { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
       .pd2-rv b { font-size: var(--pc-fs-3xl); font-weight: 250; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+      .pd2-rv small.pd2-rv2 { margin-top: 2px; }
       .pd2-rv small { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .14em; color: var(--ps-dim); margin-top: 6px; white-space: nowrap; }
       .pd2-ring.sm .pd2-rv b { font-weight: 200; }
       .pd2-rv b u { text-decoration: none; font-size: var(--pc-fs-xl); font-weight: 400; margin: 0 1px; color: var(--ps-muted); }
@@ -256,8 +282,10 @@ const PD2_STYLES = `
       .pd2-spark svg { width: 100%; height: 100%; display: block; }
       .pd2-rt { text-align: right; font-size: var(--pc-fs-lg); font-variant-numeric: tabular-nums; }
       .pd2-rh { text-align: right; color: var(--ps-dim); font-variant-numeric: tabular-nums; }
+      .pd2-rn small { display: block; font-size: var(--pc-fs-micro); color: var(--ps-dim); margin-top: 1px; }
+      .pd2-room.via .pd2-spark { background: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 3px, transparent 3px 7px); }
       .pd2-room.off .pd2-rn { color: var(--ps-muted); }
-      .pd2-room.off .pd2-rt { color: var(--ps-dim); font-size: var(--pc-fs-sm); }
+      .pd2-room.off .pd2-rt { color: var(--ps-warn); font-size: var(--pc-fs-sm); white-space: nowrap; }
       .pd2-room.off .pd2-spark { background: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 3px, transparent 3px 7px); }
       .pd2-graph .ps-wave { max-height: 240px; margin: 6px 0 0; }
       .pd2-hourly { min-width: 0; }
@@ -274,6 +302,21 @@ const PD2_STYLES = `
         .pd2-col.pd2-wx .ps-railbox { flex: 0 0 auto; }
         .pd2-col.pd2-wx .ps-wxtrack { flex: 0 0 auto; height: 220px; max-height: none; }
       }
+      .pd2-wxrows { display: none; gap: 2px; padding: 6px 10px; border-radius: var(--pc-r-md); background: var(--pc-fill-1); }
+      .pd2-wxr { display: grid; grid-template-columns: 44px 30px minmax(0, 1fr) 30px 34px; align-items: center; gap: 8px;
+        height: 20px; font-size: var(--pc-fs-xs); color: var(--ps-muted); font-variant-numeric: tabular-nums; }
+      .pd2-wxr > span:first-child { color: var(--ps-text); font-weight: 600; }
+      .pd2-wxr.now > span:first-child { color: var(--ps-cool); }
+      .pd2-wxr b { color: var(--ps-text); font-weight: 600; text-align: right; }
+      .pd2-wxr .lo { text-align: right; }
+      .pd2-wxr .rng { position: relative; height: 6px; border-radius: var(--pc-r-pill); background: rgba(255,255,255,.06); }
+      .pd2-wxr .rng i { position: absolute; top: 0; bottom: 0; border-radius: var(--pc-r-pill);
+        background: linear-gradient(90deg, var(--ps-cool), var(--ps-heat)); }
+      .pd2-wxr .rng i.stub { width: 4%; opacity: .75; }
+      .pd2-wxr .rng i.none { display: none; }
+      .pd2-wxr .rng i.meas { outline: 1px dashed rgba(255,255,255,.5); outline-offset: 1px; }
+      .pd2-wxr .pp { color: var(--ps-cool); font-weight: 600; text-align: right; }
+      .pd2-wxr .pp.wet { color: var(--ps-warn); }
       .pd2-facts { gap: 8px; font-size: var(--pc-fs-md); margin-top: 4px; }
       .pd2-facts div { display: flex; justify-content: space-between; gap: 12px; }
       .pd2-facts span { color: var(--ps-muted); }
@@ -287,13 +330,19 @@ const PD2_STYLES = `
       .pd2-art { width: 46px; height: 46px; flex: 0 0 46px; border-radius: var(--pc-r-sm); overflow: hidden;
         background: var(--pc-fill-2); display: flex; align-items: center; justify-content: center; color: var(--ps-dim); }
       .pd2-art.app img, .pd2-art.app svg { width: 70%; height: 70%; object-fit: contain; }
+      .pd2-npw { font-size: var(--pc-fs-micro); font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+        color: var(--ps-cool); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .pd2-npt { font-size: var(--pc-fs-lg); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .pd2-nps { font-size: var(--pc-fs-sm); color: var(--ps-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      /* Two lines rather than an ellipsis: a truncated line is a missing one. */
+      .pd2-nps { font-size: var(--pc-fs-sm); color: var(--ps-dim); margin-top: 2px; line-height: 1.3;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
       .pd2-pill { padding: 9px 12px; border-radius: var(--pc-r-sm); background: var(--pc-fill-2); font-size: var(--pc-fs-sm); font-weight: 650; }
       .pd2-ahead { display: flex; flex-direction: column; gap: 10px; }
       .pd2-aday { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 10px; }
       .pd2-aday > span { font-size: var(--pc-fs-xs); font-weight: 700; letter-spacing: .06em; color: var(--ps-muted); padding-top: 2px; }
       .pd2-aday > span.today { color: var(--ps-text); }
+      .pd2-aday > span em { display: block; font-style: normal; font-weight: 600; letter-spacing: .06em; color: var(--ps-dim);
+        font-size: var(--pc-fs-micro); margin-top: 2px; text-transform: lowercase; }
       .pd2-ev { display: flex; gap: 8px; align-items: baseline; font-size: var(--pc-fs-sm); line-height: 1.35; }
       .pd2-ev + .pd2-ev { margin-top: 4px; }
       .pd2-ev i { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; transform: translateY(-1px); }
@@ -313,6 +362,8 @@ const PD2_STYLES = `
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
       .pd2-hrow > span.warn { color: var(--ps-warn); }
       .pd2-hrow > span.bad { color: var(--ps-bad); }
+      .pd2-hrow i { font-style: normal; }
+      .pd2-short { display: none; }
       .pd2-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: rgba(255,255,255,.25); }
       .pd2-dot.good { background: var(--ps-good); }
       .pd2-dot.warn { background: var(--ps-warn); }
@@ -343,6 +394,33 @@ const PD2_STYLES = `
       .pd2-jsheet .ps-sect.open > .ps-xtra { display: contents; }
       .pd2-jsheet .ps-sect.open > *, .pd2-jsheet .ps-sect.open > .ps-xtra > * { break-inside: avoid; margin: 0 0 14px; }
       .ps-sheet.pd2-csheet { width: 520px; }
+      .pd2-trends { display: flex; flex-direction: column; gap: 12px; }
+      .pd2-tvs { display: grid; gap: 7px; padding: 12px 14px; border-radius: var(--pc-r-md); background: var(--pc-fill-1); }
+      .pd2-tvs > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; font-size: var(--pc-fs-sm); }
+      .pd2-tvs > div span { color: var(--ps-muted); }
+      .pd2-tvs > div b { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .pd2-tvs > div em { font-style: normal; color: var(--ps-dim); font-size: var(--pc-fs-xs); min-width: 92px; text-align: right; }
+      .pd2-tbox { padding: 12px 14px 10px; border-radius: var(--pc-r-md); background: var(--pc-fill-1); }
+      .pd2-thd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+      .pd2-thd em { font-style: normal; font-size: var(--pc-fs-xs); color: var(--ps-dim); }
+      .pd2-tplot { position: relative; height: 96px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; align-items: end; }
+      .pd2-tplot.sm { height: 56px; }
+      .pd2-tfloor { position: absolute; left: 2px; bottom: 2px; z-index: 1; font-size: var(--pc-fs-micro); color: var(--ps-dim); pointer-events: none; }
+      .pd2-tband { position: absolute; left: 0; right: 0; background: rgba(127,216,164,.10);
+        border-top: 1px dashed rgba(127,216,164,.45); border-bottom: 1px dashed rgba(127,216,164,.45); pointer-events: none; }
+      .pd2-tc { display: block; position: relative; border-radius: 3px 3px 1px 1px; min-height: 3px; }
+      .pd2-tc.night { background: var(--ps-deep); }
+      .pd2-tc.night.edited { box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.35); }
+      .pd2-tc.nap { background: var(--ps-light); }
+      .pd2-tc.none { height: 100%; background: repeating-linear-gradient(135deg, rgba(255,255,255,.06) 0 3px, transparent 3px 7px); }
+      .pd2-tc.away { height: 100%; border: 1px dashed rgba(255,255,255,.18); background: none; }
+      .pd2-tdots { height: 46px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; align-items: end; }
+      .pd2-td { display: flex; flex-direction: column-reverse; gap: 3px; font-style: normal; }
+      .pd2-td u { display: block; height: 5px; border-radius: 2px; background: var(--ps-warn); text-decoration: none; }
+      .pd2-td u.q { background: none; border: 1px solid rgba(242,193,78,.55); }
+      .pd2-td.none { height: 100%; background: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 3px, transparent 3px 7px); border-radius: 3px; }
+      .pd2-tax { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: 5px;
+        font-size: var(--pc-fs-micro); color: var(--ps-dim); text-align: center; }
 
       /* the server, as tabs across the top of the panel instead of a dock */
       .pd2-mode .ps-stat { padding: 22px 30px 6px; }
@@ -366,8 +444,47 @@ const PD2_STYLES = `
       /* The server's pages were a phone column stretched to 1100px. At a desk
          the cards flow into columns; the container list is one card of rows,
          so it becomes a grid of rows instead. */
-      .pd2-mode .ps-sypage:not([data-sect="sys-docker"]):not([data-sect="sys-alerts"]) { display: block; columns: 2 440px; column-gap: 14px; }
-      .pd2-mode .ps-sypage:not([data-sect="sys-docker"]):not([data-sect="sys-alerts"]) > * { break-inside: avoid; margin: 0 0 12px; }
+      .pd2-mode .ps-sypage:not([data-sect="sys-docker"]):not([data-sect="sys-alerts"]):not([data-sect="sys-overview"]) { display: block; columns: 2 440px; column-gap: 14px; }
+      .pd2-mode .ps-sypage:not([data-sect="sys-docker"]):not([data-sect="sys-alerts"]):not([data-sect="sys-overview"]) > * { break-inside: avoid; margin: 0 0 12px; }
+      /* Overview is the server on one page: three columns, each a stack. */
+      .pd2-nas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+      .pd2-nas > div { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+      .pd2-nas > div > * { margin: 0; }
+      @container pd2 (max-width: 1366px) { .pd2-nas { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pd2-nas > div:last-child { grid-column: 1 / -1; } }
+      .pd2-ctr .ps-syrow { cursor: pointer; }
+      .pd2-ctr .ps-dotc { margin-right: 8px; }
+      .pd2-ctroff { line-height: 1.45; }
+      .pd2-powbtn { align-self: flex-start; }
       .pd2-mode [data-sect="sys-docker"] .ps-sycard:has(.ps-sw) { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 8px; }
       .pd2-mode [data-sect="sys-docker"] .ps-sycard .ps-sw { margin: 0; }
+
+      /* A SHORT window — the laptop with the HA header showing, ~650px of
+         glass. Declared LAST on purpose: every rule here overrides a base
+         rule of equal specificity, and the first cut of this block sat
+         mid-sheet, where the base rules below it quietly won. */
+      @container pd2 (max-height: 700px) {
+        /* The week's capsules need ~250px to read; here they get rows. */
+        .pd2-col.pd2-wx .ps-railbox { display: none; }
+        .pd2-wxrows { display: grid; }
+        /* House rows at one line each, carrying the first fact only: seven
+           full rows, two of them wrapping, ran off the bottom of the glass. */
+        .pd2-hrow { padding-top: 4px; padding-bottom: 4px; align-items: center; }
+        .pd2-hrow .pd2-dot { margin-top: 0; }
+        .pd2-hrow > span:last-child { -webkit-line-clamp: 1; }
+        .pd2-long { display: none; }
+        .pd2-short { display: inline; }
+        /* The card explains itself; the heading and the artist are height it
+           cannot spare. The room stays — it is the point of the card. */
+        .pd2-nplbl { display: none; }
+        .pd2-nps { display: none; }
+        .pd2-wxr { height: 16px; }
+        .pd2-wxrows { padding: 4px 10px; gap: 1px; }
+        .pd2-col.pd2-wx { padding-bottom: 10px; }
+        .pd2-clim .pd2-ring svg { width: 110px; height: 110px; }
+        .pd2-rn small { display: inline; margin-left: 6px; }
+        .pd2-offage { display: none; }
+        /* The day rail is his week's bottom row; at this height it goes and
+           the week stays. */
+        .pd2-jbtn > .ps-hyp { display: none; }
+      }
     `;

@@ -263,7 +263,9 @@ class PurdyDesk2Card extends PurdyShellCard {
         <div class="ps-sheet tall ${full[2]}">
           <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || (full[0] === "joel" ? "Joel" : "Climate"))}</span>
             ${chip ? `<span class="pd2-shchips">${chip}</span>` : ""}${close}</div>
-          <div class="ps-sect open">${this[full[1]](sec)}</div>
+          <div class="ps-sect open">${full[0] === "joel"
+            ? this._secNursery(sec, { omit: ["raster", "day"] }) + this._dkJoelTrends(sec)
+            : this[full[1]](sec)}</div>
         </div>`;
     }
     /* The week sheet is the phone's, plus one row: the header's reading used
@@ -323,6 +325,11 @@ class PurdyDesk2Card extends PurdyShellCard {
       const home = !!d.active;
       const on = home ? cur < 0 : i === cur;
       const alert = d.alert_when_faults && faults.length;
+      /* With nothing raised, the bell still counts the LOG's open warnings
+         and alerts — the entries a person has not dealt with. Info rows
+         (61 of them, mostly update notices) do not count: a badge that is
+         never zero is a badge nobody reads. */
+      const logN = !alert && d.alert_when_faults && d.sheet === "notifications" ? this._pd2LogCount() : 0;
       /* The divider sits before the last entry, the way the mockup groups the
          bell apart from the places. */
       const sep = n === items.length - 1 && items.length > 2 ? `<i class="pd2-rsep"></i>` : "";
@@ -334,8 +341,27 @@ class PurdyDesk2Card extends PurdyShellCard {
           ${home ? `data-pd2home="1"` : `data-dock="${i}"`} ${key ? `data-key="${key}"` : ""}
           aria-label="${psEsc(d.name)}" title="${psEsc(d.name)}${key ? ` (${key})` : ""}"${on ? ` aria-current="page"` : ""}>
           <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
-          ${alert ? `<i class="pd2-badge">${faults.length}</i>` : ""}</button>`;
+          ${alert ? `<i class="pd2-badge">${faults.length}</i>`
+            : logN ? `<i class="pd2-badge log">${logN}</i>` : ""}</button>`;
     }).join("");
+  }
+
+  /* Open warn/critical entries in the notification log, polled at most once
+     a minute off the render path. The log is the sheet's hosted card's todo
+     list, so its entity is read from there rather than configured twice. */
+  _pd2LogCount() {
+    const ent = ((((this._config.sheets || {}).notifications) || {}).card || {}).entity;
+    if (!ent || !this._hass || !this._hass.callWS) return 0;
+    const now = Date.now();
+    if (!this._pd2LogAt || now - this._pd2LogAt > 60000) {
+      this._pd2LogAt = now;
+      this._hass.callWS({ type: "todo/item/list", entity_id: ent }).then((res) => {
+        const n = ((res && res.items) || []).filter((it) => it.status !== "completed"
+          && /\b(critical|warn)\b/.test(it.description || "")).length;
+        if (n !== this._pd2LogN) { this._pd2LogN = n; this._render(); }
+      }).catch(() => {});
+    }
+    return this._pd2LogN || 0;
   }
 
   /* ------------------------------------------------------------ header --- */
@@ -354,9 +380,6 @@ class PurdyDesk2Card extends PurdyShellCard {
     const wxSec = (c.sections || []).find((s) => s.type === "weather");
     const feels = wxSec && wxSec.feels_from && h.states[wxSec.feels_from]
       ? h.states[wxSec.feels_from].attributes.apparent_temperature : null;
-    const worst = faults.length
-      ? (faults[0].severity === "critical" ? "bad" : faults[0].severity === "warn" ? "warn" : "")
-      : "good";
     const who = this._who();
     const chip = this._dkWxChip();
     return `
@@ -366,18 +389,35 @@ class PurdyDesk2Card extends PurdyShellCard {
           <i>·</i>${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
       </div>
       <div class="pd2-ppl">${this._hdrPeople()}</div>
+      <div class="pd2-att">${pcOffline(h) ? "" : this._dkFaultChips(faults)}</div>
       <div class="pd2-hr">
         ${wTemp == null ? "" : `<div class="pd2-hwx" data-sheet="wx" role="button" tabindex="0" title="The week and the next 24 hours">
           <ha-icon icon="${pcWxIcon(wState)}"></ha-icon>
           <div><b>${Math.round(wTemp)}°</b><span>${psEsc(pcWxText(wState) || "")}${
             feels == null ? "" : ` · feels ${Math.round(feels)}°`}</span></div></div>`}
         ${chip}
-        ${pcOffline(h)
-          ? `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>`
-          : `<button class="ps-chip ${worst}" type="button" id="ps-alert">
-            <span class="ps-dot"></span>${faults.length
-              ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention` : "All clear"}</button>`}
+        ${pcOffline(h) ? `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>` : ""}
       </div>`;
+  }
+
+  /* The faults, NAMED, in the middle of the header.
+   *
+   * The header's middle was 600px of nothing, and the one chip that could say
+   * something sat in the far corner reading "All clear" or "2 need
+   * attention" — so a fault was only ever named inside a popover. Each raised
+   * row is its own chip now, worst first, three at most and the rest as "+N".
+   * With nothing raised the middle stays EMPTY: the absence of chips is the
+   * all-clear, and a green pill saying so was a chip with no fact in it. The
+   * notification log is the rail's Alerts entry either way. */
+  _dkFaultChips(faults) {
+    if (!faults.length) return "";
+    const cls = (f) => (f.severity === "critical" ? "bad" : f.severity === "warn" ? "warn" : "");
+    const shown = faults.slice(0, 3).map((f) => `<button class="ps-chip ${cls(f)}" type="button" data-sheet="alerts"
+        title="${psEsc([f.title, f.detail].filter(Boolean).join(" — "))}"><span class="ps-dot"></span>${
+      psEsc(f.short || [f.title, f.detail].filter(Boolean).join(" · "))}</button>`).join("");
+    const more = faults.length > 3
+      ? `<button class="ps-chip" type="button" data-sheet="alerts">+${faults.length - 3}</button>` : "";
+    return shown + more;
   }
 
   /* The weather chip is a ROLL-UP — the first wet period ahead and how
@@ -462,6 +502,10 @@ class PurdyDesk2Card extends PurdyShellCard {
           <div class="pd2-naps">${naps || `<span class="pd2-flat">${psEsc(napsEmpty)}</span>`}</div>
         </div>
         ${statusL || statusR ? `<div class="pd2-status">${psEsc(statusL)}${statusL && statusR ? ` <i>·</i> ` : ""}${psEsc(statusR)}</div>` : ""}
+        ${/* A tall screen has the room for the night's own shape — the rail
+              the drawer opens with — so it comes out onto the stage there
+              rather than leaving a gap above the verdict. */""}
+        ${nightSession && loaded ? `<div class="pd2-tall">${this._nurseryRail(nightSession, loaded, err)}</div>` : ""}
         ${!loaded || (!sessions.length && stats.bedMean == null) ? ""
           : this._nurseryDayRail(sessions, todayKey, stats.bedMean, norms)}
         ${lastRow}
@@ -473,6 +517,100 @@ class PurdyDesk2Card extends PurdyShellCard {
         ${loaded && sessions.length ? `<div class="pd2-week">${this._nurseryRaster(sessions, norms, sec, this._awayDays(sec))}</div>` : ""}
         ${verdict}
       </div>`;
+  }
+
+  /* The drawer's half the column cannot hold: how his nights and naps have
+   * RUN, as three small plots over the fetch window, and tonight against his
+   * usual in numbers.
+   *
+   * The drawer used to be the column again — ring, day rail, the whole week
+   * raster — all of it visible under the scrim beside it. The raster answers
+   * "what did each day look like"; these answer "which way is it going",
+   * which is the question a trend plot exists for. Slots end YESTERDAY, a
+   * missing night is hatched and an away day framed, never a zero column:
+   * the week strip's rules, at a new surface. */
+  _dkJoelTrends(sec) {
+    const m = this._nurseryModel(sec);
+    if (!m.loaded || m.err) return "";
+    const N = sec.days || 7;
+    const { sessions, stats } = m;
+    const norms = psNurseryNorms(sessions, { days: N });
+    const away = this._awayDays(sec);
+    const t0 = new Date(this._nowMs()); t0.setHours(12, 0, 0, 0);
+    const slots = [];
+    for (let i = N; i >= 1; i--) {
+      const d = new Date(t0); d.setDate(d.getDate() - i);
+      slots.push({ key: psDayKey(d), dow: d.toLocaleDateString([], { weekday: "narrow" }) });
+    }
+    const nights = slots.map((sl) => ({ ...sl, s: sessions.find((x) => x.night && !x.active && x.day === sl.key) }));
+    const naps = slots.map((sl) => ({ ...sl,
+      mins: sessions.filter((x) => !x.night && !x.active && x.day === sl.key).reduce((a, x) => a + x.asleepMinutes, 0) }));
+    const has = nights.filter((n) => n.s).length;
+    if (!has) return "";
+
+    const col = (n, v, max, cls, band) => {
+      if (away.indexOf(n.key) >= 0) return `<i class="pd2-tc away" title="${psEsc(this._awayLabel(sec))}"></i>`;
+      if (v == null) return `<i class="pd2-tc none"></i>`;
+      return `<i class="pd2-tc ${cls}" style="height:${Math.max(3, Math.min(100, v / max * 100)).toFixed(1)}%" title="${psEsc(band)}"></i>`;
+    };
+    const axis = `<div class="pd2-tax">${slots.map((sl) => `<span>${psEsc(sl.dow)}</span>`).join("")}</div>`;
+
+    /* Zoomed to HIS range, not to zero: every night sits between ten and
+       twelve hours, and a zero-based axis drew seven identical full bars. The
+       floor is labelled on the plot so the zoom is never mistaken for scale. */
+    const aVals = nights.filter((n) => n.s).map((n) => n.s.asleepMinutes)
+      .concat(norms.asleep ? [norms.asleep.lo, norms.asleep.hi] : []);
+    const aLo = Math.max(0, Math.floor((Math.min(...aVals) - 60) / 60) * 60);
+    const aHi = Math.max(...aVals) + 15;
+    const aPct = (v) => Math.max(0, Math.min(100, (v - aLo) / (aHi - aLo) * 100));
+    const bandA = norms.asleep ? `<div class="pd2-tband" style="bottom:${aPct(norms.asleep.lo).toFixed(1)}%;height:${
+      (aPct(norms.asleep.hi) - aPct(norms.asleep.lo)).toFixed(1)}%"></div>` : "";
+    const asleep = `<div class="pd2-tplot">${bandA}<span class="pd2-tfloor">${psHM(aLo)}</span>${nights.map((n) =>
+      col(n, n.s ? n.s.asleepMinutes - aLo : null, aHi - aLo, n.s && n.s.edited ? "night edited" : "night", n.s ? psHM(n.s.asleepMinutes) : "")).join("")}</div>`;
+
+    /* Wake-ups: one pip per visit. A hand-logged night or one the server was
+       blind through has no count to draw, and says so with a hollow pip. */
+    const ins = `<div class="pd2-tdots">${nights.map((n) => {
+      if (!n.s) return `<i class="pd2-td none"></i>`;
+      if (n.s.interventions == null || n.s.blindMin) return `<i class="pd2-td"><u class="q"></u></i>`;
+      return `<i class="pd2-td" title="${n.s.interventions}">${"<u></u>".repeat(Math.min(6, n.s.interventions))}</i>`;
+    }).join("")}</div>`;
+    const obs = nights.filter((n) => n.s && n.s.interventions != null && !n.s.blindMin);
+    const avgIns = obs.length ? obs.reduce((a, n) => a + n.s.interventions, 0) / obs.length : null;
+
+    const nMax = Math.max(180, ...naps.map((n) => n.mins));
+    const napPlot = `<div class="pd2-tplot sm">${naps.map((n) =>
+      col(n, n.mins || (sessions.some((x) => x.day === n.key) ? 0 : null), nMax, "nap", psHM(n.mins))).join("")}</div>`;
+    const napDays = naps.filter((n) => n.mins > 0);
+    const napAvg = napDays.length ? Math.round(napDays.reduce((a, n) => a + n.mins, 0) / napDays.length) : null;
+
+    /* Tonight (or last night, by day) against his own usual, in numbers —
+       each line only when both halves exist. */
+    const ref = m.nightSession;
+    const done = sessions.filter((x) => x.night && !x.active && x !== ref).slice(-N);
+    const clockOf = (t) => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes(); };
+    const settleObs = done.filter((x) => !x.manual && x.settleMinutes != null);
+    const settleAvg = settleObs.length ? Math.round(settleObs.reduce((a, x) => a + x.settleMinutes, 0) / settleObs.length) : null;
+    const firsts = done.filter((x) => !x.manual && x.events && x.events.length).map((x) => {
+      const c = clockOf(x.events[0]); return c < 720 ? c + 1440 : c;
+    });
+    const firstAvg = firsts.length >= 2 ? Math.round(firsts.reduce((a, b) => a + b, 0) / firsts.length) % 1440 : null;
+    const vs = [];
+    if (ref && stats.bedMean != null) vs.push(["Put down", psClock(ref.from), `usual ${psMinsToClock(stats.bedMean)}`]);
+    if (ref && !ref.manual && ref.hadExit && settleAvg != null) vs.push(["Settled in", psHM(ref.settleMinutes), `usual ${psHM(settleAvg)}`]);
+    if (firstAvg != null) vs.push(["First wake, usually", psMinsToClock(firstAvg), `${firsts.length} of ${done.length} nights`]);
+    const vsHtml = !vs.length ? "" : `<div class="pd2-tvs"><span class="ps-lbl">${ref && ref.active ? "Tonight" : "Last night"} vs his usual</span>
+      ${vs.map(([k, a, b]) => `<div><span>${psEsc(k)}</span><b>${psEsc(a)}</b><em>${psEsc(b)}</em></div>`).join("")}</div>`;
+
+    return `<div class="pd2-trends">
+      ${vsHtml}
+      <div class="pd2-tbox"><div class="pd2-thd"><span class="ps-lbl">Asleep · ${N} nights</span>
+        <em>${norms.asleep ? `band ${psHM(norms.asleep.lo)}–${psHM(norms.asleep.hi)}` : "no band yet"}</em></div>${asleep}${axis}</div>
+      <div class="pd2-tbox"><div class="pd2-thd"><span class="ps-lbl">Went in</span>
+        <em>${avgIns == null ? "not measured" : `avg ${avgIns.toFixed(1)} a night`}</em></div>${ins}${axis}</div>
+      <div class="pd2-tbox"><div class="pd2-thd"><span class="ps-lbl">Naps a day</span>
+        <em>${napAvg == null ? "none recorded" : `avg ${psHM(napAvg)}`}</em></div>${napPlot}${axis}</div>
+    </div>`;
   }
 
   /* "11h 32m" at the hero step does not fit inside the ring it sits in; the
@@ -493,7 +631,9 @@ class PurdyDesk2Card extends PurdyShellCard {
     const f = (v) => Math.max(0, Math.min(1, (v - rng.min) / (rng.max - rng.min)));
     const heating = action === "heating";
     const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
-    const hum = pcNum(h, (sec.rooms || [])[0] && (sec.rooms || [])[0].humidity);
+    /* No humidity under the ring: it was the FIRST ROOM's (the living room)
+       printed under a number that belongs to the active zone, and every
+       room's own humidity is in the table below. */
 
     /* The chip is a comparison, and at goal there is nothing to compare. */
     const diff = cur == null || goal == null ? null : Math.round(cur - goal);
@@ -522,14 +662,17 @@ class PurdyDesk2Card extends PurdyShellCard {
     }));
     const scale = Number.isFinite(lo) && hi > lo ? { lo, hi } : null;
     const rooms = (sec.rooms || []).map((r) => {
-      const rd = pcReading(h, r.temp);
-      const t = rd.ok ? pcNum(h, r.temp) : null;
-      const hu = pcNum(h, r.humidity);
+      /* The phone's reader — so a room whose sensor died but whose thermostat
+         still reports reads the same on both surfaces, with the substitute
+         named and how long its own sensor has been dark. */
+      const { t, hu, via, viaId, offSince } = this._roomRead(r);
       const off = t == null;
-      return `<div class="pd2-room ${off ? "off" : ""}" data-info="${psEsc(r.temp)}">
-          <span class="pd2-rn">${psEsc(r.name || pcName(h, r.temp))}</span>
-          <span class="pd2-spark">${off ? "" : this._sparkSvg(r.temp, scale)}</span>
-          <span class="pd2-rt">${off ? "offline" : t.toFixed(1) + "°"}</span>
+      const age = offSince ? ` ${pcAgo(offSince)}` : "";
+      return `<div class="pd2-room ${off ? "off" : ""}${via ? " via" : ""}" data-info="${psEsc(via ? viaId : r.temp)}">
+          <span class="pd2-rn">${psEsc(r.name || pcName(h, r.temp))}${via
+            ? `<small>${psEsc(via)}<span class="pd2-offage"> · sensor off${psEsc(age)}</span></small>` : ""}</span>
+          <span class="pd2-spark">${off || via ? "" : this._sparkSvg(r.temp, scale)}</span>
+          <span class="pd2-rt">${off ? `offline${psEsc(age)}` : pcDeg(t) + "°"}</span>
           <span class="pd2-rh">${off || hu == null ? "" : Math.round(hu) + "%"}</span>
         </div>`;
     }).join("");
@@ -544,8 +687,11 @@ class PurdyDesk2Card extends PurdyShellCard {
       <div class="pd2-chero">
         <div class="pd2-ring sm" data-info="${psEsc(sec.goal || sec.thermostat)}">
           ${this._ringSvg(150, 10, [[cur == null ? 0 : f(cur), col]], goal == null ? null : f(goal), "var(--ps-text)")}
-          <div class="pd2-rv"><b>${cur == null ? "—" : Math.round(cur) + "°"}</b><small>${
-            psEsc(this._humanize(action).toUpperCase())}${hum == null ? "" : ` · ${Math.round(hum)}% RH`}</small></div>
+          ${/* Whose number: the zone GTTC is reading, the same caption the
+                phone's ring carries — at the precision it was published. */""}
+          <div class="pd2-rv"><b>${cur == null ? "—" : pcDeg(cur) + "°"}</b><small>${
+            psEsc(String(this._climateSource(sec, cur)).toUpperCase())}</small><small class="pd2-rv2">${
+            psEsc(this._humanize(action).toUpperCase())}</small></div>
         </div>
         <div class="pd2-goal">
           <span class="pd2-cap">${heating ? "HEAT TO" : "GOAL"}</span>
@@ -591,11 +737,42 @@ class PurdyDesk2Card extends PurdyShellCard {
       <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Weather")}<em>›</em></span>
         <span class="pd2-src">Forecast · high / low</span></div>
       ${this._wxForecastRail(sec)}
+      ${this._dkWxRows(sec)}
       ${/* The wide face has a whole column to itself, so the next 24 hours
             come out from behind the drawer — the strip a desk has the width
             for and the phone keeps a tap away. */""}
       <div class="pd2-wide pd2-hourly">${this._wxHourly(sec)}</div>
       ${facts ? `<div class="pd2-wide pd2-facts">${facts}</div>` : ""}</div>`;
+  }
+
+  /* The week as ROWS, for a short window.
+   *
+   * Seven vertical capsules need about 250px before they read as anything; at
+   * 666px tall the column left them ~60px and they flattened into pills. A
+   * row per day carrying a horizontal low→high bar says the same thing in
+   * ~170px. Rendered always and swapped in by a container query, so there is
+   * one data path — the same `_wxFcDays` the capsules draw, measured today
+   * and all. */
+  _dkWxRows(sec) {
+    const days = this._wxFcDays(sec);
+    if (!days.length) return "";
+    const los = days.map((d) => d.lo).filter((v) => v != null);
+    const his = days.map((d) => d.hi).filter((v) => v != null);
+    if (!los.length && !his.length) return "";
+    const lo = Math.min(...los.concat(his)), hi = Math.max(...los.concat(his));
+    const span = Math.max(1, hi - lo);
+    const x = (v) => ((v - lo) / span) * 100;
+    return `<div class="pd2-wxrows">${days.map((d) => {
+      const a = d.lo == null ? null : x(d.lo), b = d.hi == null ? null : x(d.hi);
+      const bar = a == null && b == null ? `<i class="none"></i>`
+        : a == null || b == null ? `<i class="stub" style="left:${Math.max(0, (a == null ? b : a) - 2).toFixed(1)}%"></i>`
+          : `<i class="${d.meas ? "meas" : ""}" style="left:${a.toFixed(1)}%;right:${(100 - b).toFixed(1)}%"></i>`;
+      return `<div class="pd2-wxr${d.today ? " now" : ""}"><span>${psEsc(this._wxDow(d.ts, d.today))}</span>
+          <span class="lo">${d.lo == null ? "—" : Math.round(d.lo) + "°"}</span>
+          <span class="rng">${bar}</span>
+          <b>${d.hi == null ? "—" : Math.round(d.hi) + "°"}</b>
+          <span class="pp${d.pop != null && d.pop >= 50 ? " wet" : ""}">${d.pop == null ? "" : Math.round(d.pop) + "%"}</span></div>`;
+    }).join("")}</div>`;
   }
 
   /* Tonight · feels · dew/wind · sunrise, as rows. Each drops out when its
@@ -633,11 +810,18 @@ class PurdyDesk2Card extends PurdyShellCard {
       if (!psLiveMusic(st)) return;
       const a = st.attributes;
       const art = a.entity_picture_local;
+      /* WHERE, first. On a desk built around the nursery, white noise with no
+         room reads as Joel's Hatch — it was the parents' bedroom speaker. The
+         room leads, with the volume beside it, because those two are what
+         you would reach for; the artist moves under the title. */
+      const vol = a.volume_level == null ? null : Math.round(Number(a.volume_level) * 100);
       rows.push(`<div class="pd2-np" ${this._playTarget("listen")} role="button" tabindex="0">
           <div class="pd2-art">${art ? `<img src="${psEsc(art)}" alt="" />`
             : `<svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg>`}</div>
-          <div class="ps-grow"><div class="pd2-npt">${psEsc(a.media_title || "Playing")}</div>
-            <div class="pd2-nps">${psEsc([a.media_artist, p.name].filter(Boolean).join(" · "))}</div></div>
+          <div class="ps-grow"><div class="pd2-npw">${psEsc(p.name || pcName(h, p.entity))}${
+            vol == null || !Number.isFinite(vol) ? "" : ` · vol ${vol}`}</div>
+            <div class="pd2-npt">${psEsc(a.media_title || "Playing")}</div>
+            ${a.media_artist ? `<div class="pd2-nps">${psEsc(a.media_artist)}</div>` : ""}</div>
           <button class="ps-npb" type="button" data-mp="playpause" data-entity="${psEsc(p.entity)}"
             aria-label="${st.state === "playing" ? "Pause" : "Play"}">
             <svg viewBox="0 0 24 24" class="ps-ico">${st.state === "playing"
@@ -660,7 +844,7 @@ class PurdyDesk2Card extends PurdyShellCard {
         <div class="pd2-art"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.6"/><circle cx="17.5" cy="16" r="2.6"/></svg></div>
         <div class="ps-grow"><div class="pd2-npt">Nothing playing</div><div class="pd2-nps">Music and televisions</div></div>
       </div>`;
-    return `<div class="pd2-lbl">${psEsc(sec.title || "Now playing")}</div>${rows.join("") || empty}`;
+    return `<div class="pd2-lbl pd2-nplbl">${psEsc(sec.title || "Now playing")}</div>${rows.join("") || empty}`;
   }
 
   /* Ahead: today always, later days only when they carry something. Hidden
@@ -673,8 +857,11 @@ class PurdyDesk2Card extends PurdyShellCard {
       const day = new Date(t0.getTime() + d * 86400000);
       const evs = this._events.filter((e) => e.t >= day.getTime() && e.t < day.getTime() + 86400000);
       if (!evs.length && d > 0) continue;
+      /* A day off is marked under its label — the workday calendar's one fact,
+         which it used to state as an event on every day that was NOT off. */
+      const off = this._dayOff(day.getTime());
       out += `<div class="pd2-aday"><span class="${d === 0 ? "today" : ""}">${d === 0 ? "TODAY"
-        : day.toLocaleDateString([], { weekday: "short" }).toUpperCase()}</span><div>${evs.length
+        : day.toLocaleDateString([], { weekday: "short" }).toUpperCase()}${off ? `<em>off</em>` : ""}</span><div>${evs.length
         ? evs.map((e) => `<div class="pd2-ev"><i style="background:${psEsc(e.color)}"></i><em>${e.allDay ? "all day"
           : new Date(e.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</em><span>${psEsc(e.name)}</span></div>`).join("")
         : `<div class="pd2-ev none">Nothing scheduled</div>`}</div></div>`;
@@ -712,25 +899,45 @@ class PurdyDesk2Card extends PurdyShellCard {
     if (ls) {
       const lights = this._lightList(ls);
       const on = lights.filter((l) => l.on);
+      /* Offline lamps are counted here, because nothing else on the stage
+         would tell you two of them have dropped off the network. */
+      const dead = lights.reduce((n, l) => n + (l.gone ? 1
+        : (l.cfg.members || []).filter((m) => !pcReading(h, m).ok).length), 0);
       rows.push({ name: "Lights", dot: on.length ? "lit" : "", attrs: route((d) => d.sheet === "lights") || `data-sheet="lights"`,
-        detail: on.length ? `${on.length} on · ${on.map((l) => l.name).join(", ")}` : "All off" });
+        detail: [on.length ? `${on.length} on · ${on.map((l) => l.name).join(", ")}` : "All off",
+          dead ? `${dead} offline` : null].filter(Boolean).join(" · ") });
     }
     const v = sec.vacuum || {};
     if (v.entity) {
       const vs = pcState(h, v.entity);
       const mine = needs.filter((n) => !/drawer|litter|washer|Washer|Litter/.test(n.text));
+      /* Consumables as a COUNT. The list ("Side brush 12% · Wheel 16% ·
+         Sensors 16%") wrapped onto two lines at 1440 and truncated at 1280;
+         the crew drawer, one click away, is where the names are. */
+      const short = (n) => {
+        if (n.icon !== "mdi:tools") return n.text;
+        const k = parseInt(n.text, 10) || 1;
+        return `${k} part${k === 1 ? "" : "s"} due`;
+      };
+      const wear = mine.length ? mine.map(short).join(" · ") : null;
       rows.push({ name: v.name || "Vacuum", dot: vs === "error" ? "bad" : mine.length ? "warn" : vs === "cleaning" ? "cool" : "good",
         attrs: `data-sheet="${psEsc(sec.sheet || "crew")}"`,
-        detail: [this._humanize(vs || "unknown"), mine.length ? (mine[0].sub || mine[0].text) : null].filter(Boolean).join(" · ") });
+        detail: [this._humanize(vs || "unknown"), wear].filter(Boolean).join(" · ") });
     }
     const l = sec.litter || {};
     if (l.entity) {
       const drawer = pcNum(h, l.waste_drawer);
+      const litter = pcNum(h, l.litter_level);
       const visits = pcNum(h, (l.pet || {}).visits);
       const lneed = needs.find((n) => /drawer|Litter|litter/.test(n.text));
-      rows.push({ name: (l.pet || {}).name || l.name || "Litter", dot: lneed ? (lneed.sev === "bad" ? "bad" : "warn") : "good",
+      /* The machine's name, not the cat's: the drawer called it one thing,
+         this row another, and the entity a third. The litter level rides
+         along because it is the headline of the drawer's ring — the two
+         surfaces now lead with numbers that agree. */
+      rows.push({ name: l.name || "Litter", dot: lneed ? (lneed.sev === "bad" ? "bad" : "warn") : "good",
         attrs: `data-sheet="${psEsc(sec.sheet || "crew")}"`,
         detail: [drawer == null ? null : `Drawer ${Math.round(drawer)}%`,
+          litter == null ? null : `litter ${Math.round(litter)}%`,
           visits == null ? null : `${Math.round(visits)} visit${visits === 1 ? "" : "s"}`].filter(Boolean).join(" · ") || this._humanize(pcState(h, l.entity)) });
     }
     const w = sec.washer || {};
@@ -761,11 +968,67 @@ class PurdyDesk2Card extends PurdyShellCard {
         attrs: r.sheet ? `data-sheet="${psEsc(r.sheet)}"` : `data-info="${psEsc(r.entity)}"`,
         detail: bad ? "Not reporting" : this._humanize(st) });
     });
-    const next = this._dkNext();
-    const nextRow = next ? `<div class="pd2-hrow compact-only"><span class="pd2-dot aur"></span><b>Next</b><span>${psEsc(next)}</span></div>` : "";
-    return `<div class="pd2-lbl">House</div><div class="pd2-house">${nextRow}${rows.map((r) =>
+    /* `short` is the one-word form the two-column grid uses on a short
+       window, where seven full rows ran off the bottom of the glass. */
+    const shortOf = (r) => {
+      const parts = String(r.detail).split(" · ");
+      /* An amber row keeps its REASON, not its state: "Docked" in amber says
+         something is wrong and not what. */
+      return r.dot === "warn" || r.dot === "bad" ? parts[parts.length - 1] : parts[0];
+    };
+    return `<div class="pd2-lbl">House</div><div class="pd2-house">${rows.map((r) =>
       `<button class="pd2-hrow" type="button" ${r.attrs}><span class="pd2-dot ${r.dot}"></span><b>${psEsc(r.name)}</b>
-        <span class="${r.dot === "warn" || r.dot === "bad" ? r.dot : ""}">${psEsc(r.detail)}</span></button>`).join("")}</div>`;
+        <span class="${r.dot === "warn" || r.dot === "bad" ? r.dot : ""}"><i class="pd2-long">${psEsc(r.detail)}</i><i class="pd2-short">${psEsc(shortOf(r))}</i></span></button>`).join("")}</div>
+      ${this._dkCrewCards(sec)}`;
+  }
+
+  /* The crew's two cards, on a TALL window only (the container query shows
+     them). The rings are the drawer's own renderer, drawn as a picture: the
+     whole block is one door onto the crew sheet, and nothing inside it takes
+     a click of its own. */
+  _dkCrewCards(sec) {
+    const v = sec.vacuum || {}, l = sec.litter || {};
+    const cards = [v.entity ? this._crewVacCard(v, false) : "", l.entity ? this._crewLitterCard(l, false) : ""].filter(Boolean);
+    if (!cards.length) return "";
+    return `<div class="pd2-tall pd2-crewmini" data-sheet="${psEsc(sec.sheet || "crew")}" role="button" tabindex="0"
+        aria-label="Open the crew"><div class="ps-cwgrid">${cards.join("")}</div></div>`;
+  }
+
+  /* ------------------------------------------------------------- server --- */
+
+  /* The server's Overview, laid out for a desk.
+   *
+   * The phone's five pages set in two columns left every page under half the
+   * glass: Overview ended at 420px of 900. A desk can hold on ONE page what
+   * the phone spreads across four — so Overview is the server at a glance
+   * (identity, faults, the pools and every array disk; the CPU trace, fans,
+   * network and power; the running containers and parity), and the other tabs
+   * stay for detail. Power moves behind a disclosure: Reboot, Shut down and
+   * Stop array were three red buttons on the page you open to LOOK. */
+  _syOverview(s) {
+    const p = this._syOverviewParts(s);
+    const disks = this._syDisks().filter((d) => d.role === "data" && d.hasUsage)
+      .map((d) => this._syMeter(d.key, d.usageId, { warn: 85, crit: 95 })).join("");
+    const all = this._syContainers();
+    const on = all.filter((c) => c.on).sort((a, b) => a.name.localeCompare(b.name));
+    const off = all.filter((c) => !c.on).map((c) => c.name).sort();
+    const vms = this._syVms();
+    const ctr = !all.length && !vms.length ? "" : `<div class="ps-sycard pd2-ctr">
+        <div class="ps-syrow"><span class="ps-lbl">Containers</span><span class="ps-sysub">${on.length} of ${all.length} running</span></div>
+        ${on.map((c) => `<div class="ps-syrow ps-sysub"${c.url ? ` data-syurl="${psEsc(c.url)}"` : ` data-info="${psEsc(c.id)}"`}>
+          <span><span class="ps-dotc good"></span>${psEsc(c.name)}</span><b>${psEsc(c.port)}${c.url ? " ↗" : ""}</b></div>`).join("")}
+        ${off.length ? `<div class="ps-sysub pd2-ctroff">Stopped · ${psEsc(off.join(", "))}</div>` : ""}
+        ${vms.map((v) => `<div class="ps-syrow ps-sysub" data-info="${psEsc(v.id)}"><span><span class="ps-dotc ${v.on ? "good" : ""}"></span>VM · ${psEsc(v.name)}</span><b>${v.on ? "on" : "off"}</b></div>`).join("")}
+      </div>`;
+    const power = !p.power ? "" : this._pd2Pow
+      ? p.power.replace(`<span class="ps-lbl">Power</span>`, `<div class="ps-syrow"><span class="ps-lbl">Power</span>
+          <button class="ps-btn" type="button" data-pd2pow="0">Hide</button></div>`)
+      : `<button class="ps-btn pd2-powbtn" type="button" data-pd2pow="1">Power…</button>`;
+    return `<div class="pd2-nas">
+        <div>${p.id}${p.faults}${p.meters}${disks ? `<div class="ps-sycard"><span class="ps-lbl">Array disks</span>${disks}</div>` : ""}</div>
+        <div>${this._syPerf(s)}</div>
+        <div>${ctr}${p.parity}${power}</div>
+      </div>`;
   }
 
   /* ----------------------------------------------------------- binding --- */
@@ -773,6 +1036,15 @@ class PurdyDesk2Card extends PurdyShellCard {
   _pd2Bind() {
     /* A role=button div answers the keyboard the way a button does. */
     this._each(".pd2-hwx[data-sheet]", (el) => el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
+    }));
+    this._each("[data-pd2pow]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._pd2Pow = el.dataset.pd2pow === "1";
+      this._armed = null;
+      this._render();
+    }));
+    this._each(".pd2-crewmini", (el) => el.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
     }));
     this._each("[data-pd2home]", (el) => el.addEventListener("click", (e) => {
