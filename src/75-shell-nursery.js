@@ -2547,7 +2547,16 @@ Object.assign(PurdyShellCard.prototype, {
     if (ref && !ref.manual && ref.hadExit && ref.settleMinutes != null && settleAvg != null) {
       rows.push(["Settled in", psHM(ref.settleMinutes), `usual ${psHM(settleAvg)}`]);
     }
-    if (firstAvg != null) rows.push(["First wake, usually", psMinsToClock(firstAvg), `${firsts.length} of ${done.length} nights`]);
+    /* The night's own first wake against his usual one — a comparison, like
+       the rows above. "6 of 6 nights" was only the size of the sample. A
+       measured night nobody went in is "none", a real answer; a hand-logged
+       or blind night, or a night still under way with no visit yet, has no
+       answer to give and draws no row. */
+    if (firstAvg != null && ref && !ref.manual) {
+      const ev = ref.events || [];
+      const first = ev.length ? psClock(ev[0]) : ref.active || ref.blindMin ? null : "none";
+      if (first) rows.push(["First wake", first, `usual ${psMinsToClock(firstAvg)}`]);
+    }
     if (!rows.length) return null;
     return { label: `${ref && ref.active ? "Tonight" : "Last night"} vs his usual`, rows };
   },

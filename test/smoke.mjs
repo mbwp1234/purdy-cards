@@ -10755,8 +10755,11 @@ check('desk2 Joel column carries his week at every height, drawn thin below 820p
     const ref = { night: true, from: at(26, 19, 38), settleMinutes: 25, hadExit: true, events: [] };
     const vu = pl._nurseryVsUsual({ sessions: [...past, ref], stats: { bedMean: 19 * 60 + 29 }, nightSession: ref }, 7);
     check('Joel vs usual: put-down, settle and first wake, each against his own', !!vu && vu.label === 'Last night vs his usual'
-      && vu.rows.length === 3 && vu.rows[1][0] === 'Settled in' && vu.rows[1][2] === 'usual 14m' && vu.rows[2][2] === '3 of 3 nights');
-    check('Joel vs usual: a hand-logged night states no settle time', !pl._nurseryVsUsual({ sessions: [...past, { ...ref, manual: true }], stats: { bedMean: null }, nightSession: { ...ref, manual: true } }, 7).rows.some((r) => r[0] === 'Settled in'));
+      && vu.rows.length === 3 && vu.rows[1][0] === 'Settled in' && vu.rows[1][2] === 'usual 14m' && vu.rows[2][0] === 'First wake' && vu.rows[2][1] === 'none' && vu.rows[2][2] === 'usual 12:30 AM');
+    const withWake = pl._nurseryVsUsual({ sessions: [...past, { ...ref, events: [at(27, 4, 16)] }], stats: { bedMean: 19 * 60 + 29 }, nightSession: { ...ref, events: [at(27, 4, 16)] } }, 7);
+    check('Joel vs usual: first wake is last night against his usual, not a sample size', withWake.rows[2][1] === '4:16 AM' && !/of \d+ nights/.test(JSON.stringify(withWake.rows)));
+    check('Joel vs usual: a night still under way with no visit draws no first-wake row', !pl._nurseryVsUsual({ sessions: [...past, { ...ref, active: true }], stats: { bedMean: null }, nightSession: { ...ref, active: true } }, 7).rows.some((r) => r[0] === 'First wake'));
+    check('Joel vs usual: a hand-logged night states no settle time', (() => { const v = pl._nurseryVsUsual({ sessions: [...past, { ...ref, manual: true }], stats: { bedMean: null }, nightSession: { ...ref, manual: true } }, 7); return !v || !v.rows.some((r) => r[0] === 'Settled in' || r[0] === 'First wake'); })());
     check('Joel vs usual: nothing to compare draws nothing', pl._nurseryVsUsual({ sessions: [], stats: { bedMean: null }, nightSession: null }, 7) === null);
   }
 
