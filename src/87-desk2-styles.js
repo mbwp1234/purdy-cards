@@ -24,19 +24,24 @@ const PD2_STYLES = `
 
       /* the rail: the phone's dock, stood on end */
       .pd2-rail {
-        align-self: center; width: 64px; flex: 0 0 64px; border-radius: var(--pc-r-2xl);
+        align-self: center; width: 72px; flex: 0 0 72px; border-radius: var(--pc-r-2xl);
         padding: 12px 0; display: flex; flex-direction: column; align-items: center; gap: 8px;
         background: linear-gradient(180deg, rgba(16,20,34,.42), rgba(10,12,22,.50));
         backdrop-filter: blur(28px) saturate(1.5); -webkit-backdrop-filter: blur(28px) saturate(1.5);
         border: 1px solid rgba(255,255,255,.09);
         box-shadow: 0 20px 50px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.09);
       }
-      .pd2-rb { width: 44px; height: 44px; border-radius: var(--pc-r-md); color: var(--ps-muted);
-        display: flex; align-items: center; justify-content: center; position: relative; }
+      .pd2-rb { width: 60px; height: 52px; border-radius: var(--pc-r-md); color: var(--ps-muted);
+        display: flex; flex-direction: column; gap: 3px; align-items: center; justify-content: center; position: relative; }
+      .pd2-rb span { font-size: var(--pc-fs-micro); font-weight: 600; letter-spacing: .02em; white-space: nowrap; }
+      .pd2-rb:focus-visible { outline: 2px solid var(--ps-cool); outline-offset: 1px; }
+      .pd2-badge { position: absolute; top: 3px; right: 9px; min-width: 15px; height: 15px; padding: 0 4px;
+        border-radius: var(--pc-r-pill); background: var(--ps-bad); color: #fff; font-style: normal;
+        font-size: var(--pc-fs-micro); font-weight: 700; line-height: 15px; text-align: center; }
       .pd2-rb:hover { background: var(--pc-fill-1); color: var(--ps-text); }
-      .pd2-rb ha-icon { --mdc-icon-size: 21px; }
+      .pd2-rb ha-icon { --mdc-icon-size: 20px; }
       .pd2-rb.on { color: #fff; background: rgba(139,124,255,.14); }
-      .pd2-rb.on::after { content: ""; position: absolute; left: -12px; top: 12px; bottom: 12px; width: 3px;
+      .pd2-rb.on::after { content: ""; position: absolute; left: -6px; top: 12px; bottom: 12px; width: 3px;
         border-radius: var(--pc-r-hair); background: linear-gradient(180deg, var(--ps-aur-a), var(--ps-aur-b));
         box-shadow: 0 0 12px rgba(139,124,255,.9); }
       .pd2-rb.alert { color: var(--ps-bad); }
@@ -148,7 +153,42 @@ const PD2_STYLES = `
         .pd2-seg { padding: 5px 4px; }
         .pd2-last b { font-size: var(--pc-fs-lg); }
         .pd2-ahead { gap: 6px; }
+        /* The climate column is the one that runs out. The reason line is
+           what the ring and the chip already say in other words, so it goes
+           first; the season switch shrinks to the Schedule link's height. */
+        .pd2-reason { display: none; }
+        .pd2-cbtns .ps-sbtn { padding: 4px 12px; }
+        .pd2-room { padding: 1px 0; }
+        .pd2-spark { height: 18px; }
+        .pd2-goal > .pd2-cap { display: none; }
+        .pd2-rooms .pd2-room.hd { padding-bottom: 0; }
+        .pd2-col.pd2-wx .ps-wxi { display: none; }
       }
+
+      /* doors: a label or a whole column that opens its phone section */
+      button.pd2-lbl { padding: 0; }
+      .pd2-lbl em { font-style: normal; font-size: var(--pc-fs-sm); color: var(--ps-dim); margin-left: 2px; transition: transform .15s; }
+      .pd2-open:hover, .pd2-colbtn:hover .pd2-lbl { color: var(--ps-text); }
+      .pd2-open:hover em, .pd2-colbtn:hover .pd2-lbl em { color: var(--ps-cool); transform: translateX(2px); }
+      .pd2-open:focus-visible, .pd2-colbtn:focus-visible, .pd2-hwx:focus-visible { outline: 2px solid var(--ps-cool); outline-offset: 3px; border-radius: var(--pc-r-xs); }
+      .pd2-colbtn { display: flex; flex-direction: column; gap: inherit; flex: 1; min-height: 0; cursor: pointer;
+        border-radius: var(--pc-r-lg); margin: -6px; padding: 6px; }
+      .pd2-colbtn:hover { background: rgba(255,255,255,.02); }
+      .pd2-chips { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+      .pd2-lblrow .pd2-chips .ps-chip { margin-left: 0; }
+      .pd2-reason { font-size: var(--pc-fs-sm); color: var(--ps-muted); }
+      .pd2-week { display: none; }
+      @container pd2 (min-height: 880px) { .pd2-week { display: block; } }
+      .pd2-week .ps-lbl { font-size: var(--pc-fs-micro); }
+      .pd2-mode .ps-sygraph svg { height: 110px; }
+      .pd2-cbtns { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+      .pd2-cbtns .ps-season { background: var(--pc-fill-1); }
+      .pd2-cbtns .ps-sbtn { padding: 6px 13px; }
+      .pd2-wlg { margin: 0 0 0 auto; font-size: var(--pc-fs-xs); color: var(--ps-muted); }
+      .pd2-more { display: flex; justify-content: space-between; width: 100%; margin-top: 14px; padding: 12px 14px;
+        border-radius: var(--pc-r-md); background: var(--pc-fill-1); font-size: var(--pc-fs-sm); color: var(--ps-muted); }
+      .pd2-more span:last-child { color: var(--ps-cool); font-weight: 600; }
+      .pd2-shchips { display: flex; gap: 6px; margin-left: auto; margin-right: 10px; }
 
       /* labels */
       .pd2-lblrow { display: flex; align-items: center; gap: 10px; }
@@ -219,7 +259,8 @@ const PD2_STYLES = `
       .pd2-room.off .pd2-rn { color: var(--ps-muted); }
       .pd2-room.off .pd2-rt { color: var(--ps-dim); font-size: var(--pc-fs-sm); }
       .pd2-room.off .pd2-spark { background: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 3px, transparent 3px 7px); }
-      .pd2-graph .ps-wave { max-height: 240px; }
+      .pd2-graph .ps-wave { max-height: 240px; margin: 6px 0 0; }
+      .pd2-hourly { min-width: 0; }
 
       /* weather: the phone rail, sized for a column */
       /* The phone's track is a fixed 116px; here the column's own height
@@ -229,6 +270,10 @@ const PD2_STYLES = `
       .pd2-col.pd2-wx .ps-wxday { min-height: 0; }
       .pd2-col.pd2-wx .ps-wxtrack { flex: 1 1 auto; height: auto; min-height: 36px; max-height: 260px; }
       .ps-wxpcp.wet { color: var(--ps-warn); }
+      @container pd2 (min-width: 1800px) {
+        .pd2-col.pd2-wx .ps-railbox { flex: 0 0 auto; }
+        .pd2-col.pd2-wx .ps-wxtrack { flex: 0 0 auto; height: 220px; max-height: none; }
+      }
       .pd2-facts { gap: 8px; font-size: var(--pc-fs-md); margin-top: 4px; }
       .pd2-facts div { display: flex; justify-content: space-between; gap: 12px; }
       .pd2-facts span { color: var(--ps-muted); }
@@ -287,13 +332,27 @@ const PD2_STYLES = `
         box-shadow: -30px 0 80px -20px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.09);
       }
       .ps-sheeth { margin-bottom: 12px; }
-      .pd2-jsheet .ps-sect { padding: 0; }
-      .pd2-jsheet .ps-sect > .ps-sh { display: none; }
+      .pd2-jsheet .ps-sect, .pd2-csheet .ps-sect { padding: 0; }
+      .pd2-jsheet .ps-sect > .ps-sh, .pd2-csheet .ps-sect > .ps-sh { display: none; }
+      /* Joel's drawer is twice a phone: the section flows into two columns,
+         today and his week on the left, last night and the naps on the right.
+         Multicol rather than a grid, because the section's children are one
+         flat list and a grid would align unrelated rows across the gutter. */
+      .ps-sheet.pd2-jsheet { width: min(940px, calc(100% - 150px)); }
+      .pd2-jsheet .ps-sect.open { columns: 2 380px; column-gap: 32px; column-rule: 1px solid rgba(255,255,255,.07); }
+      .pd2-jsheet .ps-sect.open > .ps-xtra { display: contents; }
+      .pd2-jsheet .ps-sect.open > *, .pd2-jsheet .ps-sect.open > .ps-xtra > * { break-inside: avoid; margin: 0 0 14px; }
+      .ps-sheet.pd2-csheet { width: 520px; }
 
       /* the server, as tabs across the top of the panel instead of a dock */
       .pd2-mode .ps-stat { padding: 22px 30px 6px; }
       .pd2-mode .ps-dockwrap { position: static; padding: 0 26px 10px; }
-      .pd2-mode .ps-dockwrap::before, .pd2-mode .ps-mini { display: none; }
+      .pd2-mode .ps-dockwrap::before { display: none; }
+      /* Walking into a mode must not take the pause button away — the phone
+         keeps its now-playing bar across modes, and so does the desk: at the
+         right-hand end of the tab row. */
+      .pd2-mode .ps-dockwrap { display: flex; flex-direction: row-reverse; justify-content: space-between; align-items: center; gap: 16px; }
+      .pd2-mode .ps-mini { flex: 0 1 340px; min-width: 0; margin: 0; }
       .pd2-mode .ps-dock { justify-content: flex-start; gap: 6px; background: none; border: 0; box-shadow: none;
         backdrop-filter: none; -webkit-backdrop-filter: none; padding: 0; }
       .pd2-mode .ps-db { flex: 0 0 auto; flex-direction: row; gap: 8px; padding: 9px 14px; border-radius: var(--pc-r-sm); }
@@ -304,5 +363,11 @@ const PD2_STYLES = `
       .pd2-mode .ps-col { flex: 1; min-height: 0; overflow-y: auto; background: none; border: 0; box-shadow: none;
         backdrop-filter: none; -webkit-backdrop-filter: none; border-radius: 0; padding: 0 16px 16px; }
       .pd2-mode .ps-col::before { display: none; }
-      .pd2-mode .ps-sypage { max-width: 1100px; }
+      /* The server's pages were a phone column stretched to 1100px. At a desk
+         the cards flow into columns; the container list is one card of rows,
+         so it becomes a grid of rows instead. */
+      .pd2-mode .ps-sypage:not([data-sect="sys-docker"]):not([data-sect="sys-alerts"]) { display: block; columns: 2 440px; column-gap: 14px; }
+      .pd2-mode .ps-sypage:not([data-sect="sys-docker"]):not([data-sect="sys-alerts"]) > * { break-inside: avoid; margin: 0 0 12px; }
+      .pd2-mode [data-sect="sys-docker"] .ps-sycard:has(.ps-sw) { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 8px; }
+      .pd2-mode [data-sect="sys-docker"] .ps-sycard .ps-sw { margin: 0; }
     `;

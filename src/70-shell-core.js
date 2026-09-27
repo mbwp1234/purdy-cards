@@ -1693,7 +1693,11 @@ class PurdyShellCard extends PcBaseCard {
       const cross = box.querySelector(".ps-cross");
       /* The readout lives ABOVE the plot, in normal flow, because a tooltip
          drawn at the touch point is under the thumb by definition. */
-      const out = root.querySelector(`[data-readout="${kind}"]`);
+      /* The readout NEAREST the plot first: the desk can draw the same graph
+         twice (the stage and the drawer), and a document-wide lookup would
+         write the drawer's readout into the stage's legend. */
+      const out = (box.parentElement && box.parentElement.querySelector(`[data-readout="${kind}"]`))
+        || root.querySelector(`[data-readout="${kind}"]`);
       if (!cross || !out) return;
       const resting = out.innerHTML;
 

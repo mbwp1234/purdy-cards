@@ -42,10 +42,22 @@ class PurdyDesk2Card extends PurdyShellCard {
     /* Esc closes the drawer. Bound once and kept on the card, so disconnect
        can remove exactly the function it added. */
     this._pd2Key = (e) => {
-      if (e && e.key === "Escape" && (this._sheet || this._pd2Joel)) {
-        this._sheet = null; this._mediaPick = null; this._napEdit = null;
+      if (!e) return;
+      if (e.key === "Escape" && this._sheet) {
+        this._sheet = this._pd2Back();
+        this._mediaPick = null; this._napEdit = null;
         this._render();
+        return;
       }
+      /* 1–9 press the rail's entries in the order they are drawn. Never while
+         typing — the music and container searches are fields, and a "2" typed
+         into one must stay a "2" — and never with a modifier, which belongs
+         to the browser. */
+      if (!/^[1-9]$/.test(e.key || "") || e.ctrlKey || e.metaKey || e.altKey) return;
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      if (path.some((n) => n && (n.tagName === "INPUT" || n.tagName === "TEXTAREA" || n.isContentEditable))) return;
+      const btn = this.shadowRoot && this.shadowRoot.querySelector(`.pd2-rb[data-key="${e.key}"]`);
+      if (btn) { e.preventDefault(); btn.click(); }
     };
     /* The HA header comes and goes (kiosk, edit mode, the app vs a browser),
        so a fixed offset was right on one screen and ran the stage off the
@@ -90,6 +102,13 @@ class PurdyDesk2Card extends PurdyShellCard {
       this.style.setProperty("--pd-off", (this._pd2Fixed ? off : 16) + "px");
     }
     this._pd2Fit();
+  }
+
+  /* `house:` is a desk-only top-level block, so the shell's walk cannot know
+     it — extended, never replaced, or a House row would wait on the 30s
+     clock to show what it had done. */
+  _collectWatched() {
+    return super._collectWatched().concat((this._config.house || []).map((r) => r && r.entity).filter(Boolean));
   }
 
   connectedCallback() {
@@ -177,6 +196,7 @@ class PurdyDesk2Card extends PurdyShellCard {
     /* A mode owns the panel. _renderSystems writes ps-stat, ps-col and the
        page tabs in ps-dockwrap, and the sheet — the house's faults and log
        do not stop mattering because you are looking at the server. */
+    this._pd2Track();
     if (this._mode === "systems") { this._renderSystems(faults); this._pd2Bind(); return; }
     if (this._mode === "health") { this._renderHealth(faults); this._pd2Bind(); return; }
 
@@ -193,6 +213,7 @@ class PurdyDesk2Card extends PurdyShellCard {
       .map((s) => this._pd2Slot(s)).filter(Boolean);
     this._patch("pd2-side", side.join(`<div class="pd2-hhair in"></div>`));
 
+    this._pd2Track();
     this._patchSheet(this._sheetHtml(faults));
     this._mountSheetCard();
 
@@ -209,23 +230,78 @@ class PurdyDesk2Card extends PurdyShellCard {
     this._syncQueue();
   }
 
+  /* Where closing a sheet lands. The nap correction and the sleep log are
+     opened FROM the Joel drawer; closing them used to drop all the way to the
+     stage, so correcting two naps meant opening Joel twice. They now step back
+     to the drawer they came from. Anything else closes outright. */
+  _pd2Back() {
+    return (this._sheet === "napedit" || this._sheet === "joellog") && this._pd2From === "joel" ? "joel" : null;
+  }
+
+  /* A phone has to be held; a pointer hovers — the desk's scrub is hover. */
+  _scrubHint() { return "hover to scrub"; }
+
   /* The drawer's contents are the shell's own sheets, with one addition: the
      Joel sheet, which is the phone's nursery section drawn open. The drawer is
      ~460px, phone width, so the section body renders unchanged — which is the
      whole reason the drawer is that wide. */
   _sheetHtml(faults) {
-    if (this._sheet === "joel") {
-      const sec = this._pd2Sec((this._config.stage || {}).joel);
-      if (!sec) return "";
-      const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
+    const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
         <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+    /* Joel and Climate are their phone sections drawn OPEN — the same
+       renderer, so nothing the phone can do is missing here. Joel's drawer is
+       twice the width and lays the section out in two columns: his week and
+       last night side by side is what a desk has the room for. */
+    const full = { joel: ["joel", "_secNursery", "pd2-jsheet"], climate: ["climate", "_secClimate", "pd2-csheet"] }[this._sheet];
+    if (full) {
+      const sec = this._pd2Sec((this._config.stage || {})[full[0]]);
+      if (!sec) return "";
+      /* No chip in the chrome: the section draws its own chips row, and the
+         same chip twice in one sheet is the chip rule broken at a new surface. */
+      const chip = "";
       return `<div class="ps-scrim" id="ps-scrim"></div>
-        <div class="ps-sheet tall pd2-jsheet">
-          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || "Joel")}</span>${close}</div>
-          <div class="ps-sect open">${this._secNursery(sec)}</div>
+        <div class="ps-sheet tall ${full[2]}">
+          <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || (full[0] === "joel" ? "Joel" : "Climate"))}</span>
+            ${chip ? `<span class="pd2-shchips">${chip}</span>` : ""}${close}</div>
+          <div class="ps-sect open">${this[full[1]](sec)}</div>
         </div>`;
     }
+    /* The week sheet is the phone's, plus one row: the header's reading used
+       to open the thermometer's more-info, and now opens this sheet — so the
+       thermometer's history must still be reachable from here, or the header
+       change orphaned it. */
+    if (this._sheet === "wx") {
+      const base = super._sheetHtml(faults);
+      const id = this._config.weather_temp;
+      if (!base || !id) return base;
+      const i = base.lastIndexOf("</div>");
+      return base.slice(0, i) + `<button class="pd2-more" type="button" data-info="${psEsc(id)}">
+          <span>${psEsc(pcName(this._hass, id))}</span><span>History ›</span></button>` + base.slice(i);
+    }
+    /* "All clear" is not a dead end: with nothing raised, the chip opens the
+       notification log — what WAS raised — rather than an empty sheet. */
+    if (this._sheet === "alerts" && !faults.length && (this._config.sheets || {}).notifications) {
+      this._sheet = "notifications";
+    }
     return super._sheetHtml(faults);
+  }
+
+  /* Every handler that closes a sheet sets `_sheet = null` — the shell's ✕,
+     its scrim, a save. Rather than teach each of them about the desk, the
+     render notices a sheet that was opened from Joel closing, and steps back
+     to Joel instead. `_pd2From` is the sheet before this one. */
+  _pd2Track() {
+    const cur = this._sheet || null;
+    if (cur === this._pd2Last) return;
+    if (!cur && (this._pd2Last === "napedit" || this._pd2Last === "joellog") && this._pd2From === "joel" && !this._pd2Home) {
+      this._sheet = "joel";
+      this._pd2From = null;
+      this._pd2Last = "joel";
+      return;
+    }
+    this._pd2From = this._pd2Last;
+    this._pd2Last = cur;
+    this._pd2Home = false;
   }
 
   /* -------------------------------------------------------------- rail --- */
@@ -250,9 +326,15 @@ class PurdyDesk2Card extends PurdyShellCard {
       /* The divider sits before the last entry, the way the mockup groups the
          bell apart from the places. */
       const sep = n === items.length - 1 && items.length > 2 ? `<i class="pd2-rsep"></i>` : "";
+      /* Labelled, as the phone's dock is: six glyphs with the names only in
+         tooltips is a row of guesses the first week. The number is the key
+         that presses it. */
+      const key = n < 9 ? String(n + 1) : "";
       return `${sep}<button class="pd2-rb ${on ? "on" : ""} ${alert ? "alert" : ""}" type="button"
-          ${home ? `data-pd2home="1"` : `data-dock="${i}"`} aria-label="${psEsc(d.name)}" title="${psEsc(d.name)}">
-          <ha-icon icon="${psEsc(d.icon)}"></ha-icon></button>`;
+          ${home ? `data-pd2home="1"` : `data-dock="${i}"`} ${key ? `data-key="${key}"` : ""}
+          aria-label="${psEsc(d.name)}" title="${psEsc(d.name)}${key ? ` (${key})` : ""}"${on ? ` aria-current="page"` : ""}>
+          <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
+          ${alert ? `<i class="pd2-badge">${faults.length}</i>` : ""}</button>`;
     }).join("");
   }
 
@@ -285,7 +367,7 @@ class PurdyDesk2Card extends PurdyShellCard {
       </div>
       <div class="pd2-ppl">${this._hdrPeople()}</div>
       <div class="pd2-hr">
-        ${wTemp == null ? "" : `<div class="pd2-hwx" data-info="${psEsc(c.weather_temp || c.weather)}">
+        ${wTemp == null ? "" : `<div class="pd2-hwx" data-sheet="wx" role="button" tabindex="0" title="The week and the next 24 hours">
           <ha-icon icon="${pcWxIcon(wState)}"></ha-icon>
           <div><b>${Math.round(wTemp)}°</b><span>${psEsc(pcWxText(wState) || "")}${
             feels == null ? "" : ` · feels ${Math.round(feels)}°`}</span></div></div>`}
@@ -306,7 +388,7 @@ class PurdyDesk2Card extends PurdyShellCard {
     if (!wet) return "";
     const when = wet.today ? (new Date(this._nowMs()).getHours() >= 17 ? "tonight" : "today")
       : this._wxDow(wet.ts, false);
-    return `<span class="ps-chip warn">${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(when)} · ${Math.round(wet.pop)}%</span>`;
+    return `<button class="ps-chip warn" type="button" data-sheet="wx">${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(when)} · ${Math.round(wet.pop)}%</button>`;
   }
 
   /* -------------------------------------------------------------- joel --- */
@@ -383,6 +465,12 @@ class PurdyDesk2Card extends PurdyShellCard {
         ${!loaded || (!sessions.length && stats.bedMean == null) ? ""
           : this._nurseryDayRail(sessions, todayKey, stats.bedMean, norms)}
         ${lastRow}
+        ${/* His week, when the screen is tall enough to hold it without
+              squeezing anything above — the raster the drawer opens with, so
+              the one question asked of this column every morning (was last
+              night normal, and which way is the week going) is answered
+              without a click. A short screen drops it; the drawer still has it. */""}
+        ${loaded && sessions.length ? `<div class="pd2-week">${this._nurseryRaster(sessions, norms, sec, this._awayDays(sec))}</div>` : ""}
         ${verdict}
       </div>`;
   }
@@ -411,6 +499,10 @@ class PurdyDesk2Card extends PurdyShellCard {
     const diff = cur == null || goal == null ? null : Math.round(cur - goal);
     const chip = diff == null || diff === 0 ? ""
       : `<span class="ps-chip ${diff > 0 ? "warn" : "cool"}">${Math.abs(diff)}° ${diff > 0 ? "over" : "under"} goal</span>`;
+    /* The phone's chips — the running preset and GTTC's season advice — ride
+       the label row beside the comparison, where they cost no height. */
+    const chips = this._climateChips(sec);
+    const reason = th && th.attributes.hvac_action_reason;
 
     const zc = sec.zones || {};
     const activeZone = pcState(h, zc.select);
@@ -443,8 +535,12 @@ class PurdyDesk2Card extends PurdyShellCard {
     }).join("");
 
     const wave = this._waveSvg(sec);
+    const inNow = pcNum(h, (sec.graph || {}).inside);
+    const outNow = pcNum(h, (sec.graph || {}).outside);
     return `
-      <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Climate")}</span>${chip}</div>
+      <div class="pd2-lblrow"><button class="pd2-lbl pd2-open" type="button" data-sheet="climate"
+          title="Open climate">${psEsc(sec.title || "Climate")}<em>›</em></button>
+        <span class="pd2-chips">${chips}${chip}</span></div>
       <div class="pd2-chero">
         <div class="pd2-ring sm" data-info="${psEsc(sec.goal || sec.thermostat)}">
           ${this._ringSvg(150, 10, [[cur == null ? 0 : f(cur), col]], goal == null ? null : f(goal), "var(--ps-text)")}
@@ -460,13 +556,19 @@ class PurdyDesk2Card extends PurdyShellCard {
             <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
+          ${reason ? `<div class="pd2-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
           ${zones ? `<div class="pd2-segs">${zones}</div>` : ""}
-          ${sec.schedule ? `<button class="pd2-link" type="button" data-sheet="schedule">Schedule</button>` : ""}
+          ${sec.schedule || sec.season ? `<div class="pd2-cbtns">
+            ${sec.schedule ? `<button class="pd2-link" type="button" data-sheet="schedule">Schedule</button>` : ""}
+            ${this._seasonHtml(sec)}</div>` : ""}
         </div>
       </div>
       ${this._holdHtml(sec)}
       ${wave ? `<div class="pd2-wide pd2-graph">
-          <div class="pd2-lblrow"><span class="pd2-cap">LAST 24H</span></div>
+          <div class="pd2-lblrow"><span class="pd2-cap">LAST 24H</span>
+            <div class="ps-wlg pd2-wlg" data-readout="wave">
+              <span><i style="background:var(--ps-cool)"></i>In<b>${inNow == null ? "—" : inNow.toFixed(1) + "°"}</b></span>
+              <span><i style="background:var(--ps-heat)"></i>Out<b>${outNow == null ? "—" : outNow.toFixed(1) + "°"}</b></span></div></div>
           <div class="ps-wave" data-scrub="wave"><div class="ps-cross" hidden></div>${wave}</div></div>` : ""}
       <div class="pd2-rooms">
         <div class="pd2-room hd"><span>ROOM</span><span>24H</span><span>TEMP</span><span>RH</span></div>
@@ -481,11 +583,19 @@ class PurdyDesk2Card extends PurdyShellCard {
      adds the facts the phone keeps behind its sheet. */
   _dkWeather(sec) {
     const facts = this._wxDetailFacts(sec);
-    return `
-      <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Weather")}</span>
+    /* The whole column is one door onto the phone's week sheet — the hourly
+       strip, measured vs forecast and the detail rows all live there, and a
+       seven-capsule rail with nothing behind it would be the only place on
+       the desk that knew less than the phone. */
+    return `<div class="pd2-colbtn" data-pd2open="wx" role="button" tabindex="0" aria-label="Open the week's weather">
+      <div class="pd2-lblrow"><span class="pd2-lbl">${psEsc(sec.title || "Weather")}<em>›</em></span>
         <span class="pd2-src">Forecast · high / low</span></div>
       ${this._wxForecastRail(sec)}
-      ${facts ? `<div class="pd2-wide pd2-facts">${facts}</div>` : ""}`;
+      ${/* The wide face has a whole column to itself, so the next 24 hours
+            come out from behind the drawer — the strip a desk has the width
+            for and the phone keeps a tap away. */""}
+      <div class="pd2-wide pd2-hourly">${this._wxHourly(sec)}</div>
+      ${facts ? `<div class="pd2-wide pd2-facts">${facts}</div>` : ""}</div>`;
   }
 
   /* Tonight · feels · dew/wind · sunrise, as rows. Each drops out when its
@@ -637,6 +747,20 @@ class PurdyDesk2Card extends PurdyShellCard {
       rows.push({ name: srv.name || "Server", dot: sf.length ? "warn" : "good", attrs: route((d) => d.mode === "systems"),
         detail: [arr == null ? null : `${Math.round(arr)}% full`, run && run !== "unknown" ? `${run} up` : null].filter(Boolean).join(" · ") || "—" });
     }
+    /* `house:` — rows the crew does not know about. The first desk carried
+       Doors and Occupancy as quick tiles; dropping them here would orphan
+       both. Each row is an entity, its state in words, amber on `alert_when`,
+       and a tap that opens `sheet:` or else the entity's more-info. */
+    (c.house || []).forEach((r) => {
+      if (!r || !r.entity || !this._visible(r)) return;
+      const st = pcState(h, r.entity);
+      const bad = !st || st === "unavailable" || st === "unknown";
+      const alert = !bad && (r.alert_when || []).indexOf(st) >= 0;
+      const on = !bad && (r.on_when || []).indexOf(st) >= 0;
+      rows.push({ name: r.name || pcName(h, r.entity), dot: bad ? "" : alert ? "warn" : on ? "cool" : "good",
+        attrs: r.sheet ? `data-sheet="${psEsc(r.sheet)}"` : `data-info="${psEsc(r.entity)}"`,
+        detail: bad ? "Not reporting" : this._humanize(st) });
+    });
     const next = this._dkNext();
     const nextRow = next ? `<div class="pd2-hrow compact-only"><span class="pd2-dot aur"></span><b>Next</b><span>${psEsc(next)}</span></div>` : "";
     return `<div class="pd2-lbl">House</div><div class="pd2-house">${nextRow}${rows.map((r) =>
@@ -647,15 +771,21 @@ class PurdyDesk2Card extends PurdyShellCard {
   /* ----------------------------------------------------------- binding --- */
 
   _pd2Bind() {
+    /* A role=button div answers the keyboard the way a button does. */
+    this._each(".pd2-hwx[data-sheet]", (el) => el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
+    }));
     this._each("[data-pd2home]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       this._sheet = null; this._mediaPick = null; this._napEdit = null; this._mode = null;
+      this._pd2Home = true;
       this._render();
     }));
-    this._each("[data-pd2joel]", (el) => {
+    this._each("[data-pd2joel], [data-pd2open]", (el) => {
+      const k = el.dataset.pd2open || "joel";
       const open = (e) => {
         if (e && e.target && e.target.closest && e.target.closest("button, [data-info]") && e.target.closest("button, [data-info]") !== el) return;
-        this._sheet = this._sheet === "joel" ? null : "joel";
+        this._sheet = this._sheet === k ? null : k;
         this._render();
       };
       el.addEventListener("click", open);

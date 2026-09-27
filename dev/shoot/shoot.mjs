@@ -14,6 +14,7 @@
  *   node dev/shoot/shoot.mjs phone desk            # named presets
  *   node dev/shoot/shoot.mjs --dpr 2 phone         # retina (4x the tokens)
  *   node dev/shoot/shoot.mjs --shot me:390x844:'tag=custom:purdy-shell-card&view=phone2&open=clim'
+ *   node dev/shoot/shoot.mjs --js "$('#ps-alert').click(); return !!$('.ps-sheet')" desk2-1440
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -27,11 +28,12 @@ const flag = (k, d) => { const i = argv.indexOf("--" + k); return i >= 0 && argv
 const BASE = flag("base", "http://127.0.0.1:8099");
 const OUT = path.resolve(flag("out", path.join(os.homedir(), "purdy-shots")));
 const DPR = Number(flag("dpr", 1));
+const JS = flag("js", null);
 
 const SHELL = "tag=custom:purdy-shell-card&view=phone2";
 const PHONE = [390, 844];
 const DESK = [1440, 900];
-const D2 = SHELL + "&el=purdy-desk2-card&patch=desk2";
+const D2 = "tag=custom:purdy-desk2-card&view=desk2";
 /* One entry per thing worth looking at. Phone first: it is the view that ships. */
 const PRESETS = {
   /* Section keys are the live config's: joel · clim · now · people · crew ·
@@ -128,10 +130,8 @@ const PRESETS = {
   "sys-perf":     [PHONE, SHELL + "&mode=systems&page=perf"],
   "sys-alerts":   [PHONE, SHELL + "&mode=systems&page=alerts"],
   desk:           [DESK, "tag=custom:purdy-desk-card&view=desktop"],
-  /* purdy-desk2-card, the desk as a subclass of the shell. Until the desk2
-     view exists these render the PHONE's deployed config through the desk2
-     element with `patch=desk2` adding stage:, viewport_offset and the
-     calendar — so the shots judge the config the view will actually get. */
+  /* purdy-desk2-card, the desk as a subclass of the shell, rendered from the
+     deployed desk2 view's own config. */
   "desk2-1280":   [[1280, 800],  D2],
   "desk2-1440":   [DESK,         D2],
   "desk2-1920":   [[1920, 1080], D2],
@@ -142,6 +142,12 @@ const PRESETS = {
   "desk2-drawer-crew":   [DESK, D2 + "&sheet=crew"],
   "desk2-drawer-alerts": [DESK, D2 + "&sheet=notifications"],
   "desk2-nas":    [DESK, D2 + "&mode=systems&page=overview"],
+  "desk2-nas-docker":  [DESK, D2 + "&mode=systems&page=docker"],
+  "desk2-nas-storage": [DESK, D2 + "&mode=systems&page=storage"],
+  "desk2-nas-perf":    [DESK, D2 + "&mode=systems&page=perf"],
+  "desk2-climate": [DESK, D2 + "&sheet=climate"],
+  "desk2-wx":      [DESK, D2 + "&sheet=wx"],
+  "desk2-short":   [[1400, 666], D2],
   "desk-weather": [DESK, "tag=custom:purdy-desk-card&view=desktop&patch=weather-desk"],
 };
 
@@ -239,6 +245,20 @@ async function main() {
       const r = await cdp("Runtime.evaluate", { expression: "document.title", returnByValue: true }, sessionId);
       title = (r.result && r.result.value) || "";
       if (/^READY|^ERROR/.test(title)) { ok = title.startsWith("READY"); break; }
+    }
+    /* `--js` drives the page after READY and before the shot: a click on a
+     * real control exercises the real handler, which a preset that writes the
+     * card's fields directly never does. Its return value is printed, so an
+     * assertion can ride along for free. The expression may be async. */
+    if (JS) {
+      const r = await cdp("Runtime.evaluate", {
+        expression: `(async () => { const c = window.__card, $ = (s) => c.shadowRoot.querySelector(s); ${JS} })()`,
+        awaitPromise: true, returnByValue: true,
+      }, sessionId).catch((e) => ({ exceptionDetails: { text: e.message } }));
+      await sleep(600);
+      const v = r.exceptionDetails ? "THREW " + (r.exceptionDetails.exception?.description || r.exceptionDetails.text)
+        : JSON.stringify(r.result && r.result.value);
+      console.log(`  js ${name}: ${String(v).slice(0, 4000)}`);
     }
     const notesRes = await cdp("Runtime.evaluate", {
       expression: "JSON.stringify(typeof notes!=='undefined'?notes:[])", returnByValue: true,

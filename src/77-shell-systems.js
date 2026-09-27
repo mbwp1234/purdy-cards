@@ -867,7 +867,7 @@ Object.assign(PurdyShellCard.prototype, {
         </svg>
         <span class="ps-cross" hidden></span>
       </div>
-      <div class="ps-sysub">${Math.round((Date.now() - down[0].t) / 3600000)}h · press and hold to scrub</div>`;
+      <div class="ps-sysub">${Math.round((Date.now() - down[0].t) / 3600000)}h · ${this._scrubHint()}</div>`;
   },
 
   /* ------------------------------------------------------- notifications --*/
