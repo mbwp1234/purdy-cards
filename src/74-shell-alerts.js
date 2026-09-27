@@ -260,6 +260,26 @@ Object.assign(PurdyShellCard.prototype, {
     };
   },
 
+  /* Open warn/critical entries in the notification log, polled at most once
+     a minute off the render path. The log is the notifications sheet's hosted
+     card's todo list, so its entity is read from there rather than configured
+     twice. Info rows are not counted, or the badge would sit at sixty for
+     ever. Shared by the phone's dock bell and the desk rail's. */
+  _logOpenCount() {
+    const ent = ((((this._config.sheets || {}).notifications) || {}).card || {}).entity;
+    if (!ent || !this._hass || !this._hass.callWS) return 0;
+    const now = Date.now();
+    if (!this._logCntAt || now - this._logCntAt > 60000) {
+      this._logCntAt = now;
+      this._hass.callWS({ type: "todo/item/list", entity_id: ent }).then((res) => {
+        const n = ((res && res.items) || []).filter((it) => it.status !== "completed"
+          && /\b(critical|warn)\b/.test(it.description || "")).length;
+        if (n !== this._logCntN) { this._logCntN = n; this._render(); }
+      }).catch(() => {});
+    }
+    return this._logCntN || 0;
+  },
+
   /* `offline:` — sensors that have stopped answering, as ONE row.
    *
    * The two Aqara room sensors fell off the mesh at a restart and stayed dark

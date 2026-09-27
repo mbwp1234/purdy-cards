@@ -274,6 +274,11 @@ class PurdyShellCard extends PcBaseCard {
     this._nurseryTimer = null;
     this._peopleTimer = null;
     this._wxTimer = null;
+    /* The observer is dropped with the rest, and the node forgotten, so the
+       catch-up render on reconnect observes afresh. */
+    if (this._npObs) this._npObs.disconnect();
+    this._npObs = null;
+    this._npNode = null;
   }
 
   /* Is this section or dock entry for the person actually looking at it?
@@ -897,8 +902,15 @@ class PurdyShellCard extends PcBaseCard {
       .filter(({ d }) => this._visible(d))
       .map(({ d, i }) => {
         const alert = d.alert_when_faults && faults.length;
+        /* The bell counts. Raised faults in red; with nothing raised, the
+           log's open warnings and alerts in amber — a litter-box error or a
+           finished washer sat in the log with nothing on the home screen
+           saying so. The desk rail learned this first. */
+        const logN = !alert && d.alert_when_faults && d.sheet === "notifications" ? this._logOpenCount() : 0;
         return `<button class="ps-db ${d.active ? "on" : ""} ${alert ? "alert" : ""}" type="button" data-dock="${i}">
             <ha-icon icon="${psEsc(d.icon)}"></ha-icon><span>${psEsc(d.name)}</span>
+            ${alert ? `<i class="ps-dbadge">${faults.length}</i>`
+              : logN ? `<i class="ps-dbadge log">${logN}</i>` : ""}
           </button>`;
       }).join("");
 
@@ -930,7 +942,7 @@ class PurdyShellCard extends PcBaseCard {
                a screen of confidently stale numbers. */
             ? `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>`
             : `<button class="ps-chip ${worst}" type="button" id="ps-alert">
-            <span class="ps-dot"></span>${faults.length ? `${faults.length} need${faults.length > 1 ? "" : "s"} attention` : "All clear"}
+            <span class="ps-dot"></span>${psEsc(this._faultChipText(faults))}
           </button>`}
         </div>`);
 
@@ -952,6 +964,7 @@ class PurdyShellCard extends PcBaseCard {
     this._bindPeople();
     this._bindNurseryLog();
     this._bindSystems();
+    this._watchNowPlaying();
     this._reserve();
     /* Only while the music sheet is open, and only when the answer could have
        changed — see _syncQueue. Kicked from the tail of the render so it
@@ -978,6 +991,59 @@ class PurdyShellCard extends PcBaseCard {
           <svg viewBox="0 0 24 24" class="ps-ico">${np.playing
             ? `<path d="M9 5v14M15 5v14"/>` : `<path d="M7 4.5 19 12 7 19.5Z"/>`}</svg></button>
       </div>`;
+  }
+
+  /* The header chip NAMES the fault. "1 needs attention" made you open the
+     sheet to learn what; one fault reads as itself ("Kitchen + Office
+     offline · 2d"), several as the worst one plus a count of the rest. */
+  _faultChipText(faults) {
+    if (!faults.length) return "All clear";
+    const f = faults[0];
+    if (faults.length === 1) return f.short || f.title || "1 needs attention";
+    return `${f.title || f.short || "Attention"} +${faults.length - 1}`;
+  }
+
+  /* The mini bar hides while the Now playing section is on screen.
+   *
+   * At the top of the page "Ocean sounds" appeared twice — once in the
+   * section, once in the bar above the dock — which is the chip rule at the
+   * dock. An IntersectionObserver watches the section's node and toggles a
+   * class on the dock wrap; nothing re-renders, so the patching rule holds.
+   * The bar goes `visibility: hidden`, keeping its space, so the dock does
+   * not jump and `_reserve` measures the same height either way. A sheet
+   * over the column brings it back: the section behind the scrim is not
+   * something you are looking at. Runs on every render path, because a mode
+   * removes the section's node and the class must not outlive it. */
+  _watchNowPlaying() {
+    const col = this.shadowRoot.getElementById("ps-col");
+    let key = null;
+    (this._config.sections || []).forEach((raw, i) => {
+      if (key == null && raw.type === "nowplaying" && !raw.sheet_only) key = raw.key || raw.type + i;
+    });
+    const node = !this._mode && col && key != null
+      ? Array.from(col.children).find((n) => n.dataset && n.dataset.sect === key) || null : null;
+    if (node !== this._npNode) {
+      if (this._npObs) this._npObs.disconnect();
+      this._npObs = null;
+      this._npNode = node;
+      this._npSeen = false;
+      if (node && typeof IntersectionObserver === "function") {
+        this._npObs = new IntersectionObserver((ents) => {
+          const e = ents[ents.length - 1];
+          this._npSeen = !!(e && e.isIntersecting);
+          this._paintMini();
+        }, { rootMargin: `0px 0px -${this._dockH || 120}px 0px`, threshold: 0.4 });
+        this._npObs.observe(node);
+      }
+    }
+    this._paintMini();
+  }
+
+  _paintMini() {
+    const wrap = this.shadowRoot.getElementById("ps-dockwrap");
+    if (!wrap || !wrap.classList) return;
+    const hide = !!(this._npSeen && this._npNode && !this._sheet && !this._mode);
+    if (wrap.classList.contains("np-seen") !== hide) wrap.classList.toggle("np-seen", hide);
   }
 
   /* Reserve exactly as much room as the dock actually occupies.

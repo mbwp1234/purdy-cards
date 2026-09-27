@@ -264,7 +264,7 @@ class PurdyDesk2Card extends PurdyShellCard {
           <div class="ps-sheeth"><span class="ps-lbl">${psEsc(sec.title || (full[0] === "joel" ? "Joel" : "Climate"))}</span>
             ${chip ? `<span class="pd2-shchips">${chip}</span>` : ""}${close}</div>
           <div class="ps-sect open">${full[0] === "joel"
-            ? this._secNursery(sec, { omit: ["raster", "day"] }) + this._dkJoelTrends(sec)
+            ? this._secNursery(sec, { omit: ["raster", "day", "vs"] }) + this._dkJoelTrends(sec)
             : this[full[1]](sec)}</div>
         </div>`;
     }
@@ -329,7 +329,7 @@ class PurdyDesk2Card extends PurdyShellCard {
          and alerts — the entries a person has not dealt with. Info rows
          (61 of them, mostly update notices) do not count: a badge that is
          never zero is a badge nobody reads. */
-      const logN = !alert && d.alert_when_faults && d.sheet === "notifications" ? this._pd2LogCount() : 0;
+      const logN = !alert && d.alert_when_faults && d.sheet === "notifications" ? this._logOpenCount() : 0;
       /* The divider sits before the last entry, the way the mockup groups the
          bell apart from the places. */
       const sep = n === items.length - 1 && items.length > 2 ? `<i class="pd2-rsep"></i>` : "";
@@ -344,24 +344,6 @@ class PurdyDesk2Card extends PurdyShellCard {
           ${alert ? `<i class="pd2-badge">${faults.length}</i>`
             : logN ? `<i class="pd2-badge log">${logN}</i>` : ""}</button>`;
     }).join("");
-  }
-
-  /* Open warn/critical entries in the notification log, polled at most once
-     a minute off the render path. The log is the sheet's hosted card's todo
-     list, so its entity is read from there rather than configured twice. */
-  _pd2LogCount() {
-    const ent = ((((this._config.sheets || {}).notifications) || {}).card || {}).entity;
-    if (!ent || !this._hass || !this._hass.callWS) return 0;
-    const now = Date.now();
-    if (!this._pd2LogAt || now - this._pd2LogAt > 60000) {
-      this._pd2LogAt = now;
-      this._hass.callWS({ type: "todo/item/list", entity_id: ent }).then((res) => {
-        const n = ((res && res.items) || []).filter((it) => it.status !== "completed"
-          && /\b(critical|warn)\b/.test(it.description || "")).length;
-        if (n !== this._pd2LogN) { this._pd2LogN = n; this._render(); }
-      }).catch(() => {});
-    }
-    return this._pd2LogN || 0;
   }
 
   /* ------------------------------------------------------------ header --- */
@@ -584,23 +566,11 @@ class PurdyDesk2Card extends PurdyShellCard {
     const napDays = naps.filter((n) => n.mins > 0);
     const napAvg = napDays.length ? Math.round(napDays.reduce((a, n) => a + n.mins, 0) / napDays.length) : null;
 
-    /* Tonight (or last night, by day) against his own usual, in numbers —
-       each line only when both halves exist. */
-    const ref = m.nightSession;
-    const done = sessions.filter((x) => x.night && !x.active && x !== ref).slice(-N);
-    const clockOf = (t) => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes(); };
-    const settleObs = done.filter((x) => !x.manual && x.settleMinutes != null);
-    const settleAvg = settleObs.length ? Math.round(settleObs.reduce((a, x) => a + x.settleMinutes, 0) / settleObs.length) : null;
-    const firsts = done.filter((x) => !x.manual && x.events && x.events.length).map((x) => {
-      const c = clockOf(x.events[0]); return c < 720 ? c + 1440 : c;
-    });
-    const firstAvg = firsts.length >= 2 ? Math.round(firsts.reduce((a, b) => a + b, 0) / firsts.length) % 1440 : null;
-    const vs = [];
-    if (ref && stats.bedMean != null) vs.push(["Put down", psClock(ref.from), `usual ${psMinsToClock(stats.bedMean)}`]);
-    if (ref && !ref.manual && ref.hadExit && settleAvg != null) vs.push(["Settled in", psHM(ref.settleMinutes), `usual ${psHM(settleAvg)}`]);
-    if (firstAvg != null) vs.push(["First wake, usually", psMinsToClock(firstAvg), `${firsts.length} of ${done.length} nights`]);
-    const vsHtml = !vs.length ? "" : `<div class="pd2-tvs"><span class="ps-lbl">${ref && ref.active ? "Tonight" : "Last night"} vs his usual</span>
-      ${vs.map(([k, a, b]) => `<div><span>${psEsc(k)}</span><b>${psEsc(a)}</b><em>${psEsc(b)}</em></div>`).join("")}</div>`;
+    /* Tonight (or last night, by day) against his own usual — shared with
+       the phone's expanded Joel section, so the two cannot disagree. */
+    const vu = this._nurseryVsUsual(m, N);
+    const vsHtml = !vu ? "" : `<div class="pd2-tvs"><span class="ps-lbl">${psEsc(vu.label)}</span>
+      ${vu.rows.map(([k, a, b]) => `<div><span>${psEsc(k)}</span><b>${psEsc(a)}</b><em>${psEsc(b)}</em></div>`).join("")}</div>`;
 
     return `<div class="pd2-trends">
       ${vsHtml}
@@ -901,8 +871,7 @@ class PurdyDesk2Card extends PurdyShellCard {
       const on = lights.filter((l) => l.on);
       /* Offline lamps are counted here, because nothing else on the stage
          would tell you two of them have dropped off the network. */
-      const dead = lights.reduce((n, l) => n + (l.gone ? 1
-        : (l.cfg.members || []).filter((m) => !pcReading(h, m).ok).length), 0);
+      const dead = this._lightDead(lights);
       rows.push({ name: "Lights", dot: on.length ? "lit" : "", attrs: route((d) => d.sheet === "lights") || `data-sheet="lights"`,
         detail: [on.length ? `${on.length} on · ${on.map((l) => l.name).join(", ")}` : "All off",
           dead ? `${dead} offline` : null].filter(Boolean).join(" · ") });
