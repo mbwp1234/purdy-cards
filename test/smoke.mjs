@@ -10310,6 +10310,68 @@ check('the season entities are watched', (() => {
 })());
 
 
+/* Heat/cool (GTTC v2.4). The thermostat runs both setpoints and the house
+   drifts between them — so the goal becomes a band, the stepper moves the band
+   as a whole, and the season switch grows a third segment only when the
+   select actually offers it. */
+check('no Heat·Cool segment until GTTC offers the option',
+  !/data-season="both"/.test(seHtml()));
+shse._hass.states['select.gttc_season_mode'].attributes = { options: ['Heating', 'Heat/Cool', 'Cooling'] };
+check('once offered, the season switch has three segments in order', (() => {
+  const m = seHtml().match(/<div class="ps-season three"[\s\S]*?<\/div>/);
+  return !!m && /data-season="heat"[\s\S]*data-season="both"[\s\S]*data-season="cool"/.test(m[0]);
+})());
+shse._hass.states['select.gttc_season_mode'].state = 'Heat/Cool';
+check('Heat/Cool in force marks its own segment and neither of the others',
+  /ps-sbtn both on[^>]*aria-pressed="true"/.test(seHtml()) && !/ps-sbtn heat on/.test(seHtml()) && !/ps-sbtn cool on/.test(seHtml()));
+shse._hass.states['binary_sensor.gttc_season_switch_recommended'].attributes = { recommended_season: 'heat_cool' };
+check('a ladder recommendation is named as GTTC names it', /Heat·Cool recommended/.test(seHtml()));
+shse._hass.states['binary_sensor.gttc_season_switch_recommended'].state = 'off';
+shse._hass.states['climate.g'] = { state: 'heat_cool', attributes: {
+  current_temperature: 72.6, temperature: null, target_temp_low: 71, target_temp_high: 74, hvac_action: 'idle',
+  hvac_action_reason: 'schedule' } };
+check('in heat/cool the goal reads as a band', /ps-goal band"><b>71–74°<\/b><span>band<\/span>/.test(seHtml()));
+check('inside the band the line under it gives the rule, not the numbers again',
+  /Heat below 71 · cool above 74/.test(seHtml()));
+check('holding inside the band is Holding, and the ring is not painted as cooling',
+  /ps-chip "><span class="ps-dot"><\/span>Holding/.test(seHtml()) && /stroke="var\(--ps-dim\)"/.test(seHtml()));
+check('the ring draws the band under the reading, ticked at both ends', (() => {
+  const h = seHtml();
+  return /class="ps-band"/.test(h) && (h.match(/<line /g) || []).length === 2;
+})());
+shse._hass.states['climate.g'].attributes.current_temperature = 75.4;
+shse._hass.states['climate.g'].attributes.hvac_action = 'cooling';
+check('above the band, the line is the comparison', /1\.4° above the band/.test(seHtml()));
+check('no lockout row while the AC is allowed', !/ps-guard/.test(seHtml()));
+shse._hass.states['climate.g'].attributes.cool_locked_out = true;
+shse._hass.states['climate.g'].attributes.hvac_action_reason = 'cool_lockout';
+check('the AC lockout draws its row, and the reason line says what runs instead',
+  /class="ps-guard"[\s\S]*No AC/.test(seHtml()) && /Fan circulating/.test(seHtml()));
+check('a band never draws the single-goal tick or number', !/<span>goal<\/span>/.test(seHtml()));
+check('the stepper moves a band as a whole, optimistically, in one call', (() => {
+  const src = shellSrc;
+  return /const band = this\._climateBand\(sec\);\s*if \(band\) \{/.test(src)
+    && /target_temp_low: lo, target_temp_high: hi/.test(src)
+    && /this\._bandOpt = \{ id, lo, hi, until: Date\.now\(\) \+ 12000 \}/.test(src);
+})());
+check('an optimistic band reads its own value, then yields to the thermostat', (() => {
+  shse._bandOpt = { id: 'climate.g', lo: 72, hi: 75, until: Date.now() + 5000 };
+  const a = /72–75°/.test(seHtml());
+  shse._hass.states['climate.g'].attributes.target_temp_low = 72;
+  shse._hass.states['climate.g'].attributes.target_temp_high = 75;
+  seHtml();
+  const b = shse._bandOpt === null;
+  shse._bandOpt = { id: 'climate.g', lo: 60, hi: 63, until: Date.now() - 1 };
+  const c = /72–75°/.test(seHtml()) && shse._bandOpt === null;
+  return a && b && c;
+})());
+check('a single-setpoint thermostat is untouched by any of this', (() => {
+  shse._hass.states['climate.g'] = { state: 'cool', attributes: { current_temperature: 74, temperature: 70, hvac_action: 'cooling' } };
+  const h = seHtml();
+  return /<b>70°<\/b><span>goal<\/span>/.test(h) && !/ps-band/.test(h) && !/ps-guard/.test(h);
+})());
+
+
 /* ===========================================================================
    purdy-desk2-card — the desk as a SUBCLASS of the shell
    =========================================================================== */
@@ -10598,6 +10660,22 @@ check('desk2: the climate column carries the season switch when one is configure
   const c = d2Base(); c.sections[1].season = { entity: 'select.season' };
   const x = new D2(); x.setConfig(c); const hs = d2Hass(); hs.states['select.season'] = { state: 'Cooling', attributes: {} }; x._hass = hs;
   return /ps-season/.test(x._dkClimate(x._pd2Sec('clim'))) && /data-season="heat"/.test(x._dkClimate(x._pd2Sec('clim')));
+})());
+check('desk2: heat/cool draws the band, the band chip and the lockout row', (() => {
+  const c = d2Base();
+  const x = new D2(); x.setConfig(c); const hs = d2Hass(); x._hass = hs;
+  const sec = x._pd2Sec('clim');
+  const id = sec.goal || sec.thermostat;
+  hs.states[id] = { state: 'heat_cool', attributes: { current_temperature: 69.6, target_temp_low: 71, target_temp_high: 74,
+    hvac_action: 'heating', cool_locked_out: true, hvac_action_reason: 'schedule' } };
+  const h = x._dkClimate(sec);
+  return /BAND/.test(h) && /71–74°/.test(h) && /1° under band/.test(h) && /ps-guard/.test(h) && /ps-band/.test(h);
+})());
+check('desk2: inside the band there is no comparison chip', (() => {
+  const x = new D2(); x.setConfig(d2Base()); const hs = d2Hass(); x._hass = hs;
+  const sec = x._pd2Sec('clim'); const id = sec.goal || sec.thermostat;
+  hs.states[id] = { state: 'heat_cool', attributes: { current_temperature: 72.4, target_temp_low: 71, target_temp_high: 74, hvac_action: 'idle' } };
+  return !/(over|under) band/.test(x._dkClimate(sec));
 })());
 check('desk2 and phone draw the same climate chips from one method',
   /this\._climateChips\(sec\)/.test(d2Src) &&

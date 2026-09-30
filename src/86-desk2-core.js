@@ -596,19 +596,24 @@ class PurdyDesk2Card extends PurdyShellCard {
     const th = h.states[sec.goal] || h.states[sec.thermostat];
     const cur = th && th.attributes.current_temperature;
     const goal = this._optGoal(sec.goal || sec.thermostat, th && th.attributes.temperature);
+    const band = this._climateBand(sec);
     const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
     const rng = sec.ring || { min: 60, max: 80 };
     const f = (v) => Math.max(0, Math.min(1, (v - rng.min) / (rng.max - rng.min)));
     const heating = action === "heating";
-    const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
+    const col = heating ? "var(--ps-heat)" : band && action !== "cooling" ? "var(--ps-dim)" : "var(--ps-cool)";
     /* No humidity under the ring: it was the FIRST ROOM's (the living room)
        printed under a number that belongs to the active zone, and every
        room's own humidity is in the table below. */
 
     /* The chip is a comparison, and at goal there is nothing to compare. */
-    const diff = cur == null || goal == null ? null : Math.round(cur - goal);
+    /* In heat/cool the comparison is against the nearer end of the band, and
+       inside it there is nothing to compare — so no chip, as at goal. */
+    const diff = band
+      ? (cur == null ? null : cur > band[1] ? Math.round(cur - band[1]) : cur < band[0] ? -Math.round(band[0] - cur) : 0)
+      : cur == null || goal == null ? null : Math.round(cur - goal);
     const chip = diff == null || diff === 0 ? ""
-      : `<span class="ps-chip ${diff > 0 ? "warn" : "cool"}">${Math.abs(diff)}° ${diff > 0 ? "over" : "under"} goal</span>`;
+      : `<span class="ps-chip ${diff > 0 ? "warn" : "cool"}">${Math.abs(diff)}° ${diff > 0 ? "over" : "under"} ${band ? "band" : "goal"}</span>`;
     /* The phone's chips — the running preset and GTTC's season advice — ride
        the label row beside the comparison, where they cost no height. */
     const chips = this._climateChips(sec);
@@ -656,7 +661,8 @@ class PurdyDesk2Card extends PurdyShellCard {
         <span class="pd2-chips">${chips}${chip}</span></div>
       <div class="pd2-chero">
         <div class="pd2-ring sm" data-info="${psEsc(sec.goal || sec.thermostat)}">
-          ${this._ringSvg(150, 10, [[cur == null ? 0 : f(cur), col]], goal == null ? null : f(goal), "var(--ps-text)")}
+          ${this._ringSvg(150, 10, [[cur == null ? 0 : f(cur), col]], goal == null ? null : f(goal), "var(--ps-text)",
+            band ? [f(band[0]), f(band[1])] : null)}
           ${/* Whose number: the zone GTTC is reading, the same caption the
                 phone's ring carries — at the precision it was published. */""}
           <div class="pd2-rv"><b>${cur == null ? "—" : pcDeg(cur) + "°"}</b><small>${
@@ -664,15 +670,17 @@ class PurdyDesk2Card extends PurdyShellCard {
             psEsc(this._humanize(action).toUpperCase())}</small></div>
         </div>
         <div class="pd2-goal">
-          <span class="pd2-cap">${heating ? "HEAT TO" : "GOAL"}</span>
+          <span class="pd2-cap">${band ? "BAND" : heating ? "HEAT TO" : "GOAL"}</span>
           <div class="pd2-step">
             <button class="ps-step" type="button" data-step="-1" aria-label="Lower goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
-            <b>${goal == null ? "—" : Math.round(goal) + "°"}</b>
+            <b>${band ? this._bandText(band) : goal == null ? "—" : Math.round(goal) + "°"}</b>
             <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
-          ${reason ? `<div class="pd2-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
+          ${band ? `<div class="pd2-reason">${psEsc(this._bandReason(band, cur, reason))}</div>`
+            : reason ? `<div class="pd2-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
+          ${band ? this._climateGuard(sec) : ""}
           ${zones ? `<div class="pd2-segs">${zones}</div>` : ""}
           ${sec.schedule || sec.season ? `<div class="pd2-cbtns">
             ${sec.schedule ? `<button class="pd2-link" type="button" data-sheet="schedule">Schedule</button>` : ""}
