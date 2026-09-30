@@ -43,6 +43,7 @@ const PD_STYLES = `
         --ps-aur-a: var(--pc-aur-a);
         --ps-aur-b: var(--pc-aur-b);
         --ps-track: rgba(255, 255, 255, 0.12);
+        --ps-band: rgba(255,255,255,.2);    /* heat/cool band under a ring's reading */
         --ps-hair: rgba(255, 255, 255, 0.075);
         --ps-hair-soft: rgba(255, 255, 255, 0.045);
 

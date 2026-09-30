@@ -92,7 +92,7 @@ Object.assign(PurdyShellCard.prototype, {
   },
 
   /* A 270° arc. `segs` are [fraction, colour] laid end to end. */
-  _ringSvg(size, stroke, segs, goalFrac, goalCol) {
+  _ringSvg(size, stroke, segs, goalFrac, goalCol, band) {
     const r = size / 2 - stroke / 2 - 2;
     const c = 2 * Math.PI * r;
     const arc = pcRingArc(r);
@@ -109,6 +109,16 @@ Object.assign(PurdyShellCard.prototype, {
       <circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
         stroke-width="${stroke}" stroke-linecap="round"
         stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
+    /* A heat/cool band: the stretch of the scale the house may drift in for
+       free, drawn wider and fainter than the reading so the reading still
+       reads first. Its two ends take the goal tick's place. */
+    const bandOk = band && Number.isFinite(band[0]) && Number.isFinite(band[1]) && band[1] > band[0];
+    if (bandOk) {
+      const b0 = Math.max(0, Math.min(1, band[0])), b1 = Math.max(0, Math.min(1, band[1]));
+      out += `<circle class="ps-band" cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-band)"
+        stroke-width="${stroke + 5}" stroke-dasharray="${(arc * (b1 - b0)).toFixed(2)} ${c.toFixed(2)}"
+        stroke-dashoffset="${(-arc * b0).toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
+    }
     segs.forEach(([f, col]) => {
       const len = arc * Math.max(0, Math.min(1, f));
       if (len <= 0.2) { off += len; return; }
@@ -118,12 +128,14 @@ Object.assign(PurdyShellCard.prototype, {
         stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
       off += len;
     });
-    if (goalFrac != null && goalFrac > 0 && goalFrac <= 1) {
-      const deg = pcRingRotate(goalFrac);
+    const ticks = bandOk ? band : goalFrac != null ? [goalFrac] : [];
+    ticks.forEach((tf) => {
+      if (!(tf > 0 && tf <= 1)) return;
+      const deg = pcRingRotate(tf);
       out += `<line x1="${cx}" y1="${(cx - r - stroke / 2 - 1).toFixed(2)}" x2="${cx}" y2="${(cx - r + stroke / 2 + 1).toFixed(2)}"
         stroke="${goalCol || "var(--ps-warn)"}" stroke-width="2.2" stroke-linecap="round"
         transform="rotate(${deg.toFixed(1)} ${cx} ${cx})"/>`;
-    }
+    });
     return out + "</svg>";
   },
 
@@ -336,6 +348,7 @@ Object.assign(PurdyShellCard.prototype, {
       window_open: "Paused — a window is open",
       away: "Away setback",
       preset: "Set by the active preset",
+      cool_lockout: "Fan circulating — too cold out for the AC",
     };
     const k = String(raw == null ? "" : raw).toLowerCase();
     return known[k] || this._humanize(raw);
@@ -592,6 +605,7 @@ Object.assign(PurdyShellCard.prototype, {
     /* Reads the optimistic setpoint while one is in flight, so the number
        moves on the tap instead of five seconds later. */
     const goal = this._optGoal(sec.goal || sec.thermostat, th && th.attributes.temperature);
+    const band = this._climateBand(sec);
     const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
     const reason = th && th.attributes.hvac_action_reason;
     const rng = sec.ring || { min: 60, max: 80 };
@@ -602,7 +616,11 @@ Object.assign(PurdyShellCard.prototype, {
     const goalFrac = goal == null ? null
       : Math.max(0, Math.min(1, (goal - rng.min) / (rng.max - rng.min)));
     const heating = action === "heating";
-    const col = heating ? "var(--ps-heat)" : "var(--ps-cool)";
+    /* Heat when heating and cool otherwise — except in heat/cool, where
+       "otherwise" includes holding inside the band, which is neither. */
+    const col = heating ? "var(--ps-heat)" : band && action !== "cooling" ? "var(--ps-dim)" : "var(--ps-cool)";
+    const bandFrac = band ? [band[0], band[1]].map((v) => (v - rng.min) / (rng.max - rng.min)) : null;
+    const guard = band ? this._climateGuard(sec) : "";
 
     const zc = sec.zones || {};
     const activeZone = pcState(h, zc.select);
@@ -655,11 +673,11 @@ Object.assign(PurdyShellCard.prototype, {
     const outNow = pcNum(h, (sec.graph || {}).outside);
 
     return `
-      ${this._head(sec, `<span class="ps-chip ${heating ? "warn" : "cool"}"><span class="ps-dot"></span>${psEsc(
-        this._humanize(action))}</span>`)}
+      ${this._head(sec, `<span class="ps-chip ${heating ? "warn" : band && action !== "cooling" ? "" : "cool"}"><span class="ps-dot"></span>${psEsc(
+        band && (action === "idle" || action === "off") ? "Holding" : this._humanize(action))}</span>`)}
       <div class="ps-chero">
         <div class="ps-ring" style="width:92px;height:92px" data-info="${psEsc(sec.goal || sec.thermostat)}">
-          ${this._ringSvg(92, 7.5, [[frac, col]], goalFrac, "var(--ps-text)")}
+          ${this._ringSvg(92, 7.5, [[frac, col]], goalFrac, "var(--ps-text)", bandFrac)}
           ${/* "now" invited the reading that this is the house temperature,
                 and then neither zone chip below it agreed — three numbers on
                 one card with no stated relationship. It is the thermostat's
@@ -678,13 +696,16 @@ Object.assign(PurdyShellCard.prototype, {
           <div class="ps-row">
             <button class="ps-step" type="button" data-step="-1" aria-label="Lower goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M5 12h14"/></svg></button>
-            <div class="ps-goal"><b>${goal == null ? "—" : Math.round(goal) + "°"}</b><span>goal</span></div>
+            <div class="ps-goal${band ? " band" : ""}"><b>${band ? this._bandText(band)
+              : goal == null ? "—" : Math.round(goal) + "°"}</b><span>${band ? "band" : "goal"}</span></div>
             <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
-          ${reason ? `<div class="ps-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
+          ${band ? `<div class="ps-reason">${psEsc(this._bandReason(band, cur, reason))}</div>`
+            : reason ? `<div class="ps-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
         </div>
       </div>
+      ${guard}
       <div class="ps-zpair">${zones}${outside}</div>
       ${this._holdHtml(sec)}
       <div class="ps-xtra">
@@ -847,7 +868,16 @@ Object.assign(PurdyShellCard.prototype, {
      An unreadable select draws NO control, never a default side. */
   _seasonOpts(sec) {
     const o = (sec.season && sec.season.options) || {};
-    return { heat: o.heat || "Heating", cool: o.cool || "Cooling" };
+    return { heat: o.heat || "Heating", cool: o.cool || "Cooling", both: o.both || "Heat/Cool" };
+  },
+
+  /* The Heat·Cool segment appears only when the select actually OFFERS it —
+     so this card is safe to load before the GTTC that knows the option, and
+     a stale GTTC can never be asked for a season it would reject. */
+  _seasonHasBoth(sec) {
+    const st = this._hass.states[sec.season && sec.season.entity];
+    const list = (st && st.attributes && st.attributes.options) || [];
+    return list.indexOf(this._seasonOpts(sec).both) >= 0;
   },
 
   _seasonHtml(sec) {
@@ -855,24 +885,76 @@ Object.assign(PurdyShellCard.prototype, {
     if (!cfg || !cfg.entity) return "";
     const st = pcState(this._hass, cfg.entity);
     const opts = this._seasonOpts(sec);
-    if (st !== opts.heat && st !== opts.cool) return "";
+    const both = this._seasonHasBoth(sec);
+    if (st !== opts.heat && st !== opts.cool && !(both && st === opts.both)) return "";
     const seg = (k, label) => {
       const on = st === opts[k];
       const armed = !on && this._seasonArm === k;
       return `<button class="ps-sbtn ${k} ${on ? "on" : ""} ${armed ? "armed" : ""}" type="button"
         data-season="${k}" aria-pressed="${on}">${armed ? `Tap: ${label}` : label}</button>`;
     };
-    return `<div class="ps-season" role="group" aria-label="Season">${seg("heat", "Heat")}${seg("cool", "Cool")}</div>`;
+    return `<div class="ps-season${both ? " three" : ""}" role="group" aria-label="Season">${seg("heat", "Heat")}${
+      both ? seg("both", "Heat·Cool") : ""}${seg("cool", "Cool")}</div>`;
   },
 
   _seasonRecommendation(sec) {
     const cfg = sec.season;
     if (!cfg || !cfg.recommend || pcState(this._hass, cfg.recommend) !== "on") return "";
+    /* GTTC names the target itself since it learned the ladder; the old
+       two-way guess stays for a GTTC that does not publish it. */
+    const rs = this._hass.states[cfg.recommend];
+    const target = rs && rs.attributes && rs.attributes.recommended_season;
+    if (target === "heat_cool") return "Heat·Cool recommended";
+    if (target === "cooling") return "Cooling recommended";
+    if (target === "heating") return "Heating recommended";
     const st = pcState(this._hass, cfg.entity);
     const opts = this._seasonOpts(sec);
     if (st === opts.heat) return "Cooling recommended";
     if (st === opts.cool) return "Heating recommended";
     return "";
+  },
+
+  /* The heat/cool band as the thermostat entity publishes it, or null when it
+     is running a single setpoint. Optimistic like the goal: a band tap reads
+     its own value until GTTC agrees or 12s pass. */
+  _climateBand(sec) {
+    const id = sec.goal || sec.thermostat;
+    const th = this._hass.states[id];
+    if (!th || th.state !== "heat_cool") return null;
+    const lo = Number(th.attributes.target_temp_low), hi = Number(th.attributes.target_temp_high);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+    const o = this._bandOpt;
+    if (o && o.id === id) {
+      if (Date.now() > o.until || (Math.abs(o.lo - lo) < 0.01 && Math.abs(o.hi - hi) < 0.01)) this._bandOpt = null;
+      else return [o.lo, o.hi];
+    }
+    return [lo, hi];
+  },
+
+  _bandText(band) {
+    return `${Math.round(band[0])}–${Math.round(band[1])}°`;
+  },
+
+  /* What the band is doing, in the one line under it. A comparison when the
+     house is outside it (arithmetic you would otherwise do), the rule when it
+     is inside — never the band's own numbers again. */
+  _bandReason(band, cur, reason) {
+    const r = String(reason || "").toLowerCase();
+    if (r === "cool_lockout") return this._reasonText(r);
+    if (r && r !== "schedule" && r !== "fallback" && r !== "precondition") return this._reasonText(reason);
+    if (cur != null && cur > band[1] + 0.2) return `${(cur - band[1]).toFixed(1)}° above the band`;
+    if (cur != null && cur < band[0] - 0.2) return `${(band[0] - cur).toFixed(1)}° below the band`;
+    return "Heat below " + Math.round(band[0]) + " · cool above " + Math.round(band[1]);
+  },
+
+  /* The AC lockout, drawn only while it is acting. Its cause, the outdoor
+     reading, is the one thing the reason line beside it does not say. */
+  _climateGuard(sec) {
+    const th = this._hass.states[sec.goal || sec.thermostat];
+    if (!th || !th.attributes.cool_locked_out) return "";
+    const ot = pcNum(this._hass, (sec.outside || {}).temp);
+    return `<div class="ps-guard"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M3 3l18 18"/></svg>
+      No AC${ot == null ? "" : ` · ${Math.round(ot)}° outside`}</div>`;
   },
 
   _holdHtml(sec) {

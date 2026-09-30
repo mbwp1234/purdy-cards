@@ -42,6 +42,7 @@ const PS_STYLES = `
         --ps-hair-soft: rgba(255,255,255,.05);
         --ps-fill: var(--pc-fill-1);
         --ps-track: rgba(255,255,255,.12);
+        --ps-band: rgba(255,255,255,.2);    /* heat/cool band under a ring's reading */
         /* Measured from the real dock after every render — see _reserve(). The
            fallback is the dock alone; with a now-playing bar it grows by ~59px
            and the last section used to end up underneath it. */
@@ -845,6 +846,12 @@ const PS_STYLES = `
                 color: var(--ps-dim); background: transparent; }
       .ps-sbtn.heat.on { background: var(--ps-heat); color: #1a1a1a; }
       .ps-sbtn.cool.on { background: var(--ps-cool); color: #0f1317; }
+      .ps-sbtn.both.on { background: linear-gradient(90deg, var(--ps-heat), var(--ps-cool)); color: #0f1317; }
+      .ps-season.three .ps-sbtn { padding: 8px 10px; }
+      .ps-goal.band b { letter-spacing: -0.01em; }
+      .ps-guard { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 10px; border-radius: var(--pc-r-md);
+        background: color-mix(in srgb, var(--ps-warn) 12%, transparent); color: var(--ps-warn); font-size: var(--pc-fs-sm); font-weight: 600; }
+      .ps-guard .ps-ico { width: 14px; height: 14px; flex: none; }
       .ps-sbtn.armed { background: var(--ps-warn); color: #1a1a1a; }
 
       /* graph scrubber */

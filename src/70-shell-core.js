@@ -145,6 +145,7 @@ class PurdyShellCard extends PcBaseCard {
     this._dragging = false;   // a volume drag must survive the state repaint
     this._armed = null;       // key of a destructive control awaiting a second tap
     this._seasonArm = null;   // season segment awaiting its confirming second tap
+    this._bandOpt = null;     // optimistic heat/cool band, see _climateBand
     this._logged = {};        // rule key -> firedAt already written to the log
     this._results = null;     // music search results, null until a query runs
     this._recent = [];
@@ -1473,6 +1474,25 @@ class PurdyShellCard extends PcBaseCard {
         if (!sec) return;
         const id = sec.goal || sec.thermostat;
         const st = this._hass.states[id];
+        /* In heat/cool the stepper moves the whole band: "a bit warmer" is
+           one idea, not two setpoints to fiddle with. Same optimistic, one-
+           call-per-burst contract as the single goal below. */
+        const band = this._climateBand(sec);
+        if (band) {
+          const d = parseInt(el.dataset.step, 10) * (sec.step || 1);
+          const lo = Math.round((band[0] + d) * 10) / 10, hi = Math.round((band[1] + d) * 10) / 10;
+          pcHaptic("light");
+          this._bandOpt = { id, lo, hi, until: Date.now() + 12000 };
+          this._last = null;
+          this._render();
+          clearTimeout(this._goalSend);
+          this._goalSend = setTimeout(() => {
+            this._hass.callService("climate", "set_temperature", {
+              entity_id: id, target_temp_low: lo, target_temp_high: hi,
+            });
+          }, 450);
+          return;
+        }
         if (!st || st.attributes.temperature == null) return;
         /* Step from what is ON SCREEN, not from what the thermostat last
            said. GTTC takes several seconds to acknowledge a setpoint, and
