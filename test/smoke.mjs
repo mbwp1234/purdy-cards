@@ -3655,6 +3655,9 @@ check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtm
   check('the mark is explained once', /Counts toward the goal · 2nd Floor/.test(ch));
   check('the editor form cannot run off the sheet',
     /\.ps-sform \{[^}]*repeat\(2, minmax\(0, 1fr\)\)/.test(shs) && /\.ps-sform input \{[^}]*width: 100%/.test(shs));
+  /* v1.91.0 shipped with width: 100% alone and the Until field still ran off
+     an iPhone: iOS keeps a native width for time fields until appearance is reset. */
+  check('a time field drops its native iOS width', /\.ps-sform input \{[^}]*-webkit-appearance: none/.test(shs));
   const ed = (() => { const z = mk(); z._sheet = 'schedule'; z._schedEdit = 0; return z._scheduleHtml(z._config.sections[0]); })();
   check('the editor offers a room picker', /data-szone="z2"/.test(ed) && /data-szone="z1"/.test(ed));
   check('the editor takes one number by default', /data-sstep=/.test(ed) && !/data-scstep=/.test(ed));
