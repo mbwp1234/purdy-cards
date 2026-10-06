@@ -3494,15 +3494,25 @@ check('an unpinned preset is detected from the live window', shs2._detectScope()
 check('the detected preset supplies the real daily entries', shs2._schedEntries().length === 2);
 check('the single-window base fallback is not what gets shown',
   shs2._schedEntries()[0].time_start === '06:00');
-check('an unpinned preset is read-only, since edits would land on the base',
-  shs2._schedEditable(shs2._config.sections[0]) === false);
+/* v1.91: every write names its plan (`preset`), so a plan GTTC picked
+   situationally is as editable as a pinned one. */
+check('an unpinned preset is editable, because every write names its plan',
+  shs2._schedEditable(shs2._config.sections[0]) === true);
 const schedH = shs2._scheduleHtml(shs2._config.sections[0]);
-check('the sheet offers a tab per preset plus the base', /data-scope="__base__"/.test(schedH) && /data-scope="home"/.test(schedH));
+/* The base list is GTTC's backstop while a plan runs; a tab for it beside
+   the real plans invited editing a list nothing reads. */
+check('the sheet offers a tab per preset and hides the base behind a running plan',
+  !/data-scope="__base__"/.test(schedH) && /data-scope="home"/.test(schedH) && /data-scope="away"/.test(schedH));
+check('the running plan carries the running dot', /data-scope="home"><i class="ps-srun"><\/i>Home All Day/.test(schedH));
 check('the sheet names presets by their label', /Home All Day/.test(schedH));
-check('the detected preset tab is selected', /data-scope="home">Home All Day/.test(schedH.replace(/class="ps-tab on" type="button" /, '')));
+check('the detected preset tab is selected', /class="ps-tab on" type="button"\s*data-scope="home"/.test(schedH));
 check('the sheet offers a tab per day', /data-sday="monday"/.test(schedH) && /data-sday="sunday"/.test(schedH));
 check('entries name their zone', /2nd Floor/.test(schedH));
-check('read-only scopes say why', /Read-only/.test(schedH));
+check('a plan that is running says nothing about not running', !/Not running now/.test(schedH));
+shs2._schedScope = 'away';
+check('a plan that is not running says where edits go',
+  /Not running now\. Changes save to Away/.test(shs2._scheduleHtml(shs2._config.sections[0])));
+shs2._schedScope = undefined;
 shs2._schedScope = null;
 /* Pinned to a weekday. The fixture mirrors the real install, where `weekend` is
    EMPTY — so this assertion passed Monday to Friday and failed every Saturday
@@ -3539,6 +3549,117 @@ shs2._schedScope = undefined; shs2._schedDay = null;
 check('schedule rows are tappable when editable', /data-sedit="0"/.test(shs2._scheduleHtml(shs2._config.sections[0])));
 shs2._config.sections[0].schedule.editable = false;
 check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtml(shs2._config.sections[0])));
+
+/* ---- v1.91: the schedule as BLOCKS -----------------------------------------
+   GTTC stores a night as two entries split at midnight and ends every entry at
+   :59, so the sheet said "Holding 70° until 11:59 PM" about a night that ran
+   until six. The live 2026-10-05 Home plan is the fixture. */
+{
+  const HOME = [
+    { time_start: '00:00', time_end: '05:59', target_temp: 70, cooling_temp: 70, away_temp: null, zone_id: 'z2' },
+    { time_start: '06:00', time_end: '18:59', target_temp: 72, cooling_temp: 72, away_temp: null, zone_id: 'z2' },
+    { time_start: '19:00', time_end: '23:59', target_temp: 70, cooling_temp: 70, away_temp: null, zone_id: 'z2' },
+  ];
+  const WFH = [
+    { time_start: '06:00', time_end: '08:00', target_temp: 75, cooling_temp: null, zone_id: null },
+    { time_start: '08:00', time_end: '18:00', target_temp: 76, cooling_temp: null, zone_id: null },
+    { time_start: '18:00', time_end: '22:00', target_temp: 75, cooling_temp: null, zone_id: null },
+    { time_start: '22:00', time_end: '06:00', target_temp: 69, cooling_temp: null, zone_id: null },
+  ];
+  const week = (l) => Object.fromEntries(['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].map((d) => [d, l.map((e) => ({ ...e }))]));
+  const mk = () => {
+    const x = new SH();
+    x.setConfig({ sections: [{ type: 'climate', key: 'clim', goal: 'climate.g', season: { entity: 'select.season' },
+      schedule: { api: 'gttc' }, rooms: [
+        { name: 'Bedroom', temp: 'sensor.bed_avg' }, { name: 'Living', temp: 'sensor.liv' }],
+      chips: [{ name: 'Running:', source: 'schedule_preset' }] }] });
+    x._hass = { states: {
+      'climate.g': { state: 'cool', attributes: { temperature: 72, current_temperature: 72, season: 'cooling',
+        hvac_action: 'cooling', hvac_action_reason: 'fan_precool', hvac_modes: ['off','heat','cool','heat_cool'],
+        heat_cool_min_gap: 3, active_zone: '2nd Floor',
+        zone_details: { z2: { name: '2nd Floor', current_temp: 72, temp_sensors: ['sensor.bed_a', 'sensor.joel'] },
+                        z1: { name: '1st floor', current_temp: 71.6, temp_sensors: ['sensor.liv_x'] } },
+        current_schedule_entry: { time_start: '19:00', time_end: '23:59', target_temp: 70, cooling_temp: 70, effective_temp: 70, zone_id: 'z2' } } },
+      'sensor.bed_avg': { state: '72', attributes: { entity_id: ['sensor.bed_a', 'sensor.bed_b'] } },
+      'sensor.liv': { state: '71.6', attributes: {} },
+      'select.season': { state: 'Cool', attributes: { options: ['Heat', 'Cool'] } },
+    } };
+    x._sched = { mode: 'weekday_weekend', active_preset: 'home', weekday: [], weekend: [], per_day: {},
+      presets: { home: { schedule: week(HOME) }, work_from_home: { schedule: week(WFH) } },
+      preset_labels: { home: 'Home All Day', work_from_home: 'Work From Home' },
+      zones: [{ id: 'z2', name: '2nd Floor' }, { id: 'z1', name: '1st floor' }] };
+    return x;
+  };
+  const x = mk();
+  const sec = x._config.sections[0];
+  const blocks = x._schedBlocks(HOME);
+  check('a night split at midnight reads as ONE block', blocks.length === 2);
+  check('blocks run from 6 AM, so the day comes first', blocks[0].name === 'Day' && blocks[1].name === 'Overnight');
+  check('a :59 end reads as the top of the next hour', blocks[0].end === 19 * 60 && blocks[1].end === 6 * 60);
+  check('the merged night remembers both entries it came from', blocks[1].parts.length === 2);
+  check('blocks with different numbers are NOT merged across midnight',
+    x._schedBlocks([{ ...HOME[0], target_temp: 66 }, HOME[1], HOME[2]]).length === 3);
+  check('a native overnight entry needs no merging', x._schedBlocks(WFH).map((b) => b.name).join() === 'Morning,Day,Evening,Overnight');
+  const h = x._scheduleHtml(sec);
+  check('the sheet holds the night until six, not until 11:59', /until <b>6:00 AM<\/b>/.test(h) && !/11:59/.test(h));
+  check('the sheet says what comes next', /then <b>72°<\/b>/.test(h));
+  check('the sheet names the room being held', /Holding <b>70°<\/b> on the 2nd Floor/.test(h));
+  check('seven identical days are offered as one', /data-sgroup="all"/.test(h) && !/data-sday="monday"/.test(h));
+  check('one number is drawn once, not as heat and cool', !/<i class="h"><\/i>/.test(h));
+  check('the axis starts at six', /<div class="ps-tscale"><span>6a<\/span>/.test(h));
+  check('Heat·Cool shows the heat end moved down by the gap', /69–72°/.test(h) && /67–70°/.test(h));
+  check('a target that holds no gap draws no gap warning', !/Nothing scheduled/.test(h));
+  check('saving "every day" targets all seven days', x._schedTargetDays().length === 7);
+
+  x._schedScope = 'work_from_home';
+  const w = x._scheduleHtml(sec);
+  check('a plan with no rooms says so', /No room set\./.test(w));
+  check('a blank cool number is said to be the default, not guessed', /cools to the default/.test(w));
+  x._schedScope = undefined;
+
+  /* A real gap is warned about; the :59 habit's one minute is not. */
+  check('a real gap is named', x._schedGaps(x._schedBlocks([HOME[1]])).length === 1);
+  check('the :59 seams are not gaps', x._schedGaps(blocks).length === 0);
+
+  /* Saving the night writes ONE entry with exact, exclusive ends and removes
+     the two halves it replaces — on every day of the group. */
+  const msgs = [];
+  x._hass.callWS = async (m) => { msgs.push(m); return m.type === 'gttc/get_schedule' ? x._sched : { success: true }; };
+  x._schedEdit = 1;
+  const d = x._schedDraft_();
+  check('the draft opens on the merged night', d.start === '19:00' && d.end === '06:00' && d.temp === 70 && !d.split);
+  d.temp = 69; d.cool = 69;
+  await x._schedSave();
+  const ups = msgs.filter((m) => m.type === 'gttc/update_entry');
+  const dels = msgs.filter((m) => m.type === 'gttc/delete_entry');
+  check('the night is saved as one entry per day', ups.length === 7 && ups.every((m) => m.time_start === '19:00' && m.time_end === '06:00'));
+  check('both halves it replaces are deleted on every day', dels.length === 14);
+  check('every write names the plan', msgs.filter((m) => m.type !== 'gttc/get_schedule').every((m) => m.preset === 'home'));
+  check('one number is written as both heat and cool', ups.every((m) => m.target_temp === 69 && m.cooling_temp === 69));
+  check('the room is carried through', ups.every((m) => m.zone_id === 'z2'));
+
+  /* The goal during fan pre-cool is the schedule's, not the raised wall setpoint. */
+  const y = mk();
+  const ch = y._secClimate(y._config.sections[0]);
+  check('during fan pre-cool the goal is the schedule number', /<div class="ps-goal"><b>70°<\/b>/.test(ch));
+  check('…and the raised wall setpoint is said, not hidden', /wall set to 72° while the fan runs/.test(ch));
+  check('the stepper starts from that goal', y._climGoalReal(y._hass.states['climate.g']) === 70);
+  y._hass.states['climate.g'].attributes.override_active = true;
+  check('a hold is the goal as set, precool or not', y._climGoalReal(y._hass.states['climate.g']) === 72);
+  y._hass.states['climate.g'].attributes.override_active = false;
+  check('the schedule strip replaces the Schedule button', /class="ps-sstrip"[^>]*data-sheet="schedule"/.test(ch));
+  check('the strip names the block, its number and its end', /Overnight 70° until 6:00 AM/.test(ch));
+  check('the strip names the plan, so the Running chip is dropped', /Home All Day/.test(ch) && !/Running:/.test(ch));
+  check('a room whose sensor GTTC reads is marked', /<i class="ps-wz"><\/i>Bedroom/.test(ch));
+  check('a room it does not read is not', !/<i class="ps-wz"><\/i>Living/.test(ch));
+  check('the mark is explained once', /Counts toward the goal · 2nd Floor/.test(ch));
+  check('the editor form cannot run off the sheet',
+    /\.ps-sform \{[^}]*repeat\(2, minmax\(0, 1fr\)\)/.test(shs) && /\.ps-sform input \{[^}]*width: 100%/.test(shs));
+  const ed = (() => { const z = mk(); z._sheet = 'schedule'; z._schedEdit = 0; return z._scheduleHtml(z._config.sections[0]); })();
+  check('the editor offers a room picker', /data-szone="z2"/.test(ed) && /data-szone="z1"/.test(ed));
+  check('the editor takes one number by default', /data-sstep=/.test(ed) && !/data-scstep=/.test(ed));
+  check('the editor says what the block does in Heat·Cool', /holds <b>69–72°<\/b>/.test(ed));
+}
 
 // ---- room picking, saved playlists, scrubber ----
 check('scrubber draws a crosshair', shs.includes('.ps-cross'));
@@ -7000,7 +7121,7 @@ check('the live-music rule is shared, not written out per surface',
    round trip finished. */
 const climSrc = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
 check('the stepper steps from what is on screen, not from the live attribute',
-  /const base = this\._optGoal\(id, st\.attributes\.temperature\)/.test(climSrc));
+  /const base = this\._optGoal\(id, this\._climGoalReal\(st\)\)/.test(climSrc));
 check('a burst of taps sends one service call, not one per tap',
   /clearTimeout\(this\._goalSend\)/.test(climSrc) && /this\._goalSend = setTimeout/.test(climSrc));
 check('the climate section renders the optimistic goal',
@@ -10679,7 +10800,7 @@ check('desk2: inside the band there is no comparison chip', (() => {
 })());
 check('desk2 and phone draw the same climate chips from one method',
   /this\._climateChips\(sec\)/.test(d2Src) &&
-  /const chips = this\._climateChips\(sec\);/.test(fs.readFileSync(new URL('../src/71-shell-sections.js', import.meta.url), 'utf8')));
+  /const chips = this\._climateChips\(sec, \{ noPreset: !!sec\.schedule \}\);/.test(fs.readFileSync(new URL('../src/71-shell-sections.js', import.meta.url), 'utf8')));
 check('desk2: the weather column is one door onto the week sheet', /data-pd2open="wx"/.test(d2._dkWeather(d2._pd2Sec('wx'))));
 check('desk2: the thermometer history is still reachable from the week sheet', (() => {
   const c = d2Base(); c.weather_temp = 'sensor.out';
