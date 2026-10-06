@@ -511,7 +511,12 @@ Object.assign(PurdyShellCard.prototype, {
     /* Which plan you are looking at. The base list appears only when it is
        the one running (or the one open) — otherwise it is GTTC's backstop and
        a tab beside the real plans invited editing a list nothing reads. */
-    const keys = Object.keys(sd.presets || {});
+    /* `schedule.hide_plans` drops a plan nobody uses from the tabs. GTTC
+       cannot delete its built-in plans, and a tab for a copy of Home is a
+       question with no answer. A hidden plan still shows the moment it is
+       the one running — hiding what is in force would be the old bug again. */
+    const hidden = (sec.schedule || {}).hide_plans || [];
+    const keys = Object.keys(sd.presets || {}).filter((k) => !hidden.includes(k) || k === running || k === scope);
     const scopes = (running === null || scope === null ? [{ k: null }] : [])
       .concat(keys.map((k) => ({ k })));
     const scopeTabs = keys.length ? `<div class="ps-tabs">${scopes.map((x) => `

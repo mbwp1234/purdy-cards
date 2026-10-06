@@ -3614,6 +3614,13 @@ check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtm
   x._schedScope = 'work_from_home';
   const w = x._scheduleHtml(sec);
   check('a plan with no rooms says so', /No room set\./.test(w));
+  x._config.sections[0].schedule.hide_plans = ['work_from_home'];
+  check('a plan listed in hide_plans has no tab', !/data-scope="work_from_home"/.test((x._schedScope = undefined, x._scheduleHtml(sec))));
+  x._sched.active_preset = 'work_from_home';
+  check('…unless it is the one running', /data-scope="work_from_home"/.test(x._scheduleHtml(sec)));
+  x._sched.active_preset = 'home';
+  x._config.sections[0].schedule.hide_plans = undefined;
+  x._schedScope = 'work_from_home';
   check('a blank cool number is said to be the default, not guessed', /cools to the default/.test(w));
   x._schedScope = undefined;
 
