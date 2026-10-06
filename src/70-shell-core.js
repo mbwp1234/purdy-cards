@@ -154,6 +154,8 @@ class PurdyShellCard extends PcBaseCard {
     this._schedNote = null;
     this._schedScope = undefined; // preset key being viewed; null = base lists
     this._schedDay = null;        // day being viewed; null = today
+    this._schedGroup = null;      // all | split | each; null = the truest one
+    this._schedDraft = null;      // the block editor's working copy
     /* ONE room, not a set. A multi-select made "play to two rooms" mean two
        unsynchronised queues; real multi-room is media_player.join, which these
        players support. null means "follow whatever is actually playing". */
@@ -1285,9 +1287,61 @@ class PurdyShellCard extends PcBaseCard {
         const v = el.dataset.scope;
         this._schedScope = v === "__base__" ? null : v;
         this._schedDay = null;
+        this._schedGroup = null;
         this._schedEdit = null;
+        this._schedDraft = null;
         this._render();
       });
+    });
+    /* Every day / Weekdays · Weekends / Each day. Only true groupings are
+       offered, so picking one never changes the schedule by itself. */
+    this._each("[data-sgroup]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._schedGroup = el.dataset.sgroup;
+        this._schedDay = null;
+        this._schedEdit = null;
+        this._schedDraft = null;
+        this._render();
+      });
+    });
+    /* The block editor works on a draft (_schedDraft_), so these repaint
+       freely: nothing they touch is watched, and no field is under a thumb. */
+    this._each("[data-szone]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const d = this._schedDraft_();
+        if (d) d.zone = el.dataset.szone;
+        this._render();
+      });
+    });
+    const stepDraft = (k, el) => {
+      const d = this._schedDraft_();
+      if (!d) return;
+      const v = Math.round((d[k] + parseInt(el.getAttribute(k === "cool" ? "data-scstep" : "data-sstep"), 10)) * 10) / 10;
+      d[k] = Math.max(50, Math.min(90, v));
+      if (k === "temp" && !d.split) d.cool = d[k];
+      pcHaptic("light");
+      this._render();
+    };
+    this._each("[data-sstep]", (el) => el.addEventListener("click", (e) => { e.stopPropagation(); stepDraft("temp", el); }));
+    this._each("[data-scstep]", (el) => el.addEventListener("click", (e) => { e.stopPropagation(); stepDraft("cool", el); }));
+    this._each("[data-ssplit]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const d = this._schedDraft_();
+        if (!d) return;
+        d.split = !d.split;
+        /* Two numbers that start equal would sit inside the thermostat's
+           Heat·Cool gap at once, so the cool end opens at least 3° above. */
+        d.cool = d.split ? Math.max(d.cool, d.temp + 3) : d.temp;
+        this._render();
+      });
+    });
+    this._each("[data-sf]", (el) => {
+      const upd = () => { const d = this._schedDraft_(); if (d && el.value) d[el.dataset.sf] = el.value; };
+      el.addEventListener("input", upd);
+      el.addEventListener("change", () => { upd(); this._dragging = false; this._render(); });
     });
     this._each("[data-sday]", (el) => {
       el.addEventListener("click", (e) => {
@@ -1303,6 +1357,7 @@ class PurdyShellCard extends PcBaseCard {
         e.stopPropagation();
         const v = el.dataset.sedit;
         this._schedEdit = v === "new" ? "new" : parseInt(v, 10);
+        this._schedDraft = null;
         this._schedNote = null;
         this._armed = null;
         this._render();
@@ -1318,7 +1373,7 @@ class PurdyShellCard extends PcBaseCard {
       el.addEventListener("click", (e) => { e.stopPropagation(); this._schedSave(); }));
     this._one("ps-scancel", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
-      this._schedEdit = null; this._schedNote = null; this._armed = null; this._render();
+      this._schedEdit = null; this._schedDraft = null; this._schedNote = null; this._armed = null; this._render();
     }));
     /* Typing must not be eaten by the repaint, so the field owns its value
        until the query is submitted. */
@@ -1499,7 +1554,7 @@ class PurdyShellCard extends PcBaseCard {
            reading the live attribute meant a second tap inside that window
            recomputed the SAME number — so the goal could not be moved more
            than one step at a time however fast you pressed. */
-        const base = this._optGoal(id, st.attributes.temperature);
+        const base = this._optGoal(id, this._climGoalReal(st));
         const step = parseInt(el.dataset.step, 10) * (sec.step || 1);
         const next = Math.round((base + step) * 10) / 10;
         /* Fired off the OPTIMISTIC value, never off the state coming back.

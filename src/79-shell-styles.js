@@ -761,7 +761,7 @@ const PS_STYLES = `
                 background: rgba(var(--pc-cool-rgb),.22); border: 1px solid rgba(var(--pc-cool-rgb),.4);
                 font-size: var(--pc-fs-micro); font-weight: 650; color: var(--ps-text);
                 display: flex; align-items: center; justify-content: center;
-                font-variant-numeric: tabular-nums; overflow: hidden; }
+                font-variant-numeric: tabular-nums; overflow: hidden; white-space: nowrap; }
       .ps-seg.live { background: rgba(var(--pc-cool-rgb),.4); border-color: var(--ps-cool); }
       .ps-nowline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ps-warn); }
       .ps-tscale { display: flex; justify-content: space-between; font-size: var(--pc-fs-micro); color: var(--ps-dim);
@@ -778,6 +778,59 @@ const PS_STYLES = `
       .ps-srv i.h { background: var(--ps-heat); }
       .ps-srv i.c { background: var(--ps-cool); margin-left: 10px; }
       .ps-srz { margin-left: 8px; color: var(--ps-dim); font-size: var(--pc-fs-micro); }
+      /* v1.91 blocks: a name and its span on the left, the number on the right */
+      .ps-sbn { display: block; font-size: var(--pc-fs-md); font-weight: 650; color: var(--ps-text); }
+      .ps-sbm { display: block; font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 2px; }
+      .ps-sbt { display: flex; gap: 8px; align-items: baseline; flex: 0 0 auto; }
+      .ps-sbt b { font-size: var(--pc-fs-xl); font-weight: 300; letter-spacing: -.02em; color: var(--ps-text); }
+      .ps-sbt i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: 3px; }
+      .ps-sbt i.h { background: var(--ps-heat); }
+      .ps-sbt i.c { background: var(--ps-cool); }
+      .ps-srun { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px;
+                 background: var(--ps-good); box-shadow: 0 0 0 2.5px rgba(127,216,164,.25), 0 0 8px rgba(127,216,164,.6); }
+      .ps-skbox { display: flex; flex-direction: column; gap: 6px; background: var(--ps-fill); border-radius: var(--pc-r-md);
+                 padding: 10px 11px; font-size: var(--pc-fs-xs); color: var(--ps-muted); line-height: 1.45;
+                 font-variant-numeric: tabular-nums; }
+      .ps-skbox b { color: var(--ps-text); font-weight: 650; }
+      .ps-sgrid { display: grid; gap: 5px 8px; font-size: var(--pc-fs-xs); color: var(--ps-muted); }
+      .ps-sgrid .on { color: var(--ps-text); font-weight: 650; }
+      .ps-sgh { color: var(--ps-dim); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ps-sgk.heating { color: var(--ps-heat); }
+      .ps-sgk.cooling { color: var(--ps-cool); }
+      .ps-sfoot { font-size: var(--pc-fs-micro); color: var(--ps-dim); }
+      .ps-swarn { background: rgba(242,193,78,.10); border-radius: var(--pc-r-sm); padding: 9px 11px;
+                  font-size: var(--pc-fs-xs); line-height: 1.45; color: var(--ps-muted); }
+      .ps-swarn b { color: var(--ps-warn); font-weight: 650; }
+      .ps-sbig { display: flex; justify-content: center; padding: 4px 0; }
+      .ps-sstep { gap: 16px; justify-content: center; }
+      .ps-sstep b { font-size: var(--pc-fs-3xl); font-weight: 250; letter-spacing: -.03em; min-width: 92px; text-align: center;
+                    font-variant-numeric: tabular-nums; }
+      .ps-spair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .ps-spc { display: flex; flex-direction: column; align-items: center; gap: 4px; background: var(--pc-fill-2);
+                border-radius: var(--pc-r-md); padding: 8px 4px; }
+      .ps-spc .ps-sstep { gap: 6px; }
+      .ps-spc .ps-sstep b { font-size: var(--pc-fs-2xl); min-width: 54px; }
+      .ps-stog { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+                 font-size: var(--pc-fs-sm); color: var(--ps-muted); text-align: left; padding: 4px 0; }
+
+      /* the schedule strip in the climate section: now, next, plan, a mini day */
+      .ps-sstrip { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--ps-fill);
+                   border-radius: var(--pc-r-md); padding: 10px 11px; color: var(--ps-text); }
+      .ps-sstrip > .ps-ico { color: var(--ps-muted); flex: 0 0 auto; }
+      .ps-sl1 { display: block; font-size: var(--pc-fs-md); font-weight: 650; font-variant-numeric: tabular-nums; }
+      .ps-sl2 { display: block; font-size: var(--pc-fs-xs); color: var(--ps-muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+      .ps-smini { position: relative; display: block; height: 7px; margin-top: 8px; border-radius: var(--pc-r-pill);
+                  background: var(--ps-fill); }
+      .ps-smini span { position: absolute; top: 0; bottom: 0; border-radius: var(--pc-r-pill); background: var(--pc-fill-3);
+                       box-shadow: inset -2px 0 0 rgba(10,12,22,.55); }
+      .ps-smini span.on { background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b)); }
+      .ps-smini i { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px;
+                    background: var(--ps-text); box-shadow: 0 0 6px rgba(255,255,255,.7); }
+      .ps-szrow { align-items: center; justify-content: space-between; }
+      /* the rooms GTTC reads for the goal */
+      .ps-wz { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px; vertical-align: 1px;
+               background: var(--ps-cool); box-shadow: 0 0 6px rgba(var(--pc-cool-rgb),.7); }
+      .ps-wzkey { font-size: var(--pc-fs-xs); color: var(--ps-dim); margin-top: -4px; }
 
       /* television */
       .ps-tvrow { display: flex; align-items: center; gap: 10px; padding: 7px 0;
@@ -827,15 +880,17 @@ const PS_STYLES = `
       /* schedule editor */
       .ps-sedit { display: flex; flex-direction: column; gap: 9px; background: var(--ps-fill);
                   border-radius: var(--pc-r-md); padding: 11px; }
-      .ps-sform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      .ps-sform label { display: flex; flex-direction: column; gap: 4px; font-size: var(--pc-fs-micro);
+      /* minmax(0, 1fr), not 1fr: a time field's intrinsic width on iOS is wider
+         than half a sheet, and plain 1fr let End run off the right edge. */
+      .ps-sform { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .ps-sform label { min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--pc-fs-micro);
                         letter-spacing: .08em; text-transform: uppercase; color: var(--ps-dim); font-weight: 650; }
       /* 16px, not a scale step: iOS Safari zooms the whole page when a focused
          field is smaller, and the view never zooms back out. */
       .ps-sform input { background: var(--pc-fill-2); color: var(--ps-text);
                         border: 1px solid var(--ps-hair); border-radius: var(--pc-r-sm); padding: 9px;
                         font: inherit; font-size: 16px; font-variant-numeric: tabular-nums;
-                        color-scheme: dark; min-width: 0; }
+                        color-scheme: dark; min-width: 0; width: 100%; box-sizing: border-box; }
       .ps-sform input:focus { outline: 2px solid var(--ps-cool); outline-offset: 1px; }
       .ps-snote { font-size: var(--pc-fs-xs); color: var(--ps-warn); }
       .ps-btn.primary { background: var(--ps-cool); color: #0f1317; }

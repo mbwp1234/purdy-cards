@@ -522,8 +522,11 @@ Object.assign(PurdyShellCard.prototype, {
   /* The climate chips — GTTC's season recommendation and the configured ones.
      Lifted out of _secClimate so the desk's climate column draws the SAME
      chips rather than a second list of them. */
-  _climateChips(sec) {
+  _climateChips(sec, opts) {
     const h = this._hass;
+    /* The phone's climate section draws the schedule strip, which names the
+       plan running — a "Running:" chip beside it would say it twice. */
+    const noPreset = !!(opts && opts.noPreset);
     /* GTTC's own recommendation, said where the switch is. Only when it is
        actually recommending — "no change" is not a fact worth a chip. */
     const seasonRec = this._seasonRecommendation(sec);
@@ -534,6 +537,7 @@ Object.assign(PurdyShellCard.prototype, {
          preset drives the house is worse than no chip. This one asks the
          schedule which scope actually owns the live window. */
       if (ch.source === "schedule_preset") {
+        if (noPreset) return "";
         const scope = this._detectScope();
         const labels = (this._sched && this._sched.preset_labels) || {};
         if (!this._sched) return "";
@@ -598,13 +602,39 @@ Object.assign(PurdyShellCard.prototype, {
     return sec.hero_label || "now";
   },
 
+  /* The goal a person set, which is not always the number GTTC is sending.
+     During fan pre-cool GTTC raises the setpoint at the wall so the fan runs
+     before the compressor, and publishes THAT as climate.gttc's temperature:
+     the phone said "72° goal" while the schedule asked for 70°, and + from
+     there set a 73° hold. The schedule's own effective_temp is the goal. */
+  _climGoalReal(th) {
+    if (!th) return null;
+    const a = th.attributes || {};
+    const e = a.current_schedule_entry;
+    if (a.hvac_action_reason === "fan_precool" && !a.override_active && e && e.effective_temp != null) {
+      return Number(e.effective_temp);
+    }
+    return a.temperature;
+  },
+
+  /* Which room sensors GTTC is reading for the goal right now — the active
+     zone's sensors, matched directly or through a min_max helper's members. */
+  _climWatched(th) {
+    const a = (th && th.attributes) || {};
+    const det = Object.values(a.zone_details || {}).find((z) => z && z.name === a.active_zone);
+    return det && Array.isArray(det.temp_sensors) ? det.temp_sensors : [];
+  },
+
   _secClimate(sec) {
     const h = this._hass;
     const th = h.states[sec.goal] || h.states[sec.thermostat];
     const cur = th && th.attributes.current_temperature;
     /* Reads the optimistic setpoint while one is in flight, so the number
        moves on the tap instead of five seconds later. */
-    const goal = this._optGoal(sec.goal || sec.thermostat, th && th.attributes.temperature);
+    const goal = this._optGoal(sec.goal || sec.thermostat, this._climGoalReal(th));
+    const wall = th && th.attributes.temperature;
+    const precoolWall = th && th.attributes.hvac_action_reason === "fan_precool" && wall != null &&
+      goal != null && Math.abs(Number(wall) - goal) >= 0.5 ? Number(wall) : null;
     const band = this._climateBand(sec);
     const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
     const reason = th && th.attributes.hvac_action_reason;
@@ -652,13 +682,23 @@ Object.assign(PurdyShellCard.prototype, {
       });
       return Number.isFinite(lo) && Number.isFinite(hi) && hi > lo ? { lo, hi } : null;
     })() : null;
+    const watched = this._climWatched(th);
+    const isWatched = (id) => {
+      if (!id || !watched.length) return false;
+      if (watched.includes(id)) return true;
+      const members = h.states[id] && h.states[id].attributes && h.states[id].attributes.entity_id;
+      return Array.isArray(members) && members.some((m) => watched.includes(m));
+    };
+    let anyWatched = false;
     const rooms = (sec.rooms || []).map((r) => {
       const { t, hu, via, offSince } = this._roomRead(r);
+      const w = isWatched(r.temp);
+      if (w) anyWatched = true;
       /* One word for a room that has no reading, on every surface: the desk
          said "offline" and this said "—" about the same dead sensor. */
       const dead = t == null && offSince != null;
       return `<div class="ps-rml${dead ? " off" : ""}" data-info="${psEsc(r.temp)}">
-          <span class="ps-rn ps-trunc">${psEsc(r.name || pcName(h, r.temp))}${
+          <span class="ps-rn ps-trunc">${w ? `<i class="ps-wz"></i>` : ""}${psEsc(r.name || pcName(h, r.temp))}${
             via ? `<i class="ps-via"> · ${psEsc(via)}</i>` : ""}</span>
           ${spark ? `<span class="ps-spark">${via ? "" : this._sparkSvg(r.temp, sparkScale)}</span>` : ""}
           <span class="ps-v">${t == null ? (dead ? "offline" : "—") : pcDeg(t) + "°"}</span>
@@ -666,7 +706,9 @@ Object.assign(PurdyShellCard.prototype, {
         </div>`;
     }).join("");
 
-    const chips = this._climateChips(sec);
+    const chips = this._climateChips(sec, { noPreset: !!sec.schedule });
+    const zoneNm = th && th.attributes.active_zone;
+    const seasonSw = sec.season ? this._seasonHtml(sec) : "";
 
     const wave = this._waveSvg(sec);
     const inNow = pcNum(h, (sec.graph || {}).inside);
@@ -702,20 +744,19 @@ Object.assign(PurdyShellCard.prototype, {
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
           ${band ? `<div class="ps-reason">${psEsc(this._bandReason(band, cur, reason))}</div>`
-            : reason ? `<div class="ps-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
+            : reason ? `<div class="ps-reason">${psEsc(this._reasonText(reason))}${
+              precoolWall != null ? ` \u00B7 wall set to ${psEsc(pcDeg(precoolWall))}\u00B0 while the fan runs` : ""}</div>` : ""}
         </div>
       </div>
       ${guard}
       <div class="ps-zpair">${zones}${outside}</div>
       ${this._holdHtml(sec)}
       <div class="ps-xtra">
-        ${sec.schedule || sec.season ? `<div class="ps-btns">
-          ${sec.schedule ? `<button class="ps-btn" type="button" data-sheet="schedule">
-            <svg viewBox="0 0 24 24" class="ps-ico"><rect x="3.5" y="4.5" width="17" height="16" rx="2"/><path d="M3.5 9h17M8 3v3M16 3v3M12 12.5v3l2 1.2"/></svg>
-            Schedule</button>` : ""}
-          ${this._seasonHtml(sec)}
-        </div>` : ""}
+        ${sec.schedule ? this._schedStripHtml(sec) : ""}
+        ${seasonSw ? `<div class="ps-btns ps-szrow"><span class="ps-lbl">Season</span>${seasonSw}</div>` : ""}
         <div class="ps-rmlist">${rooms}</div>
+        ${anyWatched ? `<div class="ps-wzkey"><i class="ps-wz"></i>Counts toward the goal${
+          zoneNm ? ` \u00B7 ${psEsc(zoneNm)}` : ""}</div>` : ""}
         ${chips ? `<div class="ps-chips">${chips}</div>` : ""}
       </div>
       ${wave ? `<div class="ps-wlg" data-readout="wave">
