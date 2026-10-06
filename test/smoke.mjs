@@ -3620,6 +3620,7 @@ check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtm
   check('…unless it is the one running', /data-scope="work_from_home"/.test(x._scheduleHtml(sec)));
   x._sched.active_preset = 'home';
   x._config.sections[0].schedule.hide_plans = undefined;
+  check('desk2 goal reads the precool-corrected goal, not the wall setpoint', /_dkClimate[\s\S]{0,400}_optGoal\(sec\.goal \|\| sec\.thermostat, this\._climGoalReal\(th\)\)/.test(fs.readFileSync(new URL('../src/86-desk2-core.js', import.meta.url),'utf8')));
   x._schedScope = 'work_from_home';
   check('a blank cool number is said to be the default, not guessed', /cools to the default/.test(w));
   x._schedScope = undefined;
