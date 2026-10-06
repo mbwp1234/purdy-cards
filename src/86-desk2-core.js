@@ -595,7 +595,7 @@ class PurdyDesk2Card extends PurdyShellCard {
     const h = this._hass;
     const th = h.states[sec.goal] || h.states[sec.thermostat];
     const cur = th && th.attributes.current_temperature;
-    const goal = this._optGoal(sec.goal || sec.thermostat, th && th.attributes.temperature);
+    const goal = this._optGoal(sec.goal || sec.thermostat, this._climGoalReal(th));
     const band = this._climateBand(sec);
     const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
     const rng = sec.ring || { min: 60, max: 80 };
