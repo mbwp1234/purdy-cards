@@ -10844,9 +10844,12 @@ check('scrub readout is looked up beside its plot first', (() => {
 check('desk2 wide climate graph has its own readout to scrub into', /pd2-wlg" data-readout="wave"/.test(d2clim));
 check('the fan bars sit in the middle column of their grid, not across it',
   /\.ps-syfans \.ps-sybar \{ grid-column: auto; \}/.test(fs.readFileSync(new URL('../src/79-shell-styles.js', import.meta.url), 'utf8')));
-check('desk2 Joel column carries his week at every height, drawn thin below 820px', (() => {
+check('desk2 Joel column carries his week at every height, filling the spare height below 820px', (() => {
+  const q = d2StyleSrc.slice(d2StyleSrc.indexOf('@container pd2 (max-height: 819px)'));
   return /pd2-week/.test(d2Src) && /\.pd2-week \{ display: block; \}/.test(d2StyleSrc)
-    && /@container pd2 \(max-height: 819px\) \{\s*\.pd2-week \.ps-jrsl/.test(d2StyleSrc)
+    && /\.pd2-week \{ flex: 1 1 auto; min-height: 0;/.test(q.slice(0, q.indexOf('\n      }')))
+    && /\.pd2-week \.ps-jrsr \{ flex: 1 1 10px; min-height: 10px; max-height: 24px;/.test(q)
+    && !/\.pd2-week \.ps-hypt \{ display: none; \}/.test(d2StyleSrc)
     && !/\.pd2-week \{ display: none; \}/.test(d2StyleSrc);
 })());
 
