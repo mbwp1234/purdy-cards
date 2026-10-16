@@ -10984,7 +10984,7 @@ check('desk2 Joel column carries his week at every height, drawn thin below 820p
   const dclim = dq._dkClimate(dq._pd2Sec('clim'));
   check('desk2 climate: the fallback room shows the substitute, named', /Kitchen<small>thermostat<span class="pd2-offage"> · sensor off<\/span><\/small>/.test(dclim) && /73°/.test(dclim));
   check('desk2 climate: no humidity under the ring — it was one room\'s', !/% RH/.test(dclim));
-  check('desk2 weather: rows exist for the short window', typeof dq._dkWxRows === 'function' && /pd2-wxrows/.test(d2StyleSrc) && /\.pd2-wxrows \{ display: grid; \}/.test(d2StyleSrc));
+  check('desk2 weather: rows exist for the short window', typeof dq._dkWxRows === 'function' && /pd2-wxrows/.test(d2StyleSrc) && /\.pd2-wxrows \{ display: flex; \}/.test(d2StyleSrc));
   check('desk2 House: a short value exists for the two-column grid', /pd2-short/.test(dq._dkHouse(dq._pd2Sec('crew'))));
   check('desk2 Now playing names the room above the title', /pd2-npw/.test(d2Src) && /vol \$\{vol\}/.test(d2Src));
   check('desk2 Joel drawer leaves out what the column already draws', /omit: \["raster", "day", "vs"\]/.test(d2Src) && /omit\.has\("vs"\)/.test(src) && /omit\.has\("raster"\)/.test(src) && /omit\.has\("day"\)/.test(src));
@@ -11004,14 +11004,19 @@ check('desk2 Joel column carries his week at every height, drawn thin below 820p
   check('desk2 weather: rows vs capsules is asked of the COLUMN, not the window', (() => {
     const q = d2StyleSrc.indexOf('@container pd2wx (max-height: 220px)');
     const base = d2StyleSrc.indexOf('.pd2-wxrows { display: none;');
-    const sw = d2StyleSrc.slice(q, d2StyleSrc.indexOf('}', d2StyleSrc.indexOf('.pd2-wxrows { display: grid; }', q)) + 1);
+    const sw = d2StyleSrc.slice(q, d2StyleSrc.indexOf('}', d2StyleSrc.indexOf('.pd2-wxrows { display: flex; }', q)) + 1);
     return /\.pd2-col\.pd2-wx \{ container: pd2wx \/ size; \}/.test(d2StyleSrc) && base > 0 && q > base
-      && /\.ps-railbox \{ display: none; \}/.test(sw) && /\.pd2-wxrows \{ display: grid; \}/.test(sw)
-      && d2StyleSrc.split('.pd2-wxrows { display: grid; }').length === 2;
+      && /\.ps-railbox \{ display: none; \}/.test(sw) && /\.pd2-wxrows \{ display: flex; \}/.test(sw)
+      && d2StyleSrc.split('.pd2-wxrows { display: flex; }').length === 2;
   })());
-  check('desk2 weather: the rows shrink to the column rather than clipping Saturday', (() => {
+  check('desk2 weather: the rows shrink to a 14px floor, then whole days drop — never overprinted', (() => {
     const rows = d2StyleSrc.slice(d2StyleSrc.indexOf('.pd2-wxrows { display: none;'), d2StyleSrc.indexOf('.pd2-wxr > span:first-child'));
-    return /flex: 0 1 auto; min-height: 0; grid-auto-rows: minmax\(0, 20px\)/.test(rows) && !/\.pd2-wxr \{[^}]*\bheight: \d+px/.test(d2StyleSrc);
+    return /flex-direction: column; flex-wrap: wrap;/.test(rows) && /overflow: hidden; \}/.test(rows)
+      && /width: 100%; flex: 1 0 14px; max-height: 20px;/.test(rows)
+      && !/minmax\(0, (16|20)px\)/.test(d2StyleSrc) && !/\.pd2-wxr \{[^}]*\bmin-height: 0/.test(d2StyleSrc);
+  })());
+  check('desk2 Joel: a 10h+ night steps its units down so four digits stay inside the arc', (() => {
+    return /nightMins >= 600 \? ' class="pd2-long"'/.test(d2Src) && /\.pd2-rv b\.pd2-long u \{ font-size: var\(--pc-fs-lg\)/.test(d2StyleSrc);
   })());
   check('desk2 Ahead: off days are marked, and Ahead is no longer hidden when compact', /this\._dayOff\(day\.getTime\(\)\)/.test(d2Src) && !/\.pd2-side \.pd2-ahead, /.test(d2StyleSrc));
 }

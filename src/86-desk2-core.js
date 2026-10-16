@@ -479,7 +479,7 @@ class PurdyDesk2Card extends PurdyShellCard {
           <div class="pd2-ring">${ring}
             <div class="pd2-rv">${nightNoData
               ? `<b class="ps-nodata">—</b><small>${loaded ? "NO NIGHT YET" : "LOADING"}</small>`
-              : `<b>${this._dkHM(nightMins)}</b><small>${nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
+              : `<b${nightMins >= 600 ? ' class="pd2-long"' : ""}>${this._dkHM(nightMins)}</b><small>${nightSession.active ? "TONIGHT" : "LAST NIGHT"}</small>`}</div>
           </div>
           <div class="pd2-naps">${naps || `<span class="pd2-flat">${psEsc(napsEmpty)}</span>`}</div>
         </div>
