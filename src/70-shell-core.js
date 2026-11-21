@@ -433,6 +433,7 @@ class PurdyShellCard extends PcBaseCard {
       if (s.type === "lights") {
         (s.lights || []).forEach((x) => {
           push(x.entity); push(x.hide_when_unavailable);
+          push(x.preset); push(x.timer);
           push((x.protect || {}).when);
           (x.members || []).forEach(push);
           (x.extras || []).forEach(push);
@@ -649,6 +650,7 @@ class PurdyShellCard extends PcBaseCard {
     this.shadowRoot.innerHTML = `
       <style>${PurdyShellCard.styles}</style>
       <div class="ps-ground" id="ps-ground"></div>
+      <div class="ps-treefx">${plTreeStars()}</div>
       <div class="ps-wxfx"></div>
       <div class="ps-stat" id="ps-stat"></div>
       <div class="ps-col" id="ps-col"></div>
@@ -957,6 +959,7 @@ class PurdyShellCard extends PcBaseCard {
     this._patch("ps-dockwrap", `${this._miniHtml()}<div class="ps-dock">${dock}</div>`);
 
     this._paintWxFx();
+    this._paintTreeFx();
 
     this._bind();
     this._bindScrub();
@@ -2042,6 +2045,7 @@ class PurdyShellCard extends PcBaseCard {
   static get helpers() {
     return {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic,
+      lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeStars,
       liveMusic: psLiveMusic, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,

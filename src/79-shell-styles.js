@@ -1617,6 +1617,19 @@ const PS_STYLES = `
       .pl-row.dragging .pl-kv { font-size: var(--pc-fs-2xl); letter-spacing: -.03em; }
       .pl-row.dragging .pl-txt { opacity: .35; transition: opacity .18s; }
       .pl-row.na { opacity: .4; }
+      /* the tree: a string of three smaller bulbs, and its hold panel, which
+         carries modes and an off-timer where a lamp carries warmth */
+      .pl-clus.str { gap: 3px; }
+      .pl-clus.str .pl-pip { width: 6px; height: 6px; }
+      .pl-fxd { display: inline-flex; gap: 2px; }
+      .pl-fxd i { width: 5px; height: 5px; border-radius: 50%; }
+      .pl-timers { display: flex; align-items: center; gap: 5px; }
+      .pl-timers em { font-style: normal; font-size: var(--pc-fs-micro); letter-spacing: .03em;
+                      color: rgba(255,255,255,.7); min-width: 42px; }
+      .pl-tm { flex: 1; padding: 6px 0; border-radius: var(--pc-r-pill); font-size: var(--pc-fs-xs);
+               font-weight: 600; background: rgba(255,255,255,.07); border: 1px solid var(--pc-edge);
+               color: var(--ps-muted); }
+      .pl-tm.on { background: rgba(255,199,125,.18); border-color: rgba(255,199,125,.34); color: #FFC77D; }
       .pl-det { position: absolute; top: 0; bottom: 0; width: 1px;
                 background: rgba(255,255,255,.16); opacity: 0; transition: opacity .18s; }
       .pl-row.dragging .pl-det { opacity: 1; }
@@ -1801,6 +1814,67 @@ const PS_STYLES = `
          over the column but under the dock (7), the scrim (8) and the
          sheets (9), so opening a sheet covers the weather rather than
          competing with it. */
+      /* The tree in the sky. It sits WITH the ground (z -1, after it in the
+         skeleton, so above it) and behind the glass, which is the point: a
+         reflection, not an overlay. Behind 30px of blur a 3px light is gone,
+         so the stars are placed where sky actually shows, the greeting strip
+         and the gutters, and the pools at the horizon are large enough to
+         survive the blur and tint the glass. They sit LOW, behind the dock:
+         at 34% tall they reached up behind the column's foot and took the
+         smallest text there from 5.2:1 to 4.2:1, measured off the shot.
+         Stars ride dusk and night only,
+         like the ground's own; the pools stay all day. */
+      .ps-treefx { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
+                   opacity: 0; transition: opacity .8s; --pt-b: 1; }
+      .ps-treefx[data-pal] { opacity: 1; }
+      .ps-treefx[data-lvl="low"] { --pt-b: .33; }
+      .ps-treefx[data-lvl="medium"] { --pt-b: .66; }
+      .ps-treefx::before { content: ""; position: absolute; inset: 0; opacity: calc(.4 + var(--pt-b) * .6); }
+      .ps-treefx[data-pal="warm"]::before {
+        background:
+          radial-gradient(130% 15% at 50% 98%, rgba(255,159,67,.34), transparent 72%),
+          radial-gradient(80% 22% at 50% 4%, rgba(255,173,69,.12), transparent 70%);
+      }
+      .ps-treefx[data-pal="multi"]::before {
+        background:
+          radial-gradient(55% 14% at 14% 98%, rgba(255,93,98,.30), transparent 70%),
+          radial-gradient(55% 14% at 86% 98%, rgba(71,209,138,.28), transparent 70%),
+          radial-gradient(70% 12% at 50% 100%, rgba(90,168,255,.26), transparent 70%),
+          radial-gradient(80% 20% at 50% 3%, rgba(210,124,255,.12), transparent 70%);
+      }
+      .pt-s { position: absolute; width: var(--s); height: var(--s); border-radius: 50%;
+              background: var(--c, #FFC56B); opacity: calc(.55 + var(--pt-b) * .45);
+              box-shadow: 0 0 calc(var(--s) * 2.6) calc(var(--s) * .6) var(--c, #FFC56B); }
+      .ps-treefx[data-pal="warm"] .pt-s:nth-child(3n+1) { --c: #FFD98C; }
+      .ps-treefx[data-pal="warm"] .pt-s:nth-child(3n+2) { --c: #FFAD45; }
+      .ps-treefx[data-pal="multi"] .pt-s:nth-child(5n+1) { --c: #FF5D62; }
+      .ps-treefx[data-pal="multi"] .pt-s:nth-child(5n+2) { --c: #47D18A; }
+      .ps-treefx[data-pal="multi"] .pt-s:nth-child(5n+3) { --c: #5AA8FF; }
+      .ps-treefx[data-pal="multi"] .pt-s:nth-child(5n+4) { --c: #FFC56B; }
+      .ps-treefx[data-pal="multi"] .pt-s:nth-child(5n) { --c: #D27CFF; }
+      .ps-treefx[data-lvl="low"] .pt-s:nth-child(n+13),
+      .ps-treefx[data-lvl="medium"] .pt-s:nth-child(n+25) { display: none; }
+      .ps-ground.sky-day ~ .ps-treefx .pt-s,
+      .ps-ground.sky-dawn ~ .ps-treefx .pt-s { display: none; }
+      .ps-treefx[data-fx="tw"] .pt-s { animation: ps-trtw var(--d) ease-in-out var(--dl) infinite; }
+      .ps-treefx[data-fx="br"] .pt-s { animation: ps-trtw 4.5s ease-in-out infinite; }
+      .ps-treefx[data-fx="flipS"] .pt-s { animation: ps-trflip 2.4s steps(1, end) infinite; }
+      .ps-treefx[data-fx="flipS"] .pt-s:nth-child(even) { animation-delay: -1.2s; }
+      .ps-treefx[data-fx="flipF"] .pt-s { animation: ps-trflip .8s steps(1, end) infinite; }
+      .ps-treefx[data-fx="flipF"] .pt-s:nth-child(even) { animation-delay: -.4s; }
+      .ps-treefx[data-fx="fade"] .pt-s { --c: #FF5D62; animation: ps-trfade 7s ease-in-out infinite; }
+      .ps-treefx[data-fx="demo"] .pt-s { animation: ps-trdemo 10s ease-in-out var(--dl) infinite; }
+      .ps-treefx[data-fx="drift"], .ps-treefx[data-fx="fade"]::before,
+      .ps-treefx[data-fx="demo"]::before { animation: ps-trhue 16s linear infinite; }
+      @keyframes ps-trtw { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+      @keyframes ps-trflip { 0% { opacity: 1; } 50% { opacity: .07; } }
+      @keyframes ps-trhue { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+      @keyframes ps-trfade { 0%, 100% { opacity: 1; filter: hue-rotate(0deg); }
+                             50% { opacity: .12; filter: hue-rotate(180deg); } }
+      @keyframes ps-trdemo { 0% { opacity: 1; filter: hue-rotate(0deg); } 20% { opacity: .2; }
+                             40% { opacity: 1; filter: hue-rotate(120deg); } 60% { opacity: .1; }
+                             100% { opacity: 1; filter: hue-rotate(360deg); } }
+
       .ps-wxfx {
         position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden;
       --ps-wx-rain-near:
@@ -2045,6 +2119,7 @@ const PS_STYLES = `
       @media (prefers-reduced-motion: reduce) {
         * { transition: none !important; }
         .ps-wxfx, .ps-wxfx::before, .ps-wxfx::after { animation: none !important; }
+        .ps-treefx, .ps-treefx::before, .pt-s { animation: none !important; }
       }
     `;
 
