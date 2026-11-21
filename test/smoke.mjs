@@ -1860,7 +1860,10 @@ check('the sky switches instantly, with no transition on the ground', (() => {
   /* Anchored at a line start: .ps-ground is also NAMED in the weather-FX
      comment block, and a loose match ran from that prose into an unrelated
      rule and reported a transition that is not on the ground at all. */
-  const rules = [...shs.matchAll(/^ *\.ps-ground[^{\n]*\{([^}]*)\}/gm)].map((m) => m[1]);
+  /* A rule that only uses the ground as a SIBLING anchor (".ps-ground.sky-day
+     ~ .ps-treefx") styles the tree layer, not the ground, so it is not counted. */
+  const rules = [...shs.matchAll(/^ *\.ps-ground[^{\n]*\{([^}]*)\}/gm)]
+    .filter((m) => !/~/.test(m[0].split('{')[0])).map((m) => m[1]);
   return rules.length === 6 && rules.every((r) => !/transition|animation/.test(r));
 })());
 /* The hem. The dock's fade is anchored to the DOCK and the warm horizon it
@@ -11022,6 +11025,173 @@ check('desk2 Joel column carries his week at every height, filling the spare hei
     return /nightMins >= 600 \? ' class="pd2-long"'/.test(d2Src) && /\.pd2-rv b\.pd2-long u \{ font-size: var\(--pc-fs-lg\)/.test(d2StyleSrc);
   })());
   check('desk2 Ahead: off days are marked, and Ahead is no longer hidden when compact', /this\._dayOff\(day\.getTime\(\)\)/.test(d2Src) && !/\.pd2-side \.pd2-ahead, /.test(d2StyleSrc));
+}
+
+
+const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeStars } = SH.helpers;
+/* ============================ the tree ============================
+   A preset-only light (Low / Medium / High, no brightness function) with ten
+   modes and an off-timer, whose running mode is reflected in the sky. */
+{
+  const TSEC = {
+    type: 'lights', key: 'lights', title: 'Lights',
+    lights: [
+      { entity: 'light.a', name: 'Living Room' },
+      { entity: 'light.tree', name: 'Tree', preset: 'select.tree_preset',
+        timer: 'number.tree_timer', modes: true, sky: true },
+    ],
+  };
+  const FXL = ['steady-warm-white-mcu', 'twinkle-warm-white-mcu', 'slow-fade-multi-mcu',
+    'slow-color-variable-mcu', 'fast-flip-mcu', 'mystery-mode-mcu'];
+  const tsh = (tree, timer) => {
+    const sh = new SH();
+    sh.setConfig({ sections: [TSEC] });
+    sh._hass = { states: {
+      'light.a': { state: 'on', attributes: { brightness: 128, supported_color_modes: ['brightness'] } },
+      'light.tree': tree === undefined
+        ? { state: 'on', attributes: { brightness: 84, effect: 'twinkle-warm-white-mcu',
+            effect_list: FXL, supported_color_modes: ['brightness'] } }
+        : tree,
+      'select.tree_preset': { state: 'low', attributes: {} },
+      'number.tree_timer': timer === undefined ? { state: '0', attributes: {} } : timer,
+    }, callService(d, s, data) { (sh._calls || (sh._calls = [])).push([d, s, data]); } };
+    return sh;
+  };
+  const trow = (sh) => {
+    const h = sh._secLights(TSEC);
+    return h.slice(h.indexOf('data-light="light.tree"'));
+  };
+
+  check('the tree reads its preset, not a percent', (() => {
+    const r = trow(tsh());
+    return /<div class="pl-kv">Low<\/div>/.test(r) && !/<div class="pl-kv">33%/.test(r);
+  })());
+  check('High reads High', (() => {
+    const sh = tsh({ state: 'on', attributes: { brightness: 255, effect: 'steady-multi-mcu',
+      effect_list: FXL, supported_color_modes: ['brightness'] } });
+    return /<div class="pl-kv">High<\/div>/.test(trow(sh));
+  })());
+  check('its drag detents sit on the band edges, not on quarters', (() => {
+    const r = trow(tsh());
+    const row = r.slice(0, r.indexOf('pl-face'));
+    return /left:33%/.test(row) && /left:66%/.test(row) && !/left:25%/.test(row) && /data-bands="1"/.test(row);
+  })());
+  check('an ordinary lamp still gets quarters and no bands', (() => {
+    const h = tsh()._secLights(TSEC);
+    const row = h.slice(h.indexOf('data-light="light.a"'), h.indexOf('data-light="light.tree"'));
+    return /left:25%/.test(row) && /data-bands="0"/.test(row);
+  })());
+  check('a band snap sends the top of the band, which is what the tree can be at',
+    plBand(1)[0] === 33 && plBand(33)[0] === 33 && plBand(34)[0] === 66 && plBand(67)[0] === 100
+      && plByte(33) === 84);
+  check('the sub-line names the running mode', /Twinkle · warm white/.test(trow(tsh())));
+  check('an off tree says nothing about its mode', (() => {
+    const sh = tsh({ state: 'off', attributes: { effect: 'twinkle-warm-white-mcu', effect_list: FXL,
+      supported_color_modes: ['brightness'] } });
+    return !/Twinkle/.test(trow(sh).slice(0, trow(sh).indexOf('pl-more')));
+  })());
+  check('a running off-timer joins the sub-line', /Twinkle · warm white · 2h timer/.test(
+    trow(tsh(undefined, { state: '120', attributes: {} }))));
+  check('a timer at zero is not reported as a timer', !/timer/.test(trow(tsh()).slice(0, 2000).split('pl-more')[0]));
+  check('the tree is a string of three bulbs, not one lamp', (() => {
+    const r = trow(tsh());
+    const clus = r.slice(r.indexOf('pl-clus'), r.indexOf('pl-txt'));
+    return /pl-clus str/.test(clus) && (clus.match(/class="pl-pip"/g) || []).length === 3;
+  })());
+  check('the bulbs are static — no animation inside a patched string', (() => {
+    const sh = tsh(); sh._lightOpen = 'light.tree';
+    return !/animation/.test(trow(sh));
+  })());
+  check('a warm mode glows warm', /rgba\(255,197,107,/.test(trow(tsh())));
+  check('holding the tree opens its modes, in place of a warmth track', (() => {
+    const sh = tsh(); sh._lightOpen = 'light.tree';
+    const r = trow(sh);
+    return (r.match(/data-lfx="light\.tree"/g) || []).length === FXL.length
+      && /class="pl-kid on"[^>]*data-v="twinkle-warm-white-mcu"/.test(r.replace(/\s+/g, ' '))
+      && !/data-lwarm/.test(r) && !/no warmth to set/.test(r);
+  })());
+  check('the modes are listed warm white first, an unknown mode last', (() => {
+    const sh = tsh(); sh._lightOpen = 'light.tree';
+    const order = [...trow(sh).matchAll(/data-lfx="light\.tree" data-v="([^"]+)"/g)].map((m) => m[1]);
+    return order[0] === 'steady-warm-white-mcu' && order[1] === 'twinkle-warm-white-mcu'
+      && order[order.length - 1] === 'mystery-mode-mcu';
+  })());
+  check('an unknown mode is named from its id and drawn plainly',
+    plFx('mystery-mode-mcu').name === 'Mystery mode' && plFx('mystery-mode-mcu').a === 'none');
+  check('the off-timer row offers None through 8h and marks the current one', (() => {
+    const sh = tsh(undefined, { state: '120', attributes: {} }); sh._lightOpen = 'light.tree';
+    const r = trow(sh).replace(/\s+/g, ' ');
+    return (r.match(/data-ltimer="number\.tree_timer"/g) || []).length === 5
+      && /class="pl-tm on"[^>]*data-v="120"/.test(r);
+  })());
+  check('an off-timer that is not reporting is said so, not drawn as None', (() => {
+    const sh = tsh(undefined, { state: 'unavailable', attributes: {} }); sh._lightOpen = 'light.tree';
+    const r = trow(sh);
+    return /Off-timer not reporting/.test(r) && !/data-ltimer/.test(r);
+  })());
+  check('the preset and timer entities are watched', (() => {
+    const w = tsh()._collectWatched();
+    const arr = Array.isArray(w) ? w : [...w];
+    return arr.includes('select.tree_preset') && arr.includes('number.tree_timer');
+  })());
+  check('a picked mode is optimistic until the tree reports it', (() => {
+    const sh = tsh();
+    sh._fxOpt = { 'light.tree': { value: 'fast-flip-mcu', until: Date.now() + 10000 } };
+    return /Fast flip/.test(trow(sh));
+  })());
+
+  /* The sky half: attribute writes on a node _mount built once. */
+  const tGround = () => {
+    const el = { dataset: {}, className: 'ps-ground sky-night',
+      hasAttribute: (n) => el.dataset[n.slice(5)] !== undefined,
+      removeAttribute: (n) => { delete el.dataset[n.slice(5)]; } };
+    return el;
+  };
+  const tPaint = (tree) => {
+    const sh = tsh(tree);
+    const fx = tGround(), ground = { className: 'ps-ground sky-night' };
+    const st = {};
+    sh.shadowRoot = { querySelector: (q) => (q === '.ps-treefx' ? fx : null),
+      getElementById: (q) => (q === 'ps-ground' ? ground : null) };
+    Object.defineProperty(sh, 'style', { value: {
+      setProperty: (k, v) => { st[k] = v; }, getPropertyValue: (k) => st[k] || '' }, configurable: true });
+    sh._paintTreeFx();
+    return { fx, st, sh };
+  };
+  check('the tree paints the sky: palette, motion and level', (() => {
+    const { fx } = tPaint();
+    return fx.dataset.pal === 'warm' && fx.dataset.fx === 'tw' && fx.dataset.lvl === 'low';
+  })());
+  check('a multicolour flip at High paints a full multicolour sky', (() => {
+    const { fx } = tPaint({ state: 'on', attributes: { brightness: 255, effect: 'fast-flip-mcu',
+      effect_list: FXL, supported_color_modes: ['brightness'] } });
+    return fx.dataset.pal === 'multi' && fx.dataset.fx === 'flipF' && fx.dataset.lvl === 'high';
+  })());
+  check('the horizon glow takes the tree, and gives it back when the tree goes off', (() => {
+    const on = tPaint();
+    const lit = on.st['--ps-sky-glow'];
+    on.sh._hass.states['light.tree'] = { state: 'off', attributes: { effect: 'twinkle-warm-white-mcu' } };
+    on.sh._paintTreeFx();
+    return /^rgba\(255,173,69,/.test(lit) && on.st['--ps-sky-glow'] === SH.skyGlow['sky-night']
+      && on.fx.dataset.pal === undefined && on.fx.dataset.fx === undefined;
+  })());
+  check('an unavailable tree draws no tree in the sky', (() => {
+    const { fx } = tPaint({ state: 'unavailable', attributes: {} });
+    return fx.dataset.pal === undefined;
+  })());
+  check('the tree paint is actually called from the render tail', /this\._paintTreeFx\(\);/.test(coreSrc));
+  check('the tree layer is mounted once, in the skeleton, before the weather',
+    /<div class="ps-treefx">\$\{plTreeStars\(\)\}<\/div>\s*<div class="ps-wxfx">/.test(coreSrc));
+  check('the sky stars are built once, as 36 real nodes',
+    (plTreeStars().match(/class="pt-s"/g) || []).length === 36 && plTreeStars() === plTreeStars());
+  check('the tree layer sits behind the glass with the ground, and never eats a tap',
+    /\.ps-treefx \{[^}]*z-index: -1;[^}]*pointer-events: none/.test(shs));
+  check('reduced motion stops the tree as well as the weather',
+    /\.ps-treefx, \.ps-treefx::before, \.pt-s \{ animation: none !important; \}/.test(shs));
+  check('sky stars ride dusk and night only, like the ground\'s own',
+    /\.ps-ground\.sky-day ~ \.ps-treefx \.pt-s,\s*\.ps-ground\.sky-dawn ~ \.ps-treefx \.pt-s \{ display: none; \}/.test(shs));
+  check('every mode the map names has a rule that moves it', ['tw', 'br', 'flipS', 'flipF', 'fade', 'demo', 'drift']
+    .every((a) => new RegExp(`data-fx="${a}"`).test(shs)));
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');

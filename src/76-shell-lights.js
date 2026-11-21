@@ -45,6 +45,68 @@ const plByte = (p) => Math.max(1, Math.min(255, Math.round(p / 100 * 255)));
 const plWarmPct = (k, min, max) =>
   Math.max(0, Math.min(100, (k - min) / ((max - min) || 1) * 100));
 
+/* The holiday tree's modes. Hubspace publishes them as bare ids
+   ("twinkle-warm-white-mcu"); the palette and the motion are what the row's
+   bulbs and the sky draw, so each is named exactly once, here. An effect this
+   map does not know gets its id prettified and no motion: drawn plainly
+   rather than guessed at. */
+const PL_PAL = {
+  warm: ["#FFC56B", "#FFD98C", "#FFAD45"],
+  multi: ["#FF5D62", "#47D18A", "#5AA8FF", "#FFC56B", "#D27CFF"],
+};
+const PL_FX = {
+  "steady-warm-white-mcu": ["Steady", "warm white", "warm", "none"],
+  "twinkle-warm-white-mcu": ["Twinkle", "warm white", "warm", "tw"],
+  "slow-fade-warm-white-mcu": ["Breathe", "warm white", "warm", "br"],
+  "steady-multi-mcu": ["Steady", "multicolour", "multi", "none"],
+  "slow-fade-multi-mcu": ["Breathe", "multicolour", "multi", "br"],
+  "slow-color-variable-mcu": ["Colour drift", "", "multi", "drift"],
+  "slow-flip-mcu": ["Slow flip", "", "multi", "flipS"],
+  "fast-flip-mcu": ["Fast flip", "", "multi", "flipF"],
+  "slow-fade-mcu": ["Fade", "", "multi", "fade"],
+  "demo-mcu": ["Demo", "", "multi", "demo"],
+};
+function plFx(id) {
+  const f = PL_FX[id];
+  if (f) return { id, name: f[0], tone: f[1], pal: f[2], a: f[3] };
+  const n = String(id || "").replace(/-mcu$/, "").replace(/-/g, " ");
+  return { id, name: n.charAt(0).toUpperCase() + n.slice(1), tone: "", pal: "warm", a: "none" };
+}
+const plHex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+
+/* Low / Medium / High. The tree has no brightness function, only these three
+   presets, and the integration reports each as the top of the device's own
+   band (1-33, 34-66, 67-100). A drag snaps to a band and sends its top, so
+   what the row shows is a value the tree can actually be at. */
+const PL_BANDS = [[33, "Low"], [66, "Medium"], [100, "High"]];
+const plBand = (pct) => PL_BANDS.find((b) => pct <= b[0]) || PL_BANDS[2];
+
+/* The off-timer is minutes; the row reads it the way a person would say it. */
+const plMins = (m) => (m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`);
+const PL_TIMERS = [[0, "None"], [60, "1h"], [120, "2h"], [240, "4h"], [480, "8h"]];
+
+/* The sky's tree lights, built ONCE into the skeleton. Every star is a real
+   node so the palette (nth-child), the level (how many are shown) and the
+   motion are pure CSS keyed off three attributes. An animation inside a
+   patched string restarts on every state change; one on a node nothing ever
+   rewrites runs for ever — the rule the rain layer was built on.
+   Two thirds of the stars sit in the strip above the column: the glass blurs
+   its backdrop by 30px, so a 3px light behind it is gone, and the only sky a
+   person actually sees is the greeting strip and the gutters. */
+function plTreeStars() {
+  let seed = 7;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const out = [];
+  for (let i = 0; i < 36; i++) {
+    const top = i % 3 === 2 ? 22 + rnd() * 70 : rnd() * 20;
+    const edge = i % 3 === 2 ? (rnd() < .5 ? rnd() * 3 : 97 + rnd() * 3) : rnd() * 100;
+    out.push(`<i class="pt-s" style="left:${edge.toFixed(1)}%;top:${top.toFixed(1)}%;`
+      + `--s:${(1.8 + rnd() * 2.4).toFixed(1)}px;--d:${(1.4 + rnd() * 2.2).toFixed(2)}s;`
+      + `--dl:${(-rnd() * 6).toFixed(2)}s"></i>`);
+  }
+  return out.join("");
+}
+
 Object.assign(PurdyShellCard.prototype, {
 
   /* Everything the section needs to know about one light, read live. */
@@ -71,7 +133,28 @@ Object.assign(PurdyShellCard.prototype, {
       minK: a.min_color_temp_kelvin || 2000,
       maxK: a.max_color_temp_kelvin || 6535,
       rgb: a.rgb_color,
+      /* The holiday keys. `bands` makes the drag snap to the three presets;
+         `fx` is the running mode (optimistic, like brightness); `timer` is a
+         READING, so an off-timer that is not reporting is not drawn as None. */
+      bands: !!cfg.preset,
+      fx: cfg.modes && !gone ? this._optFx(cfg.entity, a.effect || null) : null,
+      /* In the map's order (warm white first, then multicolour), not the
+         order Hubspace happens to publish; an unknown mode goes last. */
+      fxList: cfg.modes && !gone ? (a.effect_list || []).slice().sort((x, y) => {
+        const k = Object.keys(PL_FX), i = k.indexOf(x), j = k.indexOf(y);
+        return (i < 0 ? 99 : i) - (j < 0 ? 99 : j);
+      }) : [],
+      timer: cfg.timer ? pcReading(h, cfg.timer) : null,
     };
+  },
+
+  /* The optimistic mode, on the same contract as _optBri: it stands until the
+     tree reports it or for 12s, so a press that never lands shows the truth. */
+  _optFx(id, real) {
+    const o = (this._fxOpt || {})[id];
+    if (!o) return real;
+    if (Date.now() > o.until || real === o.value) { delete this._fxOpt[id]; return real; }
+    return o.value;
   },
 
   /* The optimistic brightness, on the same contract as _optGoal: it stands
@@ -116,6 +199,19 @@ Object.assign(PurdyShellCard.prototype, {
      not a sentence. Beyond three members the dots stop meaning anything at a
      glance, so those collapse to one orb and the sub-line carries the count. */
   _lightCluster(l, c) {
+    /* A tree is a string of bulbs, not a lamp: three pips in the running
+       mode's own palette. Static on purpose — the motion lives in the sky,
+       on a node no patch rewrites. */
+    if (l.cfg.modes) {
+      const pal = PL_PAL[plFx(l.fx).pal];
+      const b = l.bri / 100;
+      return `<div class="pl-clus str">${[0, 1, 2].map((k) => {
+        const cc = plHex(pal[k % pal.length]);
+        return `<span class="pl-pip" style="${l.on && l.fx
+          ? `background:${plRgba(cc, .95)};box-shadow:0 0 ${(4 + b * 9).toFixed(1)}px ${(1 + b * 1.5).toFixed(1)}px ${plRgba(cc, (.45 + b * .35).toFixed(2))}`
+          : l.gone ? "background:rgba(255,255,255,.06)" : ""}"></span>`;
+      }).join("")}</div>`;
+    }
     const h = this._hass;
     const mem = l.cfg.members || [];
     const b = l.bri / 100;
@@ -146,6 +242,15 @@ Object.assign(PurdyShellCard.prototype, {
       const lit = mem.filter((m) => pcState(h, m) === "on").length;
       if (lit && lit < mem.length) return `${lit} of ${mem.length} on`;
     }
+    /* The mode is the one thing about a tree you cannot see from the row; a
+       running off-timer is the other. Off, it says nothing — an off tree has
+       no mode worth reporting. */
+    if (l.cfg.modes && l.on && l.fx) {
+      const f = plFx(l.fx);
+      const parts = [f.tone ? `${f.name} · ${f.tone}` : f.name];
+      if (l.timer && l.timer.ok && l.timer.n > 0) parts.push(`${plMins(Math.round(l.timer.n))} timer`);
+      return parts.join(" · ");
+    }
     return "";
   },
 
@@ -156,14 +261,23 @@ Object.assign(PurdyShellCard.prototype, {
      search results are written straight to the DOM. Two code paths drawing the
      same row would drift, so there is one. */
   _lightPaint(l) {
-    const c = plRgb(l.kelvin, l.on ? l.rgb : null);
+    /* A tree's colour is its mode's palette, not a colour temperature — it
+       reports none. A multicolour mode adds two fainter pools further along,
+       so the row reads as a string of colours rather than one red lamp. */
+    const pal = l.cfg.modes && l.fx ? PL_PAL[plFx(l.fx).pal] : null;
+    const c = pal ? plHex(pal[0]) : plRgb(l.kelvin, l.on ? l.rgb : null);
     const b = l.bri / 100;
     /* Reach and intensity both scale, so a dim lamp is a small warm pool
        rather than a faint wash of the whole row. */
     const reach = 24 + b * 90;
+    const more = pal && pal.length > 3
+      ? [[1, 40], [2, 62]].map(([k, at]) =>
+        `radial-gradient(90% 260% at ${at}% 50%,${plRgba(plHex(pal[k]), (.05 + b * .18).toFixed(3))} 0%,`
+        + ` transparent ${(18 + b * 46).toFixed(1)}%),`).join("")
+      : "";
     return {
       c,
-      bg: `radial-gradient(120% 300% at 22px 50%,${plRgba(c, (.11 + b * .50).toFixed(3))} 0%,`
+      bg: `${more}radial-gradient(120% 300% at 22px 50%,${plRgba(c, (.11 + b * .50).toFixed(3))} 0%,`
         + `${plRgba(c, (.04 + b * .20).toFixed(3))} ${(reach * .42).toFixed(1)}%, transparent ${reach.toFixed(1)}%)`,
       /* A lit row lifts off the column in its own colour; a dark one is barely
          a hairline. That is what makes "what is on" countable across a room. */
@@ -180,10 +294,10 @@ Object.assign(PurdyShellCard.prototype, {
     const p = this._lightPaint(l);
     const sub = this._lightSub(l);
     const dets = l.dimmable
-      ? [25, 50, 75].map((x) => `<span class="pl-det" style="left:${x}%"></span>`).join("")
+      ? (l.bands ? [33, 66] : [25, 50, 75]).map((x) => `<span class="pl-det" style="left:${x}%"></span>`).join("")
       : "";
     return `<div class="pl-row${l.on ? " on" : ""}${l.gone ? " na" : ""}${open ? " open" : ""}"
-        data-light="${psEsc(l.id)}" data-dim="${l.dimmable ? 1 : 0}" data-guard="${this._lightGuarded(l.cfg) ? 1 : 0}"
+        data-light="${psEsc(l.id)}" data-dim="${l.dimmable ? 1 : 0}" data-guard="${this._lightGuarded(l.cfg) ? 1 : 0}" data-bands="${l.bands ? 1 : 0}"
         style="${p.lift}">
         <div class="pl-glow" style="background:${p.bg}"></div>${dets}
         <div class="pl-face">
@@ -192,7 +306,7 @@ Object.assign(PurdyShellCard.prototype, {
             <div class="pl-t1">${psEsc(l.name)}</div>
             ${sub ? `<div class="pl-t2">${psEsc(sub)}</div>` : ""}
           </div>
-          <div class="pl-kv">${l.dimmable ? l.bri + "%" : "On"}</div>
+          <div class="pl-kv">${l.dimmable ? (l.bands ? plBand(l.bri)[1] : l.bri + "%") : "On"}</div>
         </div>
         <div class="pl-more">${open ? this._lightMore(l) : ""}</div>
       </div>`;
@@ -211,7 +325,7 @@ Object.assign(PurdyShellCard.prototype, {
     const glow = el.querySelector(".pl-glow");
     if (glow) glow.style.background = p.bg;
     const kv = el.querySelector(".pl-kv");
-    if (kv) kv.textContent = v + "%";
+    if (kv) kv.textContent = l.bands ? plBand(v)[1] : v + "%";
     /* The cluster is part of the picture: a group brightening with dark pips
        would read as "the lamps are off but the room is lit". */
     el.querySelectorAll(".pl-pip").forEach((pip) => { pip.style.cssText = p.pip; });
@@ -251,6 +365,32 @@ Object.assign(PurdyShellCard.prototype, {
           ${r.ok ? '<span class="ps-dot"></span>' : ""}${psEsc(pcName(h, m))}${r.ok ? "" : " · offline"}
         </button>`;
     }).join("");
+    /* A tree's hold panel: its modes, then its off-timer, in place of the
+       warmth track it does not have. Each chip shows the mode's palette. */
+    let fx = "";
+    if (l.cfg.modes && l.fxList.length) {
+      fx = `<div class="pl-kids">${l.fxList.map((e) => {
+        const f = plFx(e);
+        const pal = PL_PAL[f.pal];
+        const dots = [0, 1, 2].map((k) => `<i style="background:${pal[(f.a === "fade" ? 0 : k) % pal.length]}"></i>`).join("");
+        return `<button class="pl-kid${e === l.fx ? " on" : ""}" type="button"
+            data-lfx="${psEsc(l.id)}" data-v="${psEsc(e)}">
+            <span class="pl-fxd">${dots}</span>${psEsc(f.tone ? `${f.name} ${f.pal === "warm" ? "warm" : "multi"}` : f.name)}
+          </button>`;
+      }).join("")}</div>`;
+    }
+    let timer = "";
+    if (l.cfg.timer) {
+      const t = l.timer;
+      timer = t && t.ok
+        ? `<div class="pl-timers"><em>Off in</em>${PL_TIMERS.map(([m, lbl]) =>
+          `<button class="pl-tm${Math.round(t.n) === m ? " on" : ""}" type="button"
+              data-ltimer="${psEsc(l.cfg.timer)}" data-v="${m}">${lbl}</button>`).join("")}</div>`
+        : `<div class="pl-warmrow"><em class="pl-none">Off-timer not reporting</em></div>`;
+    }
+    if (fx || timer) {
+      return `<div class="pl-mb">${chips ? `<div class="pl-kids">${chips}</div>` : ""}${fx}${timer}</div>`;
+    }
     let warm;
     if (l.warmable && !l.gone) {
       const k = l.kelvin == null ? Math.round((l.minK + l.maxK) / 2) : l.kelvin;
@@ -468,6 +608,9 @@ Object.assign(PurdyShellCard.prototype, {
         if (!r.width) return null;
         let v = Math.round((clientX - r.left) / r.width * 100);
         v = Math.max(1, Math.min(100, v));
+        /* A preset light can only be at three values, so the drag snaps to
+           them rather than previewing a 47% the tree cannot show. */
+        if (el.dataset.bands === "1") return plBand(v)[0];
         [25, 50, 75, 100].forEach((d) => { if (Math.abs(v - d) <= 2) v = d; });
         return v;
       };
@@ -573,6 +716,24 @@ Object.assign(PurdyShellCard.prototype, {
       this._hass.callService(m.split(".")[0], "toggle", { entity_id: m });
     }));
 
+    this._each("[data-lfx]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pcHaptic("light");
+      const id = el.dataset.lfx, v = el.dataset.v;
+      if (!this._fxOpt) this._fxOpt = {};
+      this._fxOpt[id] = { value: v, until: Date.now() + 12000 };
+      this._mood = null;
+      this._hass.callService("light", "turn_on", { entity_id: id, effect: v });
+      this._render();
+    }));
+
+    this._each("[data-ltimer]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pcHaptic("light");
+      this._hass.callService("number", "set_value",
+        { entity_id: el.dataset.ltimer, value: +el.dataset.v });
+    }));
+
     this._each("[data-lmood]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       const sec = (this._config.sections || []).find((s) => s.type === "lights");
@@ -634,6 +795,47 @@ Object.assign(PurdyShellCard.prototype, {
         set(e);
       });
     });
+  },
+
+  /* The tree in the sky. ATTRIBUTE WRITES on .ps-treefx, which _mount builds
+     once — the same shape as _paintWxFx and for the same reason. A row marked
+     sky: true drives it; off, unavailable or unmarked all land in the same
+     place: no attributes, so the CSS draws nothing and the plain sky shows.
+
+     The dock's horizon glow is written here too, because the dock is the
+     ground's SIBLING and cannot inherit — and _paintSky only rewrites it when
+     the BAND changes, so turning the tree off must put the band's glow back
+     itself or the horizon would stay tree-coloured until the next sunset. */
+  _paintTreeFx() {
+    const el = this.shadowRoot && this.shadowRoot.querySelector(".ps-treefx");
+    if (!el) return;
+    const sec = (this._config.sections || []).find((s) => s.type === "lights");
+    const cfg = sec && (sec.lights || []).find((c) => c.sky);
+    const l = cfg && this._lightOf(cfg);
+    const want = l && l.on && !l.gone && l.fx ? plFx(l.fx) : null;
+    const set = (k, v) => {
+      if (v == null) { if (el.hasAttribute("data-" + k)) el.removeAttribute("data-" + k); }
+      else if (el.dataset[k] !== v) el.dataset[k] = v;
+    };
+    const lvl = want ? plBand(l.bri)[1].toLowerCase() : null;
+    set("pal", want ? want.pal : null);
+    set("fx", want ? want.a : null);
+    set("lvl", lvl);
+    let glow;
+    if (want) {
+      const b = plBand(l.bri)[0] / 100;
+      const c = plHex(want.pal === "warm" ? "#FFAD45" : "#D27CFF");
+      glow = plRgba(c, (.14 + b * .14).toFixed(2));
+    } else {
+      const g = this.shadowRoot.getElementById("ps-ground");
+      const band = g && (String(g.className).match(/sky-[a-z]+/) || [])[0];
+      glow = PurdyShellCard.skyGlow[band || "sky-day"];
+    }
+    if (glow && this.style && typeof this.style.setProperty === "function"
+      && (typeof this.style.getPropertyValue !== "function"
+        || this.style.getPropertyValue("--ps-sky-glow") !== glow)) {
+      this.style.setProperty("--ps-sky-glow", glow);
+    }
   },
 
   _lightCfg(id) {
