@@ -72,7 +72,8 @@ class PurdySkyCard extends PurdyShellCard {
     this._skFace = null;       // Media: watch | listen, null = the config default
     this._skCtx = null;        // "home" | "page" while a section renders for us
     this._skScroll = {};       // scroll offset per tab
-    this._skLastY = 0;
+    this._skAnchor = null;     // where the mini bar's last direction began
+    this._skAnchorView = null;
     this._skTick = false;
     this._skRemoteEl = null;
     /* One handler, kept on the card so disconnect removes exactly what it added. */
@@ -719,7 +720,7 @@ class PurdySkyCard extends PurdyShellCard {
       const sc = this._skScroller();
       const bar = this.shadowRoot.getElementById("sk-bar");
       if (!card || !sc || !card.getBoundingClientRect) return;
-      const off = card.getBoundingClientRect().top - (bar ? bar.getBoundingClientRect().height : 100) - 10;
+      const off = card.getBoundingClientRect().top - this._skCover() - 10;
       if (sc.scrollTo) sc.scrollTo({ top: sc.scrollTop + off, behavior: "smooth" }); else sc.scrollTop += off;
     }));
     /* Joel: tap a night in the week to read it above. */
@@ -778,13 +779,21 @@ class PurdySkyCard extends PurdyShellCard {
     }));
     /* The volume ladder: tap or drag across the rungs. Painted in place while
        the finger moves (a render would detach the node under it), sent once
-       on release, and the release is bound to the window so it cannot be missed. */
+       on release, and the release is bound to the window so it cannot be missed.
+       Nothing moves until the gesture has said what it is: a sideways move past
+       8px is a drag, a vertical one is the page's scroll and lets go, and a
+       release that never moved is a tap. A CANCEL sends nothing and puts the
+       rungs back — the browser cancels exactly when it takes a scroll, and
+       treating that as a release set the volume to wherever a swipe began. */
     this._each("#sk-ladder", (lad) => lad.addEventListener("pointerdown", (e) => {
       const ent = lad.dataset.entity;
-      if (!ent) return;
+      if (!ent || (e.button != null && e.button > 0)) return;
       const rungs = Array.from(lad.querySelectorAll("i"));
       const out = this.shadowRoot.getElementById("sk-volv");
-      let v = null;
+      const was = rungs.map((x) => x.classList.contains("on"));
+      const wasTxt = out ? out.textContent : null;
+      const x0 = e.clientX, y0 = e.clientY;
+      let v = null, live = false;
       const set = (ev) => {
         const r = lad.getBoundingClientRect();
         if (!r.width) return;
@@ -792,19 +801,35 @@ class PurdySkyCard extends PurdyShellCard {
         rungs.forEach((x, i) => x.classList.toggle("on", i < Math.round(v / 100 * rungs.length)));
         if (out) out.textContent = v;
       };
-      this._dragging = true;
-      set(e);
-      const mv = (ev) => set(ev);
-      const up = () => {
+      const restore = () => {
+        rungs.forEach((x, i) => x.classList.toggle("on", was[i]));
+        if (out && wasTxt != null) out.textContent = wasTxt;
+      };
+      const end = () => {
         window.removeEventListener("pointermove", mv);
         window.removeEventListener("pointerup", up, true);
-        window.removeEventListener("pointercancel", up, true);
+        window.removeEventListener("pointercancel", cancel, true);
         this._dragging = false;
+      };
+      const mv = (ev) => {
+        if (!live) {
+          const dx = Math.abs(ev.clientX - x0), dy = Math.abs(ev.clientY - y0);
+          if (dy > 8 && dy >= dx) { end(); return; }
+          if (dx <= 8) return;
+          live = true;
+          this._dragging = true;
+        }
+        set(ev);
+      };
+      const up = (ev) => {
+        if (!live) set(ev);
+        end();
         if (v != null) this._hass.callService("media_player", "volume_set", { entity_id: ent, volume_level: v / 100 });
       };
+      const cancel = () => { end(); restore(); };
       window.addEventListener("pointermove", mv);
       window.addEventListener("pointerup", up, true);
-      window.addEventListener("pointercancel", up, true);
+      window.addEventListener("pointercancel", cancel, true);
     }));
   }
 
@@ -845,8 +870,13 @@ class PurdySkyCard extends PurdyShellCard {
         const key = c.dataset.skc;
         const pill = root.querySelector(`.sk-pill[data-skpill="${key}"]`);
         if (!pill) return;
-        const on = c.getBoundingClientRect().bottom < barR.top + 112;
-        if (pill.classList.contains("on") !== on) pill.classList.toggle("on", on);
+        /* A gap between on and off, so a card resting on the line cannot
+           chatter. The pill row no longer moves the cards (it hangs below the
+           bar, out of flow), so this is belt and braces, not the fix. */
+        const was = pill.classList.contains("on");
+        const b = c.getBoundingClientRect().bottom, line = barR.top + 112;
+        const on = was ? b < line + 16 : b < line;
+        if (was !== on) pill.classList.toggle("on", on);
         if (on) any = true;
       });
       if (bar.classList.contains("pilled") !== any) bar.classList.toggle("pilled", any);
@@ -917,10 +947,35 @@ class PurdySkyCard extends PurdyShellCard {
         seen = r.bottom > barR.bottom + 40 && r.top < vh - 150;
       }
       if (mini.classList.contains("np") !== seen) mini.classList.toggle("np", seen);
-      if (y > this._skLastY + 6 && y > 140) mini.classList.add("slim");
-      else if (y < this._skLastY - 6 || y < 80) mini.classList.remove("slim");
+      /* Direction is measured from where it last turned, not frame to frame:
+         a slow scroll moves under 6px a frame and never registered, and any
+         jump the browser made on its own counted as a direction. Each view
+         starts fresh — a restored offset is not a scroll. */
+      if (this._skAnchorView !== view || this._skAnchor == null) {
+        this._skAnchorView = view;
+        this._skAnchor = y;
+        mini.classList.remove("slim");
+      }
+      const slim = mini.classList.contains("slim");
+      if (y < 80) {
+        if (slim) mini.classList.remove("slim");
+        this._skAnchor = y;
+      } else if (!slim) {
+        if (y < this._skAnchor) this._skAnchor = y;
+        else if (y - this._skAnchor > 24 && y > 140) { mini.classList.add("slim"); this._skAnchor = y; }
+      } else {
+        if (y > this._skAnchor) this._skAnchor = y;
+        else if (this._skAnchor - y > 24) { mini.classList.remove("slim"); this._skAnchor = y; }
+      }
     }
-    this._skLastY = y;
+  }
+
+  /* How much of the top of the screen the bar covers: the bar, plus the pill
+     row hanging under it when there is one. */
+  _skCover() {
+    const bar = this.shadowRoot && this.shadowRoot.getElementById("sk-bar");
+    if (!bar || !bar.getBoundingClientRect) return 100;
+    return bar.getBoundingClientRect().height + (bar.classList.contains("pilled") ? 46 : 0);
   }
 
   getCardSize() { return 12; }
