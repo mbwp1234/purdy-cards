@@ -11221,5 +11221,93 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     .every((a) => new RegExp(`data-fx="${a}"`).test(shs)));
 }
 
+
+/* ===========================================================================
+   purdy-sky-card — Skylight: the phone as tabs, light first, a SUBCLASS
+   =========================================================================== */
+{
+  const SK = defined['purdy-sky-card'];
+  const skSrc = fs.readFileSync(new URL('../src/88-sky-core.js', import.meta.url), 'utf8');
+  check('purdy-sky-card defined', !!SK);
+  check('purdy-sky-card registered in customCards', window.customCards.some((c) => c.type === 'purdy-sky-card'));
+  check('sky IS a shell — inherits every section, sheet and handler', SK && SK.prototype instanceof SH);
+  const skCfg = () => {
+    const c = d2Base(); delete c.stage;
+    c.sheets.notifications = { title: 'Notifications', card: { type: 'custom:purdy-notifications-card', entity: 'todo.n' } };
+    return c;
+  };
+  check('sky takes the phone config unchanged', (() => {
+    try { new SK().setConfig(skCfg()); return true; } catch (e) { console.log('    ' + e.message); return false; }
+  })());
+  const sk = new SK();
+  sk.setConfig(skCfg());
+  sk._hass = d2Hass();
+  sk._testNow = new Date(2026, 8, 23, 15, 0).getTime();
+
+  /* Home draws the collapsed sections, and their headers open TABS — never the
+     shell's in-place expand, which has nowhere to expand to here. */
+  const home = sk._skHome([]);
+  check('sky home draws Joel and Climate as cards', /id="sk-c-joel"/.test(home.html) && /id="sk-c-clim"/.test(home.html));
+  check('a Home section header opens its tab', /data-sktab="joel"/.test(home.html) && /data-sktab="climate"/.test(home.html));
+  check('no Home section header uses the shell\'s data-open', !/data-open=/.test(home.html));
+  check('every Home card that folds has a pill', (home.html.match(/data-pill="/g) || []).length ===
+    (home.pills.match(/data-skpill="/g) || []).length);
+  check('the render context is cleared after Home', sk._skCtx === null);
+
+  /* A page names the section in its title, so the section header keeps only its chip. */
+  const joel = sk._skJoel();
+  check('the Joel page draws the section OPEN', /class="ps-sect open"/.test(joel));
+  check('a page header carries no expand door', !/data-open=/.test(joel) && !/data-sktab="joel"/.test(joel));
+
+  /* Every destination the phone dock had is still reachable (orphan rule). */
+  const house = sk._skHouse();
+  check('House carries the lights and the crew', /id="sk-c-lights"/.test(house) && /id="sk-c-crew"/.test(house));
+  check('the crew panel is the shell\'s, opened (map, tonight, deep clean live there)', /_crewBody\(crew, \{ vac: true \}\)/.test(skSrc));
+  check('the notification log is reachable from House and the bell', /data-sheet="notifications"/.test(house) &&
+    /want = faults\.length \? "alerts" : notes \? "notifications"/.test(skSrc));
+  check('the server pages are reachable from a Home tile', /data-skmode="systems"/.test(skSrc) &&
+    /this\._renderSystems\(faults\)/.test(skSrc));
+  check('now-playing rows open the Media tab', /data-sktab="media"/.test(sk._playTarget('listen')) &&
+    /data-face="watch"/.test(sk._playTarget('watch')));
+
+  /* Zero vs missing, at the new surface: a vacuum with no battery reading is
+     a dash, never 0%. */
+  check('a tile with no reading draws the missing state, not a zero', (() => {
+    const t = sk._skTiles();
+    return /ps-nodata/.test(t) && !/<b>0<\/b><small>%/.test(t);
+  })());
+
+  /* The dark vocabulary is rewritten for paper, in the sheet and in markup. */
+  check('the sky stylesheet is the shell\'s, rewritten, with no white-alpha left in that part', (() => {
+    const shellPart = SH.styles.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, 'rgba(var(--sk-fg),');
+    return SK.styles.indexOf(shellPart) === 0 && !/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/.test(shellPart);
+  })());
+  check('patched markup routes white-alpha through --sk-fg',
+    sk._skInk('<i style="background:rgba(255,255,255,.1)"></i>') === '<i style="background:rgba(var(--sk-fg),.1)"></i>');
+  check('the shell\'s own stylesheet is untouched by the rewrite', /rgba\(255,255,255,/.test(SH.styles));
+
+  /* Joel's tab exists only where there is a nursery section. */
+  check('the dock drops a tab whose section is absent', (() => {
+    const c = skCfg(); c.sections = c.sections.filter((x) => x.type !== 'nursery');
+    const s2 = new SK(); s2.setConfig(c); s2._hass = d2Hass();
+    const d = s2._skDock('home');
+    return !/data-sktab="joel"/.test(d) && /data-sktab="climate"/.test(d);
+  })());
+  /* Scroll effects never render: the frame writes styles, never calls _render. */
+  check('the scroll frame never calls _render', (() => {
+    const f = skSrc.slice(skSrc.indexOf('  _skFrame() {'), skSrc.indexOf('  getCardSize() {'));
+    return f.length > 200 && !/this\._render\(/.test(f);
+  })());
+  check('the scroll listener is removed with the same capture flag it was added with',
+    /addEventListener\("scroll", this\._skOnScroll, \{ capture: true, passive: true \}\)/.test(skSrc) &&
+    /removeEventListener\("scroll", this\._skOnScroll, \{ capture: true \}\)/.test(skSrc));
+  check('theme: dark and light pin the palette; auto follows HA', (() => {
+    const a = new SK(); a.setConfig({ ...skCfg(), theme: 'dark' }); a._hass = { themes: { darkMode: false } };
+    const b = new SK(); b.setConfig({ ...skCfg(), theme: 'auto' }); b._hass = { themes: { darkMode: true } };
+    const c = new SK(); c.setConfig({ ...skCfg(), theme: 'light' }); c._hass = { themes: { darkMode: true } };
+    return a._skDark() === true && b._skDark() === true && c._skDark() === false;
+  })());
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);
