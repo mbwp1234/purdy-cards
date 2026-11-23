@@ -11344,6 +11344,73 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const down = ladSrc.slice(0, ladSrc.indexOf('const set ='));
     return !/set\(e\)/.test(ladSrc) && /dy > 8 && dy >= dx/.test(ladSrc) && !/_dragging = true/.test(down);
   });
+  /* ---- light rows: a scroll is not a tap (v1.96.2) -------------------------
+   * "If I go to scroll I immediately misspress a light." The row toggled on
+   * ANY release without a drag, and a drag began at 5px sideways. Driven
+   * through the real handlers on a fake row, so the assertions are about what
+   * the gesture DOES, not what the source says. */
+  const lightRig = () => {
+    const h = {}, rowH = {};
+    const calls = { toggle: 0, bri: 0 };
+    const sh = Object.create(SH.prototype);
+    const row = {
+      dataset: { light: 'light.x', dim: '1' },
+      classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+      addEventListener(t, f) { rowH[t] = f; },
+      getBoundingClientRect: () => ({ left: 0, width: 300, top: 0, height: 60 }),
+      querySelector: () => null, style: { setProperty() {} },
+    };
+    sh.shadowRoot = { addEventListener(t, f) { h[t] = f; }, removeEventListener(t, f) { if (h[t] === f) delete h[t]; } };
+    sh._each = (sel, fn) => { if (sel === '[data-light]') fn(row); };
+    sh._render = () => {};
+    sh._lightToggle = () => { calls.toggle++; };
+    sh._lightSetBri = () => { calls.bri++; };
+    sh._paintLight = () => {};
+    sh._bindLights();
+    const ev = (x, y) => ({ clientX: x, clientY: y, target: { closest: () => null } });
+    return {
+      sh, calls,
+      down: (x, y) => rowH.pointerdown(ev(x, y)),
+      move: (x, y) => h.pointermove && h.pointermove(ev(x, y)),
+      up: (x, y) => h.pointerup && h.pointerup(ev(x, y)),
+    };
+  };
+  check('a still tap on a light row toggles it', () => {
+    const r = lightRig(); r.down(100, 30); r.up(100, 30);
+    return r.calls.toggle === 1 && r.calls.bri === 0;
+  });
+  check('a short vertical scroll that lifts before the browser claims it toggles nothing', () => {
+    const r = lightRig(); r.down(100, 30); r.move(102, 42); r.up(102, 44);
+    return r.calls.toggle === 0 && r.calls.bri === 0;
+  });
+  check('a diagonal scroll never becomes a dim drag', () => {
+    const r = lightRig(); r.down(100, 30); r.move(107, 34); r.move(112, 52); r.move(130, 90); r.up(130, 90);
+    return r.calls.toggle === 0 && r.calls.bri === 0;
+  });
+  check('a touch that stops a coasting page toggles nothing', () => {
+    const r = lightRig(); r.sh._scrollAt = Date.now() - 40; r.down(100, 30); r.up(100, 30);
+    return r.calls.toggle === 0;
+  });
+  check('a page that scrolled under a still finger toggles nothing', () => {
+    const r = lightRig(); r.down(100, 30); r.sh._scrollAt = Date.now() + 5; r.up(100, 30);
+    return r.calls.toggle === 0;
+  });
+  check('a deliberate sideways drag still dims', () => {
+    const r = lightRig(); r.down(100, 30); r.move(120, 32); r.move(160, 33); r.up(160, 33);
+    return r.calls.bri > 0 && r.calls.toggle === 0;
+  });
+  const lightSrc = fs.readFileSync(new URL('../src/76-shell-lights.js', import.meta.url), 'utf8');
+  check('the warmth track sends nothing on pointerdown and lets go of a vertical move', () => {
+    const w = lightSrc.slice(lightSrc.indexOf('this._each("[data-lwarm]"'), lightSrc.indexOf('/* The tree in the sky.'));
+    const down = w.slice(w.indexOf('el.addEventListener("pointerdown"'));
+    return w.length > 200 && !/set\(e\)/.test(down) && /dy > 8 && dy >= dx\) \{ cancel\(\); return; \}/.test(w);
+  });
+  check('the shell hears scrolls from the view and from its own sheets, and unhooks the window', () => {
+    const core = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+    return /shadowRoot\.addEventListener\("scroll", this\._onAnyScroll, \{ capture: true, passive: true \}\)/.test(core) &&
+      /window\.addEventListener\("scroll", this\._onAnyScroll, \{ capture: true, passive: true \}\)/.test(core) &&
+      /window\.removeEventListener\("scroll", this\._onAnyScroll, \{ capture: true \}\)/.test(core);
+  });
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
