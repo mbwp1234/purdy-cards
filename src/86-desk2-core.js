@@ -678,8 +678,8 @@ class PurdyDesk2Card extends PurdyShellCard {
             <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
-          ${band ? `<div class="pd2-reason">${psEsc(this._bandReason(band, cur, reason))}</div>`
-            : reason ? `<div class="pd2-reason">${psEsc(this._reasonText(reason))}</div>` : ""}
+          ${band ? `<div class="pd2-reason">${psEsc(this._bandReason(sec, band, cur, reason))}</div>`
+            : reason ? `<div class="pd2-reason">${psEsc(this._reasonText(reason, th && th.attributes))}</div>` : ""}
           ${band ? this._climateGuard(sec) : ""}
           ${zones ? `<div class="pd2-segs">${zones}</div>` : ""}
           ${sec.schedule || sec.season ? `<div class="pd2-cbtns">
