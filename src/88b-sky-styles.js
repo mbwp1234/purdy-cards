@@ -114,7 +114,7 @@ const SK_STYLES = `
                 padding-top: env(safe-area-inset-top, 0px); }
       .sk-barbg { position: absolute; inset: 0; opacity: var(--solid, 0); background: var(--sk-bar);
                   -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6);
-                  border-bottom: 1px solid var(--sk-edge); transition: opacity .15s linear; }
+                  border-bottom: 1px solid var(--sk-edge); transition: opacity .15s linear, bottom .3s cubic-bezier(.2,.8,.2,1); }
       .sk-barrow { position: relative; height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 18px; }
       .sk-bart { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; opacity: var(--titlep, 0);
                  transform: translateY(calc((1 - var(--titlep, 0)) * 6px));
@@ -131,9 +131,16 @@ const SK_STYLES = `
       .sk-bell.bad i { background: var(--ps-bad); }
       .sk-bell.warn i { background: var(--ps-warn); }
       .sk-bell.log i { background: var(--ps-warn); }
-      .sk-pills { position: relative; display: flex; gap: 6px; padding: 0 14px; height: 0; overflow: hidden; overflow-x: auto; scrollbar-width: none;
-                  transition: height .3s cubic-bezier(.2,.8,.2,1); }
-      .sk-bar.pilled .sk-pills { height: 46px; }
+      /* The pill row hangs BELOW the bar rather than growing it. The bar is
+         sticky, so it is in flow: a bar that grew 46px pushed every card down
+         46px, the card that had just passed under it came back out, its pill
+         went off, the bar shrank — a feedback loop that flickered the pill on
+         every 3px of a slow scroll, and on Chrome scroll anchoring shoved the
+         page 20px at each flip. Out of flow, a pill changes nothing it is
+         measured against. The bar's ground grows down to cover it instead. */
+      .sk-pills { position: absolute; left: 0; right: 0; top: 100%; display: flex; gap: 6px; padding: 0 14px; height: 46px;
+                  overflow: hidden; overflow-x: auto; scrollbar-width: none; }
+      .sk-bar.pilled .sk-barbg { bottom: -46px; }
       .sk-pill { pointer-events: auto; display: inline-flex; align-items: center; gap: 6px; height: 34px; border-radius: 17px;
                  background: var(--sk-card); box-shadow: var(--sk-shadow); font-size: 13px; font-weight: 650; white-space: nowrap;
                  max-width: 0; padding: 0; opacity: 0; transform: translateY(12px) scale(.7);
@@ -310,9 +317,14 @@ const SK_STYLES = `
       .sk-foot::before { content: ""; position: absolute; inset: 0; z-index: -1;
                          background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--sk-bg) 70%, transparent) 55%, var(--sk-bg)); }
       .sk-foot > * { pointer-events: auto; }
-      .sk-mini { transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .25s, margin .35s; }
+      /* Stepping aside is paint only — transform and opacity, never a margin.
+         The foot is sticky and therefore in flow: a -62px margin made the page
+         62px shorter, so at the bottom the browser clamped the scroll, which
+         read as scrolling up, which brought the bar back and lengthened the
+         page again. */
+      .sk-mini { transition: transform .35s cubic-bezier(.2,.8,.2,1), opacity .25s; }
       .sk-mini:empty { display: none; }
-      .sk-mini.slim { transform: translateY(30px) scale(.94); opacity: 0; pointer-events: none; margin-bottom: -62px; }
+      .sk-mini.slim { transform: translateY(30px) scale(.94); opacity: 0; pointer-events: none; }
       .sk-mini .ps-mini { background: var(--sk-dock); border: 1px solid var(--sk-edge); box-shadow: var(--sk-shadow); border-radius: 26px; padding: 7px 8px 7px 7px; }
       .sk-mini .ps-mart { width: 40px; height: 40px; border-radius: 20px; }
       .sk-mini .ps-mb { width: 40px; height: 40px; }
@@ -356,7 +368,7 @@ const SK_STYLES = `
       :host([data-sk-theme="light"]) .pl-t1, :host([data-sk-theme="light"]) .pl-t2, :host([data-sk-theme="light"]) .pl-kv { text-shadow: none; }
       :host([data-sk-theme="light"]) .pl-kv, :host([data-sk-theme="light"]) .pl-row.on .pl-t2 { color: var(--ps-text); }
       :host([data-sk-theme="light"]) .pl-mood.on { background: rgba(217,130,43,.12); border-color: rgba(217,130,43,.36); color: #B5651D; }
-      .sk-mini.np { opacity: 0; pointer-events: none; transform: translateY(20px); margin-bottom: -62px; }
+      .sk-mini.np { opacity: 0; pointer-events: none; transform: translateY(20px); }
 
       /* ===== Skylight components ===== */
       .sk-hd { display: flex; align-items: center; gap: 10px; min-height: 34px; flex-wrap: wrap; }

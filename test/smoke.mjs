@@ -11313,6 +11313,37 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const c = new SK(); c.setConfig({ ...skCfg(), theme: 'light' }); c._hass = { themes: { darkMode: true } };
     return a._skDark() === true && b._skDark() === true && c._skDark() === false;
   })());
+  /* ---- scroll audit (v1.96.1) ---------------------------------------------
+   * Two feedback loops and a phantom volume write, each measured in a real
+   * browser before the fix: the pill row grew the sticky bar and pushed the
+   * card it was reporting back out from under it; the mini bar hid with a
+   * negative margin and so changed the page's length mid-scroll; and a
+   * vertical swipe starting on the ladder sent volume_set on pointercancel. */
+  const skCss = fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8');
+  const cssRule = (sel) => { const m = skCss.match(new RegExp('\\n\\s*' + sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\{([^}]*)\\}')); return m ? m[1] : null; };
+  check('the pill row hangs out of flow, so a pill cannot move the cards it reports', () => {
+    const r = cssRule('.sk-pills');
+    return !!r && /position: absolute/.test(r) && /top: 100%/.test(r);
+  });
+  check('turning the pills on never changes an in-flow height', () =>
+    !/\.sk-bar\.pilled \.sk-pills \{[^}]*height/.test(skCss) && !/\.sk-bar\.pilled \{[^}]*(height|padding)/.test(skCss));
+  check('the mini bar steps aside with paint only, never a margin', () =>
+    ['.sk-mini', '.sk-mini.slim', '.sk-mini.np'].every((sel) => { const r = cssRule(sel); return r != null && !/margin/.test(r); }));
+  check('a pill has a gap between on and off', () => /was \? b < line \+ \d+ : b < line/.test(skSrc));
+  check('the mini bar measures direction from where it last turned, per view', () => {
+    const f = skSrc.slice(skSrc.indexOf('  _skFrame() {'), skSrc.indexOf('  _skCover() {'));
+    return /this\._skAnchorView !== view/.test(f) && !/_skLastY/.test(skSrc);
+  });
+  const ladSrc = skSrc.slice(skSrc.indexOf('this._each("#sk-ladder"'), skSrc.indexOf('the alive ---'));
+  check('a cancelled ladder gesture sends nothing and puts the rungs back', () => {
+    const m = ladSrc.match(/const cancel = \(\) => \{([^}]*)\}/);
+    return !!m && !/callService/.test(m[1]) && /restore\(\)/.test(m[1]) &&
+      /addEventListener\("pointercancel", cancel, true\)/.test(ladSrc) && !/"pointercancel", up/.test(ladSrc);
+  });
+  check('the ladder paints nothing on pointerdown — a vertical move lets go', () => {
+    const down = ladSrc.slice(0, ladSrc.indexOf('const set ='));
+    return !/set\(e\)/.test(ladSrc) && /dy > 8 && dy >= dx/.test(ladSrc) && !/_dragging = true/.test(down);
+  });
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
