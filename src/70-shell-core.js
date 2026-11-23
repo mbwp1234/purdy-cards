@@ -229,6 +229,19 @@ class PurdyShellCard extends PcBaseCard {
    * looking frozen while still accepting taps.
    */
   connectedCallback() {
+    /* When the page last scrolled, for the light rows: a touch that lands
+       while the page is still coasting is the thumb stopping a scroll, not a
+       tap. Window capture hears the view; the shadow root hears a sheet's own
+       scroller, whose scroll events do not leave the shadow tree. */
+    if (!this._onAnyScroll) {
+      this._onAnyScroll = () => { this._scrollAt = Date.now(); };
+      if (this.shadowRoot && this.shadowRoot.addEventListener)
+        this.shadowRoot.addEventListener("scroll", this._onAnyScroll, { capture: true, passive: true });
+    }
+    if (typeof window !== "undefined" && window.addEventListener && !this._scrollHooked) {
+      window.addEventListener("scroll", this._onAnyScroll, { capture: true, passive: true });
+      this._scrollHooked = true;
+    }
     if (!this._config) return;
     if (!this._clock) this._clock = setInterval(() => this._render(), 30000);
     if (this._hass && !this._historyTimer) this._start();
@@ -241,6 +254,10 @@ class PurdyShellCard extends PcBaseCard {
   }
 
   disconnectedCallback() {
+    if (this._scrollHooked && typeof window !== "undefined" && window.removeEventListener) {
+      window.removeEventListener("scroll", this._onAnyScroll, { capture: true });
+      this._scrollHooked = false;
+    }
     if (this._clock) clearInterval(this._clock);
     if (this._historyTimer) clearInterval(this._historyTimer);
     if (this._eventTimer) clearInterval(this._eventTimer);

@@ -597,7 +597,7 @@ Object.assign(PurdyShellCard.prototype, {
    */
   _bindLights() {
     this._each("[data-light]", (el) => {
-      let hold = null, moved = false, x0 = 0, id = null;
+      let hold = null, moved = false, x0 = 0, y0 = 0, id = null, wander = false, scroll0 = 0;
       /* The brightness step this drag last ticked at. Null between gestures,
          so the first sample of a new drag sets a baseline instead of firing
          for the distance between two unrelated touches. */
@@ -625,7 +625,16 @@ Object.assign(PurdyShellCard.prototype, {
       const onMove = (ev) => {
         if (!id) return;
         if (!moved) {
-          if (Math.abs(ev.clientX - x0) < 5) return;
+          /* The gesture has to say what it is before the row acts on it. A
+             drag started at 5px sideways, which the first instant of almost
+             every real scroll covers — so a scroll that began on a row sent a
+             brightness change before the browser could cancel it. Now a
+             vertical lead lets go of the row outright (it is the page's), and
+             a drag needs 10px that is clearly more sideways than down. */
+          const dx = Math.abs(ev.clientX - x0), dy = Math.abs(ev.clientY - y0);
+          if (dx > 8 || dy > 8) wander = true;
+          if (dy > 8 && dy >= dx) { finish(); id = null; return; }
+          if (dx < 10 || dx < dy * 1.5) return;
           if (el.dataset.dim !== "1") return;     /* a switch has nothing to drag */
           clearTimeout(hold); hold = null; moved = true;
           el.classList.add("dragging");
@@ -666,9 +675,19 @@ Object.assign(PurdyShellCard.prototype, {
       const onUp = () => {
         const was = id, wasMoved = moved, guard = el.dataset.guard === "1";
         const preview = el.dataset.preview;
-        finish(); id = null; moved = false;
+        const wandered = wander;
+        finish(); id = null; moved = false; wander = false;
         if (!was) return;
         if (!wasMoved) {
+          /* A tap is a touch that stayed put on a page that stayed put. The
+             toggle used to fire on ANY release without a drag: a scroll short
+             enough to lift before the browser claimed it, or a touch that
+             stopped a page still coasting from the last flick, both switched
+             the light. Missing a control must do nothing — so must scrolling. */
+          if (wandered || (this._scrollAt || 0) > scroll0) {
+            this._render();
+            return;
+          }
           /* A guard interposing is a REFUSAL to act, and it must not feel like
              acting. `warning` where the plain tap gets `light`: the difference
              is the whole message, since the thing you asked for has not
@@ -692,7 +711,11 @@ Object.assign(PurdyShellCard.prototype, {
            "I tapped one lamp and they all went off" happened. Missing a
            control should never be the same as pressing a bigger one. */
         if (e.target.closest("[data-lkid],[data-lask],[data-lwarm],.pl-more")) return;
-        id = el.dataset.light; moved = false; x0 = e.clientX; tick.at = null;
+        id = el.dataset.light; moved = false; wander = false; x0 = e.clientX; y0 = e.clientY; tick.at = null;
+        scroll0 = Date.now();
+        /* Touching a page that is still coasting stops it — that touch is a
+           scroll gesture, and it gets no hold either. */
+        if (this._scrollAt && scroll0 - this._scrollAt < 150) { id = null; return; }
         this.shadowRoot.addEventListener("pointermove", onMove);
         this.shadowRoot.addEventListener("pointerup", onUp);
         this.shadowRoot.addEventListener("pointercancel", onCancel);
@@ -767,16 +790,33 @@ Object.assign(PurdyShellCard.prototype, {
         this._lightSetKelvin(id, k);   /* records the optimistic value now */
         this._paintWarm(el, id, k);    /* ...which this then draws from */
       };
-      let warming = false;
-      const mv = (e) => { if (warming) set(e); };
+      /* Same contract as the row and the ladder: nothing is sent until the
+         gesture has said what it is. It used to set the warmth on pointerdown,
+         so a scroll that began on the track recoloured the lamp. */
+      let warming = false, live = false, x0 = 0, y0 = 0, t0 = 0;
+      const mv = (e) => {
+        if (!warming) return;
+        if (!live) {
+          const dx = Math.abs(e.clientX - x0), dy = Math.abs(e.clientY - y0);
+          if (dy > 8 && dy >= dx) { cancel(); return; }
+          if (dx < 8) return;
+          live = true; this._dragging = true;
+        }
+        set(e);
+      };
       const stop = () => {
-        warming = false; this._dragging = false;
+        warming = false; live = false; this._dragging = false;
         this.shadowRoot.removeEventListener("pointermove", mv);
         this.shadowRoot.removeEventListener("pointerup", up);
         ["pointercancel", "lostpointercapture"].forEach((ev) =>
           this.shadowRoot.removeEventListener(ev, cancel));
       };
-      const up = () => { stop(); this._render(); };
+      const up = (e) => {
+        const tap = warming && !live && !((this._scrollAt || 0) > t0);
+        stop();
+        if (tap && e) set(e);
+        this._render();
+      };
       /* A gesture that ends any way OTHER than a clean pointerup left
          _dragging stuck true, and _render() is gated on it — so the card
          stopped repainting for good. The brightness read frozen and a tap on
@@ -787,12 +827,11 @@ Object.assign(PurdyShellCard.prototype, {
       el.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
         if (warming) stop();          /* never stack a second gesture's listeners */
-        warming = true; this._dragging = true;
+        warming = true; live = false; x0 = e.clientX; y0 = e.clientY; t0 = Date.now();
         this.shadowRoot.addEventListener("pointermove", mv);
         this.shadowRoot.addEventListener("pointerup", up);
         ["pointercancel", "lostpointercapture"].forEach((ev) =>
           this.shadowRoot.addEventListener(ev, cancel));
-        set(e);
       });
     });
   },
