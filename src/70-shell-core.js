@@ -1604,6 +1604,26 @@ class PurdyShellCard extends PcBaseCard {
       });
     });
 
+    /* Plan: one tap, optimistic for 12s like the goal — GTTC answers on its
+       next refresh, and a row that does not move on the tap reads as broken. */
+    this._each("[data-plan]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sec = this._config.sections.find((s) => s.type === "climate");
+        if (!sec) return;
+        const id = sec.goal || sec.thermostat;
+        const mode = el.dataset.plan;
+        if (this._planOpts(sec).cur === mode) return;
+        pcHaptic("medium");
+        this._planOpt = { mode, until: Date.now() + 12000 };
+        this._hass.callService("climate", "set_preset_mode", { entity_id: id, preset_mode: mode });
+        /* The schedule sheet's idea of the running plan comes from
+           get_schedule, which does not refresh itself. */
+        setTimeout(() => this._fetchSchedule(), 1500);
+        this._render();
+      });
+    });
+
     this._each("[data-zone]", (el) => {
       el.addEventListener("click", (e) => {
         e.stopPropagation();

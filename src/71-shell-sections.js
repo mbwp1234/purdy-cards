@@ -341,10 +341,16 @@ Object.assign(PurdyShellCard.prototype, {
      under the temperature — "Schedule" reads as a stray link rather than a
      status, where "Manual override" happened to read as a sentence. Say what
      the known reasons mean and fall back to humanising the rest. */
-  _reasonText(raw) {
+  _reasonText(raw, attrs) {
+    const a = attrs || {};
     const known = {
       schedule: "Following the schedule",
       manual_override: "Manual override — holding this goal",
+      physical_override: "Set at the thermostat — holding it",
+      vacation: "Vacation setback",
+      heat_pump_step: "Easing up to the goal",
+      overheat: a.warm_zone ? `Cooling ${a.warm_zone} — it is overheating` : "Cooling an overheated floor",
+      warm_zone: a.warm_zone ? `Cooling ${a.warm_zone} — it is running warm` : "Cooling a warm floor",
       window_open: "Paused — a window is open",
       away: "Away setback",
       preset: "Set by the active preset",
@@ -602,19 +608,13 @@ Object.assign(PurdyShellCard.prototype, {
     return sec.hero_label || "now";
   },
 
-  /* The goal a person set, which is not always the number GTTC is sending.
-     During fan pre-cool GTTC raises the setpoint at the wall so the fan runs
-     before the compressor, and publishes THAT as climate.gttc's temperature:
-     the phone said "72° goal" while the schedule asked for 70°, and + from
-     there set a 73° hold. The schedule's own effective_temp is the goal. */
+  /* The goal a person set. Fan pre-cool, which once inflated the published
+     setpoint above the schedule's, was removed from GTTC in 2.9.0, so the
+     published temperature is the goal again. Kept as the one place that
+     answers the question, in case GTTC ever splits the two again. */
   _climGoalReal(th) {
     if (!th) return null;
-    const a = th.attributes || {};
-    const e = a.current_schedule_entry;
-    if (a.hvac_action_reason === "fan_precool" && !a.override_active && e && e.effective_temp != null) {
-      return Number(e.effective_temp);
-    }
-    return a.temperature;
+    return (th.attributes || {}).temperature;
   },
 
   /* Which room sensors GTTC is reading for the goal right now — the active
@@ -632,9 +632,6 @@ Object.assign(PurdyShellCard.prototype, {
     /* Reads the optimistic setpoint while one is in flight, so the number
        moves on the tap instead of five seconds later. */
     const goal = this._optGoal(sec.goal || sec.thermostat, this._climGoalReal(th));
-    const wall = th && th.attributes.temperature;
-    const precoolWall = th && th.attributes.hvac_action_reason === "fan_precool" && wall != null &&
-      goal != null && Math.abs(Number(wall) - goal) >= 0.5 ? Number(wall) : null;
     const band = this._climateBand(sec);
     const action = (th && th.attributes.hvac_action) || (th && th.state) || "idle";
     const reason = th && th.attributes.hvac_action_reason;
@@ -709,6 +706,11 @@ Object.assign(PurdyShellCard.prototype, {
     const chips = this._climateChips(sec, { noPreset: !!sec.schedule });
     const zoneNm = th && th.attributes.active_zone;
     const seasonSw = sec.season ? this._seasonHtml(sec) : "";
+    const planSw = this._planHtml(sec);
+    /* The hold bar says a hold is on, who set it and for how long; an
+       override reason under the goal would say the first two again. */
+    const holdBar = this._holdHtml(sec);
+    const sayReason = reason && !(holdBar && /^(manual|physical)_override$/i.test(String(reason)));
 
     const wave = this._waveSvg(sec);
     const inNow = pcNum(h, (sec.graph || {}).inside);
@@ -743,17 +745,17 @@ Object.assign(PurdyShellCard.prototype, {
             <button class="ps-step" type="button" data-step="1" aria-label="Raise goal">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M12 5v14M5 12h14"/></svg></button>
           </div>
-          ${band ? `<div class="ps-reason">${psEsc(this._bandReason(band, cur, reason))}</div>`
-            : reason ? `<div class="ps-reason">${psEsc(this._reasonText(reason))}${
-              precoolWall != null ? ` \u00B7 wall set to ${psEsc(pcDeg(precoolWall))}\u00B0 while the fan runs` : ""}</div>` : ""}
+          ${band ? `<div class="ps-reason">${psEsc(this._bandReason(sec, band, cur, reason))}</div>`
+            : sayReason ? `<div class="ps-reason">${psEsc(this._reasonText(reason, th.attributes))}</div>` : ""}
         </div>
       </div>
       ${guard}
       <div class="ps-zpair">${zones}${outside}</div>
-      ${this._holdHtml(sec)}
+      ${holdBar}
       <div class="ps-xtra">
         ${sec.schedule ? this._schedStripHtml(sec) : ""}
         ${seasonSw ? `<div class="ps-btns ps-szrow"><span class="ps-lbl">Season</span>${seasonSw}</div>` : ""}
+        ${planSw ? `<div class="ps-btns ps-szrow"><span class="ps-lbl">Plan</span>${planSw}</div>` : ""}
         <div class="ps-rmlist">${rooms}</div>
         ${anyWatched ? `<div class="ps-wzkey"><i class="ps-wz"></i>Counts toward the goal${
           zoneNm ? ` \u00B7 ${psEsc(zoneNm)}` : ""}</div>` : ""}
@@ -979,10 +981,11 @@ Object.assign(PurdyShellCard.prototype, {
   /* What the band is doing, in the one line under it. A comparison when the
      house is outside it (arithmetic you would otherwise do), the rule when it
      is inside — never the band's own numbers again. */
-  _bandReason(band, cur, reason) {
+  _bandReason(sec, band, cur, reason) {
     const r = String(reason || "").toLowerCase();
-    if (r === "cool_lockout") return this._reasonText(r);
-    if (r && r !== "schedule" && r !== "fallback" && r !== "precondition") return this._reasonText(reason);
+    const a = (this._hass.states[sec.goal || sec.thermostat] || {}).attributes;
+    if (r === "cool_lockout") return this._reasonText(r, a);
+    if (r && r !== "schedule" && r !== "fallback") return this._reasonText(reason, a);
     if (cur != null && cur > band[1] + 0.2) return `${(cur - band[1]).toFixed(1)}° above the band`;
     if (cur != null && cur < band[0] - 0.2) return `${(band[0] - cur).toFixed(1)}° below the band`;
     return "Heat below " + Math.round(band[0]) + " · cool above " + Math.round(band[1]);
@@ -998,6 +1001,38 @@ Object.assign(PurdyShellCard.prototype, {
       No AC${ot == null ? "" : ` · ${Math.round(ot)}° outside`}</div>`;
   },
 
+  /* Which plan GTTC runs. Nothing switches plans automatically in this
+     install, so this row is the only way to put the house on Away or Sleep
+     without opening the GTTC panel. The choices come from climate.gttc's own
+     preset_modes — a plan GTTC does not offer is never drawn — and the row
+     is dropped when the entity publishes none, rather than drawing a guess.
+     A plan change is reversible and harmless (no AC in January), so it is a
+     single tap, unlike the season. */
+  _planOpts(sec) {
+    const th = this._hass.states[sec.goal || sec.thermostat];
+    const a = (th && th.attributes) || {};
+    const list = (a.preset_modes || []).filter((m) => m && m !== "None" && m !== "none");
+    return { list, cur: this._planOpt && this._planOpt.until > Date.now() ? this._planOpt.mode : a.preset_mode };
+  },
+
+  _planShort(mode) {
+    /* "Home All Day" is GTTC's label; three of them do not fit a row, and a
+       truncated label is a missing one. The first word names the plan. */
+    return String(mode).split(/\s+/)[0];
+  },
+
+  _planHtml(sec) {
+    if (!sec.schedule || sec.plans === false) return "";
+    const { list, cur } = this._planOpts(sec);
+    if (list.length < 2) return "";
+    const btn = (m) => {
+      const on = m === cur;
+      return `<button class="ps-sbtn plan ${on ? "on" : ""}" type="button" data-plan="${psEsc(m)}"
+        aria-pressed="${on}">${psEsc(this._planShort(m))}</button>`;
+    };
+    return `<div class="ps-season${list.length === 3 ? " three" : ""}" role="group" aria-label="Plan">${list.map(btn).join("")}</div>`;
+  },
+
   _holdHtml(sec) {
     const hold = sec.hold;
     if (!hold || !hold.remaining) return "";
@@ -1005,10 +1040,15 @@ Object.assign(PurdyShellCard.prototype, {
     const mins = parseFloat(raw);
     if (!Number.isFinite(mins) || mins <= 0) return "";
     const armed = this._armed === "hold";
+    /* A hold set at the wall and one set here behave the same and are
+       cancelled the same way — but only one of them is something you did on
+       this screen, so the line says which. */
+    const th = this._hass.states[sec.goal || sec.thermostat];
+    const wallHold = !!(th && th.attributes && th.attributes.override_source === "physical");
     return `<button class="ps-hold ${armed ? "armed" : ""}" type="button" data-arm="hold">
         <svg viewBox="0 0 24 24" class="ps-ico"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
         <span class="ps-grow">${armed ? "Tap again to cancel the hold"
-          : `Hold active \u00B7 ${psDur(mins)} left`}</span>
+          : `${wallHold ? "Thermostat hold" : "Hold active"} \u00B7 ${psDur(mins)} left`}</span>
         <span class="ps-holdx">${armed ? "Cancel" : "\u00D7"}</span>
       </button>`;
   },

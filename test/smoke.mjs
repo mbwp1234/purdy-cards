@@ -3578,7 +3578,7 @@ check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtm
       chips: [{ name: 'Running:', source: 'schedule_preset' }] }] });
     x._hass = { states: {
       'climate.g': { state: 'cool', attributes: { temperature: 72, current_temperature: 72, season: 'cooling',
-        hvac_action: 'cooling', hvac_action_reason: 'fan_precool', hvac_modes: ['off','heat','cool','heat_cool'],
+        hvac_action: 'cooling', hvac_action_reason: 'schedule', hvac_modes: ['off','heat','cool','heat_cool'],
         heat_cool_min_gap: 3, active_zone: '2nd Floor',
         zone_details: { z2: { name: '2nd Floor', current_temp: 72, temp_sensors: ['sensor.bed_a', 'sensor.joel'] },
                         z1: { name: '1st floor', current_temp: 71.6, temp_sensors: ['sensor.liv_x'] } },
@@ -3649,15 +3649,42 @@ check('schedule editing can be turned off', !/data-sedit/.test(shs2._scheduleHtm
   check('one number is written as both heat and cool', ups.every((m) => m.target_temp === 69 && m.cooling_temp === 69));
   check('the room is carried through', ups.every((m) => m.zone_id === 'z2'));
 
-  /* The goal during fan pre-cool is the schedule's, not the raised wall setpoint. */
+  /* Fan pre-cool left GTTC in 2.9.0: the published setpoint is the goal. */
   const y = mk();
   const ch = y._secClimate(y._config.sections[0]);
-  check('during fan pre-cool the goal is the schedule number', /<div class="ps-goal"><b>70°<\/b>/.test(ch));
-  check('…and the raised wall setpoint is said, not hidden', /wall set to 72° while the fan runs/.test(ch));
-  check('the stepper starts from that goal', y._climGoalReal(y._hass.states['climate.g']) === 70);
-  y._hass.states['climate.g'].attributes.override_active = true;
-  check('a hold is the goal as set, precool or not', y._climGoalReal(y._hass.states['climate.g']) === 72);
-  y._hass.states['climate.g'].attributes.override_active = false;
+  check('the goal is the published setpoint', /<div class="ps-goal"><b>72°<\/b>/.test(ch) && y._climGoalReal(y._hass.states['climate.g']) === 72);
+  check('no pre-cool wall line survives', !/while the fan runs/.test(ch) && !/fan_precool/.test(fs.readFileSync(new URL('../src/71-shell-sections.js', import.meta.url),'utf8')));
+  check('a reason GTTC 2.9 added is said as a sentence', y._reasonText('heat_pump_step') === 'Easing up to the goal' && y._reasonText('physical_override') === 'Set at the thermostat — holding it');
+  check('the warm zone is named when GTTC names it', y._reasonText('warm_zone', { warm_zone: '1st floor' }) === 'Cooling 1st floor — it is running warm');
+  check('the gap warning no longer promises a base list', !/falls back to its base list/.test(fs.readFileSync(new URL('../src/72-shell-schedule.js', import.meta.url),'utf8')));
+  {
+    const ys = y._hass.states['climate.g'].attributes;
+    const keep = { pm: ys.preset_modes, p: ys.preset_mode };
+    ys.preset_modes = ['Home All Day', 'Away', 'Sleep', 'None'];
+    ys.preset_mode = 'Home All Day';
+    const pr = y._planHtml(y._config.sections[0]);
+    check('the plan row offers each plan GTTC lists, without None', (pr.match(/data-plan=/g) || []).length === 3 && !/data-plan="None"/.test(pr));
+    check('the plan running is the one pressed', /data-plan="Home All Day"\s+aria-pressed="true"/.test(pr));
+    check('a plan label is shortened to a word, never truncated', />Home<\/button>/.test(pr) && !/All Day</.test(pr));
+    check('the plan row sits in the expanded climate section', /<span class="ps-lbl">Plan<\/span>/.test(y._secClimate(y._config.sections[0])));
+    check('with the Plan row drawn, the strip does not name the plan too', !/Home All Day/.test(y._schedStripHtml(y._config.sections[0])));
+    ys.preset_modes = ['None'];
+    check('no plans published, no row', y._planHtml(y._config.sections[0]) === '');
+    ys.preset_modes = keep.pm; ys.preset_mode = keep.p;
+    {
+      const hs = { ...y._config.sections[0], hold: { remaining: 'sensor.rem' } };
+      y._hass.states['sensor.rem'] = { state: '95', attributes: {} };
+      ys.override_source = 'physical';
+      check('a hold set at the wall says so', /Thermostat hold/.test(y._holdHtml(hs)));
+      ys.override_source = 'manual';
+      ys.hvac_action_reason = 'physical_override'; ys.override_source = 'physical';
+      check('the hold bar and the reason line do not both say it', !/Set at the thermostat/.test(y._secClimate(hs)) && /Thermostat hold/.test(y._secClimate(hs)));
+      ys.hvac_action_reason = 'schedule'; ys.override_source = 'manual';
+      check('a hold set here does not', /Hold active/.test(y._holdHtml(hs)) && !/Thermostat hold/.test(y._holdHtml(hs)));
+      delete ys.override_source; delete y._hass.states['sensor.rem'];
+    }
+    check('the plan handler is bound', /_each\("\[data-plan\]"/.test(fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url),'utf8')));
+  }
   check('the schedule strip replaces the Schedule button', /class="ps-sstrip"[^>]*data-sheet="schedule"/.test(ch));
   check('the strip names the block, its number and its end', /Overnight 70° until 6:00 AM/.test(ch));
   check('the strip names the plan, so the Running chip is dropped', /Home All Day/.test(ch) && !/Running:/.test(ch));

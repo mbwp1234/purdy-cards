@@ -469,7 +469,9 @@ Object.assign(PurdyShellCard.prototype, {
       l1 = "Nothing scheduled right now";
       l2 = "";
     }
-    if (plan) l2 = l2 ? `${l2} · ${psEsc(plan)}` : psEsc(plan);
+    /* The Plan row below names the plan with its pressed button; saying it
+       here as well would be the strip repeating the control beside it. */
+    if (plan && !this._planHtml(sec)) l2 = l2 ? `${l2} · ${psEsc(plan)}` : psEsc(plan);
     const nowAx = psAx(new Date().getHours() * 60 + new Date().getMinutes());
     const segs = this._schedSegs(blocks).map((g) =>
       `<span class="${g.i === li ? "on" : ""}" style="left:${(g.s / 14.4).toFixed(2)}%;width:${(g.w / 14.4).toFixed(2)}%"></span>`).join("");
@@ -632,7 +634,7 @@ Object.assign(PurdyShellCard.prototype, {
       warns.push(`<div class="ps-swarn"><b>No room set${blocks.every((b) => !b.e.zone_id) ? "" : " on some blocks"}.</b> They keep watching whichever room the previous block picked.</div>`);
     }
     this._schedGaps(blocks).forEach(([s, e]) => {
-      warns.push(`<div class="ps-swarn"><b>Nothing scheduled ${psEsc(psMinsToClock(s))}–${psEsc(psMinsToClock(e))}.</b> GTTC falls back to its base list then.</div>`);
+      warns.push(`<div class="ps-swarn"><b>Nothing scheduled ${psEsc(psMinsToClock(s))}–${psEsc(psMinsToClock(e))}.</b> GTTC keeps the last goal then.</div>`);
     });
 
     const editor = editable && this._schedEdit !== null ? this._schedEditorHtml(blocks) : "";
@@ -663,7 +665,7 @@ Object.assign(PurdyShellCard.prototype, {
         ${editable ? `<div class="ps-btns"><button class="ps-btn" type="button" data-sedit="new">Add a block</button></div>` : ""}
         ${!editable && (sec.schedule || {}).editable !== false ? `<div class="ps-note">Read-only — with ${
           psEsc(planName(this._activePreset()))} pinned, GTTC would write edits there, not to this list.</div>` : ""}
-        ${running !== null && keys.length ? `<div class="ps-note">If a plan leaves a gap, GTTC falls back to its base list.</div>` : ""}`}
+        ${running !== null && keys.length ? `<div class="ps-note">If a plan leaves a gap, GTTC keeps the last goal.</div>` : ""}`}
       </div>`;
   },
 
