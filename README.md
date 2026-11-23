@@ -970,6 +970,38 @@ apps_wrap: true                      # wrap the app tiles instead of a sideways 
 
 Calendar titles lose emoji at their **ends** (an inner emoji is part of what was typed). The climate ring's caption names the **zone** it is reading when the reading matches a configured zone's sensor, and falls back to `hero_label` otherwise. Temperatures are drawn at the precision they were published at.
 
+## `purdy-sky-card` — Skylight, the phone as tabs
+
+The phone's config, drawn as five tabs on a light-first ground. Like the desk, it
+is a subclass of `purdy-shell-card`: every section, sheet, handler and
+derivation is the phone's own, and this card only lays them out.
+
+```yaml
+type: custom:purdy-sky-card
+# …every top-level key the phone card takes (dock: is ignored), plus:
+theme: auto            # auto (follows HA dark mode) | light | dark
+sky:
+  media_face: watch    # which Media face opens: watch | listen
+```
+
+- **Home** opens on a sky keyed to the hour: the measured outside reading,
+  today's low-to-high bar with a live tick, the sun's position, and the raised
+  faults named as chips. Below it the phone's sections draw collapsed, plus the
+  week's forecast and a tile each for lights, vacuum, litter box and server. As
+  it scrolls the sky folds into the top bar and every card you pass leaves a
+  pill in the bar that scrolls back to it.
+- **Joel** and **Climate** are the nursery and climate sections drawn open, so
+  corrections, predictions, the schedule, plans and season are all there.
+- **Media** is Watch (the remote card, hosted) and Listen (the music body,
+  every room's volume, search, presets), with what is playing elsewhere under
+  the remote.
+- **House** carries the lights, the crew panel (map, tonight's mode, deep
+  clean, litter box, washer), a server summary that opens the server pages, and
+  the notification log. The bell opens raised faults, or the log when nothing
+  is raised.
+- Scroll effects listen to the window in the capture phase and write styles
+  directly; they never re-render, so a drag in progress is never interrupted.
+
 ## `purdy-desk2-card` — the desk as a subclass of the shell
 
 The phone's config, drawn for a desk. It is a subclass of `purdy-shell-card`, so

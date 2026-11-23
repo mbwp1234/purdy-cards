@@ -232,6 +232,12 @@ function buildHass(states) {
          driving _page would silently photograph the Systems default. */
       if (P.get("hpage")) { el._hpage = P.get("hpage"); touched = true; }
       if (P.get("open")) { el._open = P.get("open"); touched = true; }
+      /* purdy-sky-card: which tab, which Media face, and which palette. The
+         palette follows HA's dark mode, which the harness does not set, so
+         `theme=` pins it the way `sky=` pins the hour. */
+      if (P.get("tab")) { el._skTab = P.get("tab"); touched = true; }
+      if (P.get("face")) { el._skFace = P.get("face"); touched = true; }
+      if (P.get("theme")) { el._skThemeCfg = P.get("theme"); touched = true; }
       if (P.get("sheet")) { el._sheet = P.get("sheet"); touched = true; }
       /* WHICH person the sheet is showing. The sheet is opened by tapping an
          avatar, and the index that tap carries is the one thing the URL has to

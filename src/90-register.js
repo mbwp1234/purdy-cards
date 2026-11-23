@@ -12,6 +12,7 @@ pcDefine("purdy-music-card", PurdyMusicCard);
 pcDefine("purdy-shell-card", PurdyShellCard);
 pcDefine("purdy-desk-card", PurdyDeskCard);
 pcDefine("purdy-desk2-card", PurdyDesk2Card);
+pcDefine("purdy-sky-card", PurdySkyCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push(
@@ -40,7 +41,8 @@ window.customCards.push(
   { type: "purdy-music-card", name: "Purdy Music Card", description: "Music Assistant now-playing with transport, room switching and playlist presets. Set compact: true for the self-hiding home-screen headline.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-shell-card", name: "Purdy Shell Card", description: "The whole phone view as one element: gradient ground, one glass column of expanding sections, and a fixed dock with a now-playing bar.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
   { type: "purdy-desk-card", name: "Purdy Desk Card", description: "The whole desktop view as one element: one glass sheet on one gradient, a status strip, a stage of panels that expand sideways, and a dock. Same section config as the shell.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
-  { type: "purdy-desk2-card", name: "Purdy Desk 2 Card", description: "The desktop as a subclass of the shell: a rail, a one-line header, a stage of columns (Joel, Climate, Weather, Now playing / Ahead / House) and a right-hand drawer hosting the phone's own sheets. Same config as the shell plus stage:.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
+  { type: "purdy-desk2-card", name: "Purdy Desk 2 Card", description: "The desktop as a subclass of the shell: a rail, a one-line header, a stage of columns (Joel, Climate, Weather, Now playing / Ahead / House) and a right-hand drawer hosting the phone's own sheets. Same config as the shell plus stage:.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" },
+  { type: "purdy-sky-card", name: "Purdy Skylight Card", description: "The phone as five tabs (Home, Joel, Climate, Media, House) on a light-first ground with a sky header that folds into the bar as you scroll. A subclass of the shell: same config, every section and sheet inherited.", preview: false, documentationURL: "https://github.com/mbwp1234/purdy-cards" }
 );
 
 console.info(
