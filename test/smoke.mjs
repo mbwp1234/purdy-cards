@@ -11256,17 +11256,23 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
 
   /* A page names the section in its title, so the section header keeps only its chip. */
   const joel = sk._skJoel();
-  check('the Joel page draws the section OPEN', /class="ps-sect open"/.test(joel));
+  check('the Joel page is the Skylight design: today with predictions, naps raster, hatch', /id="sk-c-jtoday"/.test(joel) && /id="sk-c-naps"/.test(joel) && /_nurseryDayRail\(/.test(fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8')));
   check('a page header carries no expand door', !/data-open=/.test(joel) && !/data-sktab="joel"/.test(joel));
 
   /* Every destination the phone dock had is still reachable (orphan rule). */
   const house = sk._skHouse();
   check('House carries the lights and the crew', /id="sk-c-lights"/.test(house) && /id="sk-c-crew"/.test(house));
-  check('the crew panel is the shell\'s, opened (map, tonight, deep clean live there)', /_crewBody\(crew, \{ vac: true \}\)/.test(skSrc));
+  check('the vacuum card carries the map, dock, tonight and deep clean', (() => {
+    const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
+    const v = pg.slice(pg.indexOf('  _skVacuum(v) {'), pg.indexOf('  _skLitter(l) {'));
+    return /data-sheet="\$\{psEsc\(v\.map_sheet\)\}"/.test(v) && /vacuum\.return_to_base/.test(v) && /this\._crewNightly\(v\)/.test(v) && /this\._crewDeep\(v\)/.test(v) && /this\._crewRooms\(v\)/.test(v);
+  })());
   check('the notification log is reachable from House and the bell', /data-sheet="notifications"/.test(house) &&
     /want = faults\.length \? "alerts" : notes \? "notifications"/.test(skSrc));
-  check('the server pages are reachable from a Home tile', /data-skmode="systems"/.test(skSrc) &&
-    /this\._renderSystems\(faults\)/.test(skSrc));
+  check('the server pages are reachable from a Home tile, with power and parity actions', (() => {
+    const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
+    return /data-skmode="systems"/.test(skSrc) && /this\._skSys\(faults\)/.test(skSrc) && /this\._syPower\(s\)/.test(pg) && /this\._syParity\(s\)/.test(pg);
+  })());
   check('now-playing rows open the Media tab', /data-sktab="media"/.test(sk._playTarget('listen')) &&
     /data-face="watch"/.test(sk._playTarget('watch')));
 

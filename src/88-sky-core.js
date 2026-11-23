@@ -125,12 +125,7 @@ class PurdySkyCard extends PurdyShellCard {
         <section class="sk-view" data-v="climate"><div class="sk-stack" id="sk-climate"></div></section>
         <section class="sk-view" data-v="media"><div class="sk-stack" id="sk-media"></div></section>
         <section class="sk-view" data-v="house"><div class="sk-stack" id="sk-house"></div></section>
-        <section class="sk-view sk-sys" data-v="sys">
-          <button class="sk-back" type="button" data-skback="1"><svg viewBox="0 0 24 24" class="ps-ico"><path d="M15 5l-7 7 7 7"/></svg>House</button>
-          <div class="ps-stat" id="ps-stat"></div>
-          <div class="ps-dockwrap" id="ps-dockwrap"></div>
-          <div class="ps-col" id="ps-col"></div>
-        </section>
+        <section class="sk-view sk-sys" data-v="sys"><div class="sk-stack" id="sk-sys"></div></section>
         <footer class="sk-foot" id="sk-foot"><div class="sk-mini" id="sk-mini"></div><nav class="sk-dock" id="sk-dock" aria-label="Tabs"></nav></footer>
       </div>
       <div id="ps-sheetslot"></div>`;
@@ -293,15 +288,6 @@ class PurdySkyCard extends PurdyShellCard {
     this._patch("sk-dock", this._skDock(view));
     this._patch("sk-mini", view === "media" ? "" : this._miniHtml());
 
-    if (view === "sys") {
-      /* The server pages are the shell's own, written into the same slots. */
-      this._renderSystems(faults);
-      this._patch("sk-pills", "");
-      this._skBind();
-      this._skFrame();
-      return;
-    }
-
     if (view === "home") {
       this._patch("sk-hero", this._skHero(now, faults));
       const home = this._skHome(faults);
@@ -309,7 +295,7 @@ class PurdySkyCard extends PurdyShellCard {
       this._patch("sk-pills", home.pills);
     } else {
       this._patch("sk-pills", "");
-      const html = { joel: () => this._skJoel(), climate: () => this._skClimate(), media: () => this._skMedia(), house: () => this._skHouse() }[view]();
+      const html = { joel: () => this._skJoel(), climate: () => this._skClimate(), media: () => this._skMedia(), house: () => this._skHouse(), sys: () => this._skSys(faults) }[view]();
       this._patch("sk-" + view, html);
     }
 
@@ -473,7 +459,9 @@ class PurdySkyCard extends PurdyShellCard {
 
   _skCard(key, body, pill, extra) {
     if (!body) return "";
-    return `<div class="sk-card ${extra || ""}" id="sk-c-${key}" data-skc="${key}"${pill ? ` data-pill="${psEsc(pill)}"` : ""}>${body}</div>`;
+    const tab = { joel: "joel", clim: "climate" }[key];
+    return `<div class="sk-card ${extra || ""}" id="sk-c-${key}" data-skc="${key}"${pill ? ` data-pill="${psEsc(pill)}"` : ""}${
+      tab && /sk-tap/.test(extra || "") ? ` data-sktab="${tab}" role="button" tabindex="0"` : ""}>${body}</div>`;
   }
 
   _skHome(faults) {
@@ -486,35 +474,24 @@ class PurdySkyCard extends PurdyShellCard {
     };
     this._skCtx = "home";
     try {
-      const np = this._skSec("nowplaying");
-      if (np) {
-        const body = this._secNowplaying(np);
-        const live = this._nowPlaying && this._nowPlaying();
-        push("now", body ? `<div class="ps-sect">${body}</div>` : "",
-          { icon: "mdi:music-note", text: live ? (live.st.attributes.media_title || "Playing") : "Playing", tab: "media", color: "var(--sk-media)" });
-      }
+      const media = this._skMediaHome();
+      const liveNp = this._nowPlaying && this._nowPlaying();
       const jsec = this._skSec("nursery");
       if (jsec) {
-        let m = null;
-        try { m = this._nurseryModel(jsec); } catch (e) { m = null; }
-        const night = m && !m.nightNoData ? psHM(m.nightMins).replace(" ", "") : (m && m.chipTxt) || "Joel";
-        push("joel", `<div class="ps-sect">${this._secNursery(jsec)}</div>`,
-          { icon: "mdi:weather-night", text: night, tab: "joel", color: "var(--ps-deep)" });
+        const N = this._skNurse();
+        const n = N && N.m.nightSession;
+        push("joel", this._skJoelHome(), { icon: "mdi:weather-night", text: n ? psHM(n.asleepMinutes).replace(" ", "") : "Joel", tab: "joel", color: "var(--ps-deep)" }, "sk-pad sk-tap");
       }
-      const csec = this._skSec("climate");
-      if (csec) {
-        /* The same reading the section's ring shows, from the same entity. */
-        const th = this._hass.states[csec.goal] || this._hass.states[csec.thermostat];
-        const cur = th ? th.attributes.current_temperature : null;
-        push("clim", `<div class="ps-sect">${this._secClimate(csec)}</div>`,
-          { icon: "mdi:thermostat", text: cur == null ? "Climate" : `${Number(cur).toFixed(1)}°`, tab: "climate", color: "var(--ps-heat)" });
-      }
+      const C = this._skClim();
+      if (C) push("clim", this._skClimateHome(), { icon: "mdi:thermostat", text: C.cur == null ? "Climate" : `${C.cur.toFixed(1)}°`, tab: "climate", color: "var(--ps-heat)" }, "sk-pad sk-tap");
+      if (media) push("now", media, { icon: "mdi:music-note", text: liveNp ? (liveNp.st.attributes.media_title || "Playing") : "Media", tab: "media", color: "var(--sk-media)" }, "sk-pad");
       const wsec = this._weatherSection();
       if (wsec) {
         const wet = (this._wxFc || []).find((d) => !d.today && d.pop != null && d.pop >= 50);
-        push("week", `<button class="ps-sh" type="button" data-sheet="wx"><span class="ps-nm">This week</span>${this._wxChip(wsec)}${this._door()}</button>
-            <div class="sk-week">${this._wxForecastRail(wsec)}</div>`,
-          { icon: "mdi:weather-partly-rainy", text: wet ? this._wxDow(wet.ts, false) : "Week", sheet: "wx", color: "var(--ps-cool)" }, "sk-pad");
+        push("week", `<div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span><span class="sk-hn">This week</span>${
+            wet ? `<span class="ps-chip cool"><span class="ps-dot"></span>${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(this._wxDow(wet.ts, false))}</span>` : ""}</div>
+            <div class="sk-week" data-sheet="wx" role="button" tabindex="0">${this._skWeekRail()}</div>`,
+          { icon: "mdi:weather-partly-rainy", text: wet ? this._wxDow(wet.ts, false) : "Week", color: "var(--ps-cool)" }, "sk-pad");
       }
       const crew = this._skSec("crew");
       if (crew) {
@@ -612,57 +589,9 @@ class PurdySkyCard extends PurdyShellCard {
 
   /* ------------------------------------------------------------------ pages --- */
 
-  _skPage(title, sub, body) {
-    return `${this._skTitle(title, sub)}${body}`;
-  }
 
-  _skJoel() {
-    const sec = this._skSec("nursery");
-    if (!sec) return this._skTitle("Joel");
-    this._skCtx = "page";
-    try {
-      return this._skPage(this._skTabName("joel"), "",
-        `<div class="sk-card"><div class="ps-sect open">${this._secNursery(sec)}</div></div>`);
-    } finally { this._skCtx = null; }
-  }
 
-  _skClimate() {
-    const sec = this._skSec("climate");
-    if (!sec) return this._skTitle("Climate");
-    this._skCtx = "page";
-    try {
-      return this._skPage(sec.title || "Climate", "",
-        `<div class="sk-card"><div class="ps-sect open">${this._secClimate(sec)}</div></div>`);
-    } finally { this._skCtx = null; }
-  }
 
-  _skMedia() {
-    const face = this._skFaceNow();
-    const live = this._mediaLive ? this._mediaLive() : { tv: false, music: false };
-    const dot = (o) => (o ? `<span class="sk-live"></span>` : "");
-    const seg = `<div class="sk-seg" role="tablist" aria-label="Watch or listen">
-        <button type="button" role="tab" data-skface="watch" aria-selected="${face === "watch"}">${dot(live.tv)}Watch</button>
-        <button type="button" role="tab" data-skface="listen" aria-selected="${face === "listen"}">${dot(live.music)}Listen</button></div>`;
-    if (face === "watch") {
-      const sheets = this._config.sheets || {};
-      const spec = (sheets.media && sheets.media.card) ? sheets.media : sheets.tv;
-      if (!spec || !spec.card) return this._skTitle("Media") + seg + `<div class="sk-card"><div class="ps-nohist">No television is configured.</div></div>`;
-      /* What is playing elsewhere sits under the remote, so Watch never hides
-         the rain sounds in the nursery; a row opens Listen on that room. */
-      const np = this._skSec("nowplaying");
-      let rows = "";
-      if (np && live.music) {
-        this._skCtx = "page";
-        try { rows = this._secNowplaying(np) || ""; } finally { this._skCtx = null; }
-      }
-      return this._skTitle("Media") + seg + `<div class="sk-card sk-remotecard"><div class="ps-host" id="sk-remote"></div></div>`
-        + (rows ? `<div class="sk-card"><div class="ps-sect">${rows}</div></div>` : "");
-    }
-    const sec = (this._config.sections || []).find((x) => x.type === "music");
-    if (!sec) return this._skTitle("Media") + seg + `<div class="sk-card"><div class="ps-nohist">No music section is configured.</div></div>`;
-    return this._skTitle("Media") + seg
-      + `<div class="sk-card sk-musiccard"><div class="sk-musichead"><span class="ps-lbl">Playing on${this._musicTargetName(sec)}</span></div>${this._musicBody(sec)}</div>`;
-  }
 
   /* The remote is a card of its own. Built once and kept: the Watch markup is
      identical between repaints, so the host survives, and when a face switch
@@ -691,35 +620,11 @@ class PurdySkyCard extends PurdyShellCard {
       }
       this._skRemoteEl = el;
     }
+    this._skLighten(this._skRemoteEl);
     this._skRemoteEl.hass = this._hass;
     if (this._skRemoteEl.parentNode !== host) { host.innerHTML = ""; host.appendChild(this._skRemoteEl); }
   }
 
-  _skHouse() {
-    const parts = [this._skTitle("House")];
-    this._skCtx = "page";
-    try {
-      const lsec = this._skSec("lights");
-      if (lsec) {
-        const body = this._secLights(lsec);
-        if (body) parts.push(this._skCard("lights", `<div class="sk-cardh"><span class="sk-ico" style="--c:var(--sk-lamp)"><ha-icon icon="mdi:lightbulb-outline"></ha-icon></span><span>Lights</span></div><div class="ps-sect open sk-flush">${body}</div>`));
-      }
-      const crew = this._skSec("crew");
-      if (crew) {
-        parts.push(this._skCard("crew", `<div class="sk-cardh"><span class="sk-ico" style="--c:var(--ps-good)"><ha-icon icon="mdi:robot-vacuum"></ha-icon></span><span>${psEsc(crew.name || crew.title || "Jeeves")}</span>${this._crewChip(crew)}</div>
-          <div class="ps-sect open sk-flush">${this._crewBody(crew, { vac: true })}</div>`));
-      }
-      const s = this._sysCfg && this._sysCfg();
-      if (s) parts.push(this._skCard("nas", this._skNasCard(s)));
-      if ((this._config.sheets || {}).notifications) {
-        const n = this._logOpenCount();
-        parts.push(`<button class="sk-card sk-rowcard" type="button" data-sheet="notifications">
-            <span class="sk-ico" style="--c:var(--ps-warn)"><ha-icon icon="mdi:bell-outline"></ha-icon></span>
-            <span class="ps-grow"><b>Notifications</b><small>${n ? `${n} unread` : "Everything read"}</small></span>${this._door()}</button>`);
-      }
-    } finally { this._skCtx = null; }
-    return parts.join("");
-  }
 
   /* The server's headline: its own meters and stats from `server:`, so the
      card is config-driven exactly the way the server pages are. */
@@ -756,23 +661,27 @@ class PurdySkyCard extends PurdyShellCard {
     if (!el || !host) return;
     const ours = el.tagName && /^PURDY-NOTIFICATIONS-CARD$/i.test(el.tagName);
     if (host.classList.contains("sk-paper") !== !!ours) host.classList.toggle("sk-paper", !!ours);
-    if (ours && !el._skLit && typeof el._render === "function") {
-      const orig = el._render;
-      el._render = function (...args) {
-        const out = orig.apply(this, args);
-        try {
-          this.shadowRoot.querySelectorAll("style").forEach((st) => {
-            const t = st.textContent;
-            const n = t.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg, 255, 255, 255),");
-            if (n !== t) st.textContent = n;
-          });
-        } catch (e) { /* a style we cannot reach stays as it was */ }
-        return out;
-      };
-      el._skLit = true;
-      el._last = null;
-      el.hass = this._hass;
-    }
+    if (ours && !el._skLit) { this._skLighten(el); el._last = null; el.hass = this._hass; }
+  }
+
+  /* One of our own hosted cards, made to read the light tokens: after each of
+     its renders the white-alpha in its <style> goes through --sk-fg. Styles
+     only, never its markup, so its bindings survive. */
+  _skLighten(el) {
+    if (!el || el._skLit || typeof el._render !== "function") return;
+    const orig = el._render;
+    el._render = function (...args) {
+      const out = orig.apply(this, args);
+      try {
+        this.shadowRoot.querySelectorAll("style").forEach((st) => {
+          const t = st.textContent;
+          const n = t.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg, 255, 255, 255),");
+          if (n !== t) st.textContent = n;
+        });
+      } catch (e) { /* a style we cannot reach stays as it was */ }
+      return out;
+    };
+    el._skLit = true;
   }
 
   /* ---------------------------------------------------------------- binding --- */
@@ -813,8 +722,90 @@ class PurdySkyCard extends PurdyShellCard {
       const off = card.getBoundingClientRect().top - (bar ? bar.getBoundingClientRect().height : 100) - 10;
       if (sc.scrollTo) sc.scrollTo({ top: sc.scrollTop + off, behavior: "smooth" }); else sc.scrollTop += off;
     }));
-    /* The Home "This week" card is a sheet door; the whole card, not just its header. */
-    this._each(".sk-week", (el) => el.addEventListener("click", () => { this._sheet = "wx"; this._render(); }));
+    /* Joel: tap a night in the week to read it above. */
+    this._each("[data-sknight]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._skNight = Number(el.dataset.sknight);
+      this._render();
+      const w = this.shadowRoot.getElementById("sk-nightwrap");
+      const sc = this._skScroller();
+      const bar = this.shadowRoot.getElementById("sk-bar");
+      if (w && sc && w.getBoundingClientRect) {
+        const off = w.getBoundingClientRect().top - (bar ? bar.getBoundingClientRect().height : 60) - 8;
+        if (sc.scrollTo) sc.scrollTo({ top: sc.scrollTop + off, behavior: "smooth" }); else sc.scrollTop += off;
+      }
+    }));
+    /* An event row scrolls itself under the pinned night, which moves the cursor. */
+    this._each("[data-skev]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const hero = this.shadowRoot.getElementById("sk-c-night");
+      const sc = this._skScroller();
+      if (!hero || !sc) return;
+      const off = el.getBoundingClientRect().top - hero.getBoundingClientRect().bottom - 18;
+      if (sc.scrollTo) sc.scrollTo({ top: sc.scrollTop + off, behavior: "smooth" }); else sc.scrollTop += off;
+    }));
+    /* A select's option, straight to select.select_option. */
+    this._each("[data-sksel]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pcHaptic("light");
+      this._hass.callService("select", "select_option", { entity_id: el.dataset.sksel, option: el.dataset.val });
+    }));
+    this._each("[data-sktoggle]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = el.dataset.sktoggle;
+      this._hass.callService(id.split(".")[0], "toggle", { entity_id: id });
+    }));
+    /* Two-tap arm for a press that cannot be taken back; lapses after 5s. */
+    this._each("[data-skarm]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const k = el.dataset.skarm;
+      if (this._skArmed === k) {
+        clearTimeout(this._skArmT); this._skArmed = null;
+        if (el.dataset.skpress) this._hass.callService(el.dataset.skpress.split(".")[0], "press", { entity_id: el.dataset.skpress });
+        this._render();
+        return;
+      }
+      this._skArmed = k;
+      clearTimeout(this._skArmT);
+      this._skArmT = setTimeout(() => { this._skArmed = null; this._render(); }, 5000);
+      this._render();
+    }));
+    /* Server page tabs. */
+    this._each("[data-sksys]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._page = el.dataset.sksys;
+      this._render();
+    }));
+    /* The volume ladder: tap or drag across the rungs. Painted in place while
+       the finger moves (a render would detach the node under it), sent once
+       on release, and the release is bound to the window so it cannot be missed. */
+    this._each("#sk-ladder", (lad) => lad.addEventListener("pointerdown", (e) => {
+      const ent = lad.dataset.entity;
+      if (!ent) return;
+      const rungs = Array.from(lad.querySelectorAll("i"));
+      const out = this.shadowRoot.getElementById("sk-volv");
+      let v = null;
+      const set = (ev) => {
+        const r = lad.getBoundingClientRect();
+        if (!r.width) return;
+        v = Math.round(skClamp((ev.clientX - r.left) / r.width) * 100);
+        rungs.forEach((x, i) => x.classList.toggle("on", i < Math.round(v / 100 * rungs.length)));
+        if (out) out.textContent = v;
+      };
+      this._dragging = true;
+      set(e);
+      const mv = (ev) => set(ev);
+      const up = () => {
+        window.removeEventListener("pointermove", mv);
+        window.removeEventListener("pointerup", up, true);
+        window.removeEventListener("pointercancel", up, true);
+        this._dragging = false;
+        if (v != null) this._hass.callService("media_player", "volume_set", { entity_id: ent, volume_level: v / 100 });
+      };
+      window.addEventListener("pointermove", mv);
+      window.addEventListener("pointerup", up, true);
+      window.addEventListener("pointercancel", up, true);
+    }));
   }
 
   /* --------------------------------------------------------------- the alive --- */
@@ -860,12 +851,52 @@ class PurdySkyCard extends PurdyShellCard {
       });
       if (bar.classList.contains("pilled") !== any) bar.classList.toggle("pilled", any);
     } else {
-      const ttl = root.querySelector(".sk-view.on .sk-ttl, .sk-view.on .ps-stat");
+      const ttl = root.querySelector(".sk-view.on .sk-ttl");
       const tr = ttl ? ttl.getBoundingClientRect() : null;
       const y = tr ? Math.max(0, barR.bottom - tr.top) : 0;
       solid = skClamp(y / 24);
       title = tr ? skClamp((barR.bottom - tr.bottom + 10) / 30) : 1;
       if (bar.classList.contains("pilled")) bar.classList.remove("pilled");
+    }
+    /* Joel: the cursor on the pinned night follows the event row under it. */
+    if (view === "joel") {
+      const box = root.getElementById("sk-bigrail"), cur = root.getElementById("sk-cursor"), hero = root.getElementById("sk-c-night");
+      const rows = Array.from(root.querySelectorAll(".sk-ev"));
+      if (box && cur && hero && rows.length) {
+        const line = hero.getBoundingClientRect().bottom + 40;
+        let act = 0;
+        rows.forEach((r, i) => { if (r.getBoundingClientRect().top <= line) act = i; });
+        rows.forEach((r, i) => { if (r.classList.contains("on") !== (i === act)) r.classList.toggle("on", i === act); });
+        const t = Number(rows[act].dataset.t), T0 = Number(box.dataset.t0), T1 = Number(box.dataset.t1);
+        cur.style.left = (skClamp((t - T0) / (T1 - T0)) * 100).toFixed(2) + "%";
+        const b = cur.querySelector("b");
+        if (b) b.textContent = new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+    }
+    /* Climate: the room row under the pinned chart lights its line. */
+    if (view === "climate") {
+      const chart = root.getElementById("sk-chart"), card = root.getElementById("sk-c-chart");
+      if (chart && card) {
+        const cr = card.getBoundingClientRect();
+        const stuck = cr.top <= barR.bottom + 14;
+        let act = null;
+        if (stuck) root.querySelectorAll(".sk-room").forEach((r) => { if (r.getBoundingClientRect().top <= cr.bottom + 30) act = r.dataset.skroom; });
+        root.querySelectorAll(".sk-room").forEach((r) => { const on = r.dataset.skroom === act; if (r.classList.contains("on") !== on) r.classList.toggle("on", on); });
+        if (act == null) chart.removeAttribute("data-act"); else chart.setAttribute("data-act", act);
+        const t = root.getElementById("sk-chartt"), v = root.getElementById("sk-chartv");
+        const row = act == null ? null : root.querySelector(`.sk-room[data-skroom="${act}"] .nm`);
+        if (t) t.textContent = row ? row.firstChild.textContent.trim() : "Rooms";
+        if (v) v.textContent = act == null ? "24h" : (root.querySelector(`.sk-room[data-skroom="${act}"] .sk-rv`) || {}).textContent || "24h";
+      }
+    }
+    /* Listen: the cover steps back as you scroll past it. */
+    if (view === "media" && !reduce) {
+      const art = root.getElementById("sk-art");
+      if (art) {
+        const r = art.getBoundingClientRect();
+        const q = skClamp((barR.bottom + 40 - r.top) / 320);
+        art.style.transform = `scale(${(1 - q * 0.14).toFixed(3)}) translateY(${(q * 36).toFixed(1)}px)`;
+      }
     }
     bar.style.setProperty("--solid", solid.toFixed(3));
     bar.style.setProperty("--titlep", title.toFixed(3));
