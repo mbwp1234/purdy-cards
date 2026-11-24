@@ -907,6 +907,8 @@ const PS_STYLES = `
       .ps-sbtn.cool.on { background: var(--ps-cool); color: #0f1317; }
       .ps-sbtn.both.on { background: linear-gradient(90deg, var(--ps-heat), var(--ps-cool)); color: #0f1317; }
       .ps-season.three .ps-sbtn { padding: 8px 10px; }
+      .ps-season.four .ps-sbtn { padding: 8px 9px; }
+      .ps-sbtn.off.on { background: color-mix(in srgb, var(--ps-text) 16%, transparent); color: var(--ps-text); }
       .ps-sbtn.plan.on { background: color-mix(in srgb, var(--ps-text) 16%, transparent); color: var(--ps-text); }
       .ps-goal.band b { letter-spacing: -0.01em; }
       .ps-guard { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 7px 10px; border-radius: var(--pc-r-md);

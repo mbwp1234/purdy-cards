@@ -1602,7 +1602,11 @@ class PurdyShellCard extends PcBaseCard {
         if (!sec || !sec.season || !sec.season.entity) return;
         const k = el.dataset.season;
         const opts = this._seasonOpts(sec);
-        if (this._hass.states[sec.season.entity]?.state === opts[k]) return;
+        const tid = sec.goal || sec.thermostat;
+        const isOff = this._hass.states[tid]?.state === "off";
+        /* While off, the season already in force is still a choice — it is
+           how the house comes back on. */
+        if (k === "off" ? isOff : !isOff && this._hass.states[sec.season.entity]?.state === opts[k]) return;
         if (this._seasonArm !== k) {
           pcHaptic("warning");
           this._seasonArm = k;
@@ -1614,9 +1618,23 @@ class PurdyShellCard extends PcBaseCard {
         this._seasonArm = null;
         clearTimeout(this._seasonArmTimer);
         pcHaptic("medium");
-        this._hass.callService("select", "select_option", {
-          entity_id: sec.season.entity, option: opts[k],
-        });
+        if (k === "off") {
+          this._hass.callService("climate", "set_hvac_mode", { entity_id: tid, hvac_mode: "off" });
+          this._render();
+          return;
+        }
+        const pick = this._hass.states[sec.season.entity]?.state !== opts[k]
+          ? Promise.resolve(this._hass.callService("select", "select_option", {
+            entity_id: sec.season.entity, option: opts[k],
+          })) : Promise.resolve();
+        /* From Off, the season change alone leaves the thermostat off — the
+           same two calls the GTTC app makes, in order: GTTC routes a mode
+           that differs from its season into a season change and stops. */
+        if (isOff) {
+          const mode = { heat: "heat", cool: "cool", both: "heat_cool" }[k];
+          pick.then(() => this._hass.callService("climate", "set_hvac_mode", { entity_id: tid, hvac_mode: mode }))
+            .catch(() => {});
+        }
         this._render();
       });
     });

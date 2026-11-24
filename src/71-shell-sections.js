@@ -930,14 +930,24 @@ Object.assign(PurdyShellCard.prototype, {
     const opts = this._seasonOpts(sec);
     const both = this._seasonHasBoth(sec);
     if (st !== opts.heat && st !== opts.cool && !(both && st === opts.both)) return "";
+    /* Off is the THERMOSTAT's mode, not a season — GTTC's select has no Off,
+       and turning the HVAC off keeps the season it will come back in. So the
+       segment is offered only when the climate entity lists "off", and while
+       it is off no season is lit: the house is not heating, whatever the
+       select says. The GTTC app has had this switch from the start. */
+    const tid = sec.goal || sec.thermostat;
+    const ts = this._hass.states[tid];
+    const canOff = !!(ts && ((ts.attributes || {}).hvac_modes || []).indexOf("off") >= 0);
+    const isOff = !!(ts && ts.state === "off");
     const seg = (k, label) => {
-      const on = st === opts[k];
+      const on = k === "off" ? isOff : !isOff && st === opts[k];
       const armed = !on && this._seasonArm === k;
       return `<button class="ps-sbtn ${k} ${on ? "on" : ""} ${armed ? "armed" : ""}" type="button"
         data-season="${k}" aria-pressed="${on}">${armed ? `Tap: ${label}` : label}</button>`;
     };
-    return `<div class="ps-season${both ? " three" : ""}" role="group" aria-label="Season">${seg("heat", "Heat")}${
-      both ? seg("both", "Heat·Cool") : ""}${seg("cool", "Cool")}</div>`;
+    const n = 2 + (both ? 1 : 0) + (canOff ? 1 : 0);
+    return `<div class="ps-season${n === 3 ? " three" : n === 4 ? " four" : ""}" role="group" aria-label="Season">${seg("heat", "Heat")}${
+      both ? seg("both", "Heat·Cool") : ""}${seg("cool", "Cool")}${canOff ? seg("off", "Off") : ""}</div>`;
   },
 
   _seasonRecommendation(sec) {
