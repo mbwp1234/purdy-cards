@@ -11560,6 +11560,19 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       !/data-skpartdone/.test(b1) && /no reset button/.test(b1) &&
       /data-skpart="\$\{i\}"/.test(pgSrc) && /\}, 380\);/.test(skSrc) && /this\._skEatClick = true;/.test(skSrc);
   });
+  check('a scroller inside a shadow tree is listened to directly (scroll is not composed)', () => {
+    const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
+    const added = [], removed = [];
+    const el = { addEventListener: (t, f) => added.push([t, f]), removeEventListener: (t, f) => removed.push([t, f]), isConnected: true };
+    s2._skSc = el;
+    s2._skHook(); s2._skHook();
+    const once = added.length === 1 && added[0][0] === 'scroll' && added[0][1] === s2._skOnElScroll;
+    s2._scrollAt = 0; s2._skOnScroll = () => {}; s2._skOnElScroll();
+    const fed = s2._scrollAt > 0;
+    s2.disconnectedCallback && s2.disconnectedCallback();
+    return once && fed && removed.length === 1 && s2._skHooked === null;
+  });
+  check('the document fallback is not cached for the life of the card', /if \(this\._skScDoc && now - this\._skScDocAt < 1000\) return this\._skScDoc;/.test(skSrc) && !/this\._skSc = \(typeof document/.test(skSrc));
   check('Home\'s Joel tiles never repeat the big number', /n\.longestStretch !== n\.asleepMinutes/.test(pgSrc) && !/Still asleep/.test(pgSrc));
 }
 
