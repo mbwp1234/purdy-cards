@@ -111,6 +111,11 @@ const SK_STYLES = `
       .sk-view { display: none; padding: 0 14px 18px; }
       .sk-view.on { display: block; flex: 1; }
       .sk-view[data-v="home"] { padding: 0 0 18px; }
+      /* A page's title shares the bar's row with the bell rather than starting
+         under it: the row held nothing else, and a 56pt band of empty sky
+         above every title was the "too much space at the top". */
+      .sk-view:not([data-v="home"]) { margin-top: -56px; }
+      .sk-view:not([data-v="home"]) > .sk-stack > .sk-ttl:first-child { padding-right: 56px; min-height: 56px; }
       .sk-stack { display: flex; flex-direction: column; gap: 14px; }
       .sk-homecards { padding: 0 14px; margin-top: -30px; position: relative; z-index: 2; }
 
@@ -230,7 +235,7 @@ const SK_STYLES = `
       .sk-ico { flex: none; width: 32px; height: 32px; border-radius: 11px; display: grid; place-items: center;
                 color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
       .sk-ico ha-icon { --mdc-icon-size: 18px; }
-      .sk-ttl { padding: 18px 4px 6px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+      .sk-ttl { padding: 4px 4px 6px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
       .sk-ttl h1 { margin: 0; font-size: 34px; font-weight: 720; letter-spacing: -.03em; color: var(--ps-text); }
       .sk-week { cursor: pointer; }
       .sk-rowcard { display: flex; align-items: center; gap: 12px; padding: 14px 18px; text-align: left; width: 100%; }

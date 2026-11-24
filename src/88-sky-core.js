@@ -892,9 +892,12 @@ class PurdySkyCard extends PurdyShellCard {
     } else {
       const ttl = root.querySelector(".sk-view.on .sk-ttl");
       const tr = ttl ? ttl.getBoundingClientRect() : null;
-      const y = tr ? Math.max(0, barR.bottom - tr.top) : 0;
+      /* The title rests IN the bar's row, so "under the bar" is measured from
+         that resting place: nothing until it has moved, solid within 24px,
+         the bar's own title in as the big one's foot passes the bar's. */
+      const y = tr ? Math.max(0, barR.top - tr.top) : 0;
       solid = skClamp(y / 24);
-      title = tr ? skClamp((barR.bottom - tr.bottom + 10) / 30) : 1;
+      title = tr ? skClamp((barR.bottom - tr.bottom - 4) / 30) : 1;
       if (bar.classList.contains("pilled")) bar.classList.remove("pilled");
     }
     /* Joel: the cursor on the pinned night follows the event row under it. */
