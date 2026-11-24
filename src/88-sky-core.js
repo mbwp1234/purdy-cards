@@ -116,6 +116,8 @@ class PurdySkyCard extends PurdyShellCard {
       <style>${PurdySkyCard.styles}</style>
       <div class="ps-ground" id="ps-ground"></div>
       <div class="sk" id="sk">
+        <div class="sk-safeprobe" id="sk-safeprobe" style="position:fixed;top:0;left:0;width:0;visibility:hidden;pointer-events:none;height:env(safe-area-inset-top,0px)"></div>
+        <div class="sk-safepad"></div>
         <header class="sk-bar" id="sk-bar">
           <div class="sk-barbg"></div>
           <div class="sk-barrow"><div class="sk-bart" id="sk-bart"></div><div class="sk-barr" id="sk-barr"></div></div>
@@ -252,7 +254,7 @@ class PurdySkyCard extends PurdyShellCard {
         const el = this.shadowRoot.getElementById(o.to);
         const bar = this.shadowRoot.getElementById("sk-bar");
         if (el && el.getBoundingClientRect) {
-          const off = el.getBoundingClientRect().top - (bar ? bar.getBoundingClientRect().height : 60) - 8;
+          const off = el.getBoundingClientRect().top - (bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 60) - 8;
           sc.scrollTop += off;
         }
       } else if (same) {
@@ -732,7 +734,7 @@ class PurdySkyCard extends PurdyShellCard {
       const sc = this._skScroller();
       const bar = this.shadowRoot.getElementById("sk-bar");
       if (w && sc && w.getBoundingClientRect) {
-        const off = w.getBoundingClientRect().top - (bar ? bar.getBoundingClientRect().height : 60) - 8;
+        const off = w.getBoundingClientRect().top - (bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 60) - 8;
         if (sc.scrollTo) sc.scrollTo({ top: sc.scrollTop + off, behavior: "smooth" }); else sc.scrollTop += off;
       }
     }));
@@ -849,14 +851,16 @@ class PurdySkyCard extends PurdyShellCard {
     const sk = root.getElementById("sk");
     if (!bar || !sk || !bar.getBoundingClientRect) return;
     const view = this._skView();
+    this._skSafe(bar);
     const barR = bar.getBoundingClientRect();
+    const ins = this._skIns || 0;
     const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     let solid = 0, title = 0;
     if (view === "home") {
       const hero = root.getElementById("sk-hero");
       const hr = hero ? hero.getBoundingClientRect() : null;
-      const y = hr ? Math.max(0, barR.top - hr.top) : 0;
+      const y = hr ? Math.max(0, barR.top - ins - hr.top) : 0;
       const H = hr ? hr.height : 360;
       solid = skClamp((y - (H - barR.height - 120)) / 80);
       title = skClamp((y - (H - barR.height - 60)) / 60);
@@ -976,11 +980,33 @@ class PurdySkyCard extends PurdyShellCard {
   }
 
   /* How much of the top of the screen the bar covers: the bar, plus the pill
-     row hanging under it when there is one. */
+     row hanging under it when there is one. Its BOTTOM, not its height — the
+     bar is translated down by the inset. */
   _skCover() {
     const bar = this.shadowRoot && this.shadowRoot.getElementById("sk-bar");
     if (!bar || !bar.getBoundingClientRect) return 100;
-    return bar.getBoundingClientRect().height + (bar.classList.contains("pilled") ? 46 : 0);
+    return Math.max(0, bar.getBoundingClientRect().bottom) + (bar.classList.contains("pilled") ? 46 : 0);
+  }
+
+  /* The notch, measured, against what already covers it. Two numbers:
+     - the PAD is static: how much of the notch sits over the card's own top at
+       the top of the page (0 under HA's toolbar, the whole notch in kiosk);
+     - the INSET is live: how far the bar, where it now sits, still reaches up
+       into the notch. 0 while the toolbar is showing, 47 once it has scrolled
+       away. The bar's untransformed top does not depend on the inset, so
+       writing it cannot feed back into the next read. Written only on change. */
+  _skSafe(bar) {
+    const root = this.shadowRoot;
+    const probe = root.getElementById("sk-safeprobe");
+    const safe = probe && probe.getBoundingClientRect ? probe.getBoundingClientRect().height || 0 : 0;
+    const sc = this._skScroller();
+    const hostTop = this.getBoundingClientRect ? this.getBoundingClientRect().top + (sc ? sc.scrollTop || 0 : 0) : 0;
+    const pad = Math.max(0, Math.round(safe - hostTop));
+    const natural = bar.getBoundingClientRect().top - (this._skIns || 0);
+    const ins = Math.max(0, Math.round(safe - natural));
+    if (!this.style || typeof this.style.setProperty !== "function") return;
+    if (pad !== this._skPad) { this._skPad = pad; this.style.setProperty("--sk-safepad", pad + "px"); }
+    if (ins !== this._skIns) { this._skIns = ins; this.style.setProperty("--sk-inset", ins + "px"); }
   }
 
   getCardSize() { return 12; }
