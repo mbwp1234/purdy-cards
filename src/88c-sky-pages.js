@@ -126,17 +126,28 @@ Object.assign(PurdySkyCard.prototype, {
       return `${head}<div class="sk-empty">${m.loaded ? "No night recorded yet" : "Loading the nights…"}</div>`;
     }
     const rail = this._skRail(n, true);
+    /* Each tile carries a fact the big number does not. With no wake-up the
+       longest stretch IS the night, so it gives way to when he went down; a
+       night still running has no "Up" yet, so that tile is not drawn rather
+       than drawn empty. */
+    const longest = n.interventions > 0 && !n.blindMin && n.longestStretch != null && n.longestStretch !== n.asleepMinutes;
+    const tiles = [
+      n.active || !longest ? `<div class="st3"><b>${skClkHtml(n.from)}</b><span>Put down</span></div>` : "",
+      `<div class="st3"><b>${skClkHtml(n.settledAt)}</b><span>Settled</span></div>`,
+      longest ? `<div class="st3"><b>${psHM(n.longestStretch)}</b><span>Longest sleep</span></div>` : "",
+      n.active ? "" : `<div class="st3"><b>${skClkHtml(n.wokeAt || n.to)}</b><span>Up</span></div>`,
+    ].filter(Boolean);
+    /* The status line is the live session's put-down and settle — the tiles
+       above say both when that session is this night. It stays for a live
+       nap, which this card does not otherwise show. */
+    const line = (m.statusL || m.statusR) && !(m.live && m.live.from === n.from);
     return `${head}
       <div class="sk-big"><span class="sk-num">${skHMHtml(n.asleepMinutes)}</span>
         <span class="sk-wk"><ha-icon icon="mdi:door-open"></ha-icon>${n.blindMin ? `${n.interventions}+` : n.interventions}</span>
         <span class="sk-cap2">${n.active ? "tonight" : "last night"}</span></div>
       <div class="sk-railbox">${rail.svg}</div>
-      <div class="sk-st3">
-        <div class="st3"><b>${skClkHtml(n.settledAt)}</b><span>Settled</span></div>
-        <div class="st3"><b>${n.blindMin ? "—" : psHM(n.longestStretch)}</b><span>Longest sleep</span></div>
-        <div class="st3"><b>${n.active ? "—" : skClkHtml(n.wokeAt || n.to)}</b><span>${n.active ? "Still asleep" : "Up"}</span></div>
-      </div>
-      ${m.statusL || m.statusR ? `<div class="sk-line"><span>${psEsc(m.statusL || "")}</span><span>${psEsc(m.statusR || "")}</span></div>` : ""}`;
+      <div class="sk-st3" style="--n:${tiles.length}">${tiles.join("")}</div>
+      ${line ? `<div class="sk-line"><span>${psEsc(m.statusL || "")}</span><span>${psEsc(m.statusR || "")}</span></div>` : ""}`;
   },
 
   _skJoel() {
@@ -155,11 +166,12 @@ Object.assign(PurdySkyCard.prototype, {
     const dayRail = m.loaded && (m.sessions.length || m.stats.bedMean != null)
       ? this._nurseryDayRail(m.sessions, m.todayKey, m.stats.bedMean, norms) : "";
     const playing = m.playing;
+    const lineDup = !!(pick && m.live && m.live.from === pick.from);
     parts.push(`<div class="sk-card sk-pad" id="sk-c-jtoday">
         <div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-j2)"><ha-icon icon="mdi:white-balance-sunny"></ha-icon></span><span class="sk-hn">Today</span>
           ${m.todayNaps.length ? `<span class="ps-chip lt">${m.todayNaps.length} nap${m.todayNaps.length > 1 ? "s" : ""} · ${psHM(m.napMins)}</span>` : ""}</div>
         ${dayRail ? `<div class="sk-dayrail">${dayRail}</div>` : ""}
-        ${m.statusL || m.statusR ? `<div class="sk-line"><span>${psEsc(m.statusL || "")}</span><span>${psEsc(m.statusR || "")}</span></div>` : ""}
+        ${(m.statusL || m.statusR) && !lineDup ? `<div class="sk-line"><span>${psEsc(m.statusL || "")}</span><span>${psEsc(m.statusR || "")}</span></div>` : ""}
         <div class="sk-btnrow">
           ${sec.hatch ? `<button class="sk-bigbtn ${playing ? "" : "pri"} ${this._armed === "hatch" ? "armed" : ""}" type="button"
               data-arm="${playing ? "hatch" : ""}" data-hatch="${playing ? "" : "start"}">
@@ -201,7 +213,7 @@ Object.assign(PurdySkyCard.prototype, {
             ${avgLen == null ? "" : `<span class="ps-chip">avg ${psHM(Math.round(avgLen))}${avgW == null ? "" : ` · ${avgW.toFixed(1)} wake-ups`}</span>`}</div>
           <div class="sk-wks">${week.map((s) => `<button class="sk-wkrow ${pick && s.from === pick.from ? "sel" : ""}" type="button" data-sknight="${s.from}" aria-pressed="${!!(pick && s.from === pick.from)}">
               <span class="d">${psEsc(skDayName(s.from, true))}</span>${this._skRail(s, false).svg}
-              <span class="w ${s.interventions ? "" : "z"}">${s.interventions ? `<ha-icon icon="mdi:door-open"></ha-icon>${s.blindMin ? s.interventions + "+" : s.interventions}` : `<ha-icon icon="mdi:check"></ha-icon>`}</span>
+              <span class="w ${s.interventions ? "" : "z"}">${s.interventions ? `<ha-icon icon="mdi:door-open"></ha-icon>${s.blindMin ? s.interventions + "+" : s.interventions}` : s.active ? "" : `<ha-icon icon="mdi:check"></ha-icon>`}</span>
               <span class="l">${s.active ? "now" : psHM(s.asleepMinutes)}</span></button>`).join("")}</div>
         </div>`);
     }
@@ -233,7 +245,7 @@ Object.assign(PurdySkyCard.prototype, {
         <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:compare-horizontal"></ha-icon></span><span class="sk-hn">Against his usual</span></div>
         ${row("Put down", psEsc(skClk(n.from)), psEsc(skMinText(put)))}
         ${row("Settled in", `${n.settleMinutes}m`, `${Math.round(set)}m`)}
-        ${row("First wake", (n.events || []).length ? psEsc(skClk(n.events[0])) : "slept through", fw == null ? "—" : psEsc(skMinText(fw)))}
+        ${row("First wake", (n.events || []).length ? psEsc(skClk(n.events[0])) : n.active ? "none yet" : "slept through", fw == null ? "—" : psEsc(skMinText(fw)))}
       </div>`;
   },
 
@@ -289,12 +301,23 @@ Object.assign(PurdySkyCard.prototype, {
               data-arm="${m.playing ? "hatch" : ""}" data-hatch="${m.playing ? "" : "start"}">
               <span class="sk-hplay"><ha-icon icon="${m.playing ? "mdi:pause" : "mdi:play"}"></ha-icon></span>
               <span class="n">${this._armed === "hatch" ? "Stop?" : m.playing ? "Playing" : "Sound"}</span></button>` : ""}
-          ${sec.light ? `<button class="sk-htile lt ${on ? "on" : ""}" type="button" data-sktoggle="${psEsc(sec.light)}"
-              style="${on ? `--g:rgb(${rgb});--b:${bri || 30}` : ""}">
-              <span class="sk-tglow"></span>
-              <span class="sk-hb"><ha-icon icon="mdi:lightbulb-night-outline"></ha-icon>${bri == null ? "" : `<b>${bri}%</b>`}</span>
-              <span class="n">Night light</span></button>` : ""}
+          ${sec.light ? this._skNightLightTile(sec, m, on, bri, rgb) : ""}
         </div></div>`;
+  },
+
+  /* The night light is guarded while he is asleep — the Lights section's
+     `protect:` rule, gated on the same session (the Hatch playing). One tap
+     here used to toggle it outright, the only place in the card the guard
+     did not reach. Asleep, it is a two-tap arm that says what it will do. */
+  _skNightLightTile(sec, m, on, bri, rgb) {
+    const guard = !!m.playing;
+    const armed = guard && this._skArmed === "nl";
+    const act = guard ? `data-skarm="nl" data-sktog="${psEsc(sec.light)}"` : `data-sktoggle="${psEsc(sec.light)}"`;
+    return `<button class="sk-htile lt ${on ? "on" : ""} ${armed ? "armed" : ""}" type="button" ${act}
+        aria-label="Night light${guard ? ", Joel is asleep" : ""}" style="${on ? `--g:rgb(${rgb});--b:${bri || 30}` : ""}">
+        <span class="sk-tglow"></span>
+        <span class="sk-hb"><ha-icon icon="mdi:lightbulb-night-outline"></ha-icon>${bri == null ? "" : `<b>${bri}%</b>`}</span>
+        <span class="n">${armed ? (on ? "Turn it off?" : "Turn it on?") : "Night light"}</span></button>`;
   },
 
   /* ============================================================ CLIMATE === */
@@ -305,7 +328,8 @@ Object.assign(PurdySkyCard.prototype, {
     const h = this._hass;
     const id = sec.goal || sec.thermostat;
     const th = h.states[sec.goal] || h.states[sec.thermostat];
-    const cur = th ? Number(th.attributes.current_temperature) : null;
+    const ct = th ? th.attributes.current_temperature : null;
+    const cur = ct == null || ct === "" ? null : Number(ct);   // Number(null) is 0
     const goal = th ? this._optGoal(id, this._climGoalReal(th)) : null;
     const band = this._climateBand(sec);
     const action = th ? String(th.attributes.hvac_action || "idle") : "";
@@ -375,7 +399,7 @@ Object.assign(PurdySkyCard.prototype, {
   _skClimateHome() {
     const C = this._skClim();
     if (!C) return "";
-    const { sec, cur, goal, band, action, mode, outside, rooms } = C;
+    const { sec, cur, goal, band, action, mode, rooms } = C;
     const vals = rooms.filter((x) => x.t != null).map((x) => x.t);
     const spread = vals.length > 1 ? Math.max(...vals) - Math.min(...vals) : null;
     const goalTxt = band ? `${band[0]}–${band[1]}°` : goal == null ? "—" : `${goal}°`;
@@ -386,8 +410,7 @@ Object.assign(PurdySkyCard.prototype, {
           <div class="sk-dialc"><b>${cur == null ? "—" : cur.toFixed(1) + "°"}</b><span>${psEsc(this._climateSource(sec, cur))}</span></div></div>
         <div class="sk-ctiles">
           <div class="st3"><b class="heat">${psEsc(goalTxt)}</b><span>Goal</span></div>
-          <div class="st3"><b>${outside == null ? "—" : Math.round(outside) + "°"}</b><span>Outside</span></div>
-          <div class="st3 wide"><b>${spread == null ? "—" : spread.toFixed(1) + "°"}</b><span>Spread across rooms</span></div>
+          <div class="st3"><b>${spread == null ? "—" : spread.toFixed(1) + "°"}</b><span>Room spread</span></div>
         </div>
       </div>
       <div class="sk-rooms">${rooms.map((x) => `<div class="sk-crow" style="--c:${x.col}"><span class="sw${x.t == null ? " off" : ""}"></span><span class="nm">${psEsc(x.r.name)}</span>${this._skSpark(x, 72, 22)}${this._skRoomVal(x)}</div>`).join("")}</div>`;
@@ -521,7 +544,14 @@ Object.assign(PurdySkyCard.prototype, {
     }
     if (!rows.length) return "";
     return `<div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-media)"><ha-icon icon="mdi:play-box-outline"></ha-icon></span><span class="sk-hn">${only === "music" ? "Playing elsewhere" : "Media"}</span>
-        ${live.length ? `<span class="ps-chip good"><span class="ps-dot"></span>${live.length} playing</span>` : ""}</div>${rows.join("")}`;
+        ${this._skPlayingChip(live)}</div>${rows.join("")}`;
+  },
+
+  /* Paused is not playing: two paused rooms read "2 paused", not "2 playing". */
+  _skPlayingChip(live) {
+    if (!live.length) return "";
+    const n = live.filter((x) => x.st.state === "playing").length;
+    return n ? `<span class="ps-chip good"><span class="ps-dot"></span>${n} playing</span>` : `<span class="ps-chip">${live.length} paused</span>`;
   },
 
   _skMedia() {
@@ -574,12 +604,13 @@ Object.assign(PurdySkyCard.prototype, {
     }).join("");
     const levels = (sec.players || []).map((p) => {
       const st = h.states[p.entity];
-      const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : 0;
+      /* A player that is off publishes no volume at all — that is not 0. */
+      const pv = st && st.attributes.volume_level != null ? st.attributes.volume_level : null;
       const active = p.entity === target, joined = groupIds.indexOf(p.entity) >= 0;
       return `<div class="ps-vrow ${active ? "on" : ""} ${joined ? "joined" : ""}">
           <button class="ps-vname" type="button" data-pick="${psEsc(p.entity)}" aria-pressed="${active}">${psEsc(p.name)}</button>
-          <input class="ps-vol" type="range" min="0" max="100" step="1" value="${Math.round(pv * 100)}" data-vol="${psEsc(p.entity)}" aria-label="${psEsc(p.name)} volume" />
-          <span class="ps-vnum">${Math.round(pv * 100)}</span>
+          ${pv == null ? `<span class="sk-novol">no volume reported</span>` : `<input class="ps-vol" type="range" min="0" max="100" step="1" value="${Math.round(pv * 100)}" data-vol="${psEsc(p.entity)}" aria-label="${psEsc(p.name)} volume" />`}
+          <span class="ps-vnum">${pv == null ? "—" : Math.round(pv * 100)}</span>
           ${active ? `<span class="ps-jspace"></span>` : `<button class="ps-jb ${joined ? "on" : ""}" type="button" data-join="${psEsc(p.entity)}" aria-pressed="${joined}"
             aria-label="${joined ? "Remove" : "Add"} ${psEsc(p.name)} ${joined ? "from" : "to"} the group"><ha-icon icon="${joined ? "mdi:link-variant-off" : "mdi:plus"}"></ha-icon></button>`}</div>`;
     }).join("");

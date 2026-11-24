@@ -397,7 +397,7 @@ class PurdySkyCard extends PurdyShellCard {
     const chips = this._skFaultChips(faults) + this._skWetChip();
     return `
       <div class="sk-sky sky-${band}"><div class="sk-stars"></div>${this._skSunArc(now)}</div>
-      <div class="sk-heroin" id="sk-heroin">
+      <div class="sk-heroin sky-${band}" id="sk-heroin">
         <div class="sk-htop"><div class="sk-ppl">${this._hdrPeople()}</div></div>
         <div class="sk-greet" id="sk-greet"><div class="sk-hi">${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</div>
           <div class="sk-date">${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div></div>
@@ -491,8 +491,12 @@ class PurdySkyCard extends PurdyShellCard {
       const wsec = this._weatherSection();
       if (wsec) {
         const wet = (this._wxFc || []).find((d) => !d.today && d.pop != null && d.pop >= 50);
+        /* The hero's chip already names the first wet day. This one only adds
+           something when the hero's is TODAY and the week has another. */
+        const heroWet = (this._wxFc || []).find((d) => d.pop != null && d.pop >= 50);
+        const weekChip = wet && heroWet && heroWet.today;
         push("week", `<div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span><span class="sk-hn">This week</span>${
-            wet ? `<span class="ps-chip cool"><span class="ps-dot"></span>${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(this._wxDow(wet.ts, false))}</span>` : ""}</div>
+            weekChip ? `<span class="ps-chip cool"><span class="ps-dot"></span>${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(this._wxDow(wet.ts, false))}</span>` : ""}</div>
             <div class="sk-week" data-sheet="wx" role="button" tabindex="0">${this._skWeekRail()}</div>`,
           { icon: "mdi:weather-partly-rainy", text: wet ? this._wxDow(wet.ts, false) : "Week", color: "var(--ps-cool)" }, "sk-pad");
       }
@@ -504,7 +508,7 @@ class PurdySkyCard extends PurdyShellCard {
       const tiles = this._skTiles();
       if (tiles) {
         const lsec = this._skSec("lights");
-        const on = lsec ? this._lightList(lsec).filter((l) => l.on).length : 0;
+        const on = lsec ? this._lightList(lsec).filter((l) => l.on && !l.cfg.protect && !l.gone).length : 0;
         out.push(`<div class="sk-tiles" id="sk-c-tiles" data-skc="tiles" data-pill="mdi:lightbulb-outline|${on} on|house|var(--sk-lamp)">${tiles}</div>`);
         pills.push({ key: "tiles", icon: "mdi:lightbulb-outline", text: `${on} on`, tab: "house", color: "var(--sk-lamp)" });
       }
@@ -523,7 +527,10 @@ class PurdySkyCard extends PurdyShellCard {
     const lsec = this._skSec("lights");
     if (lsec) {
       const ls = this._lightList(lsec);
-      const lit = ls.filter((l) => l.on);
+      /* Counted the way the Lights chip counts — a guarded light (the night
+         light) and a lamp that is gone are not "on" — so the tile and the
+         House tab cannot say 3 and 2 about the same rooms. */
+      const lit = ls.filter((l) => l.on && !l.cfg.protect && !l.gone);
       const glow = lit.slice(0, 3).map((l, i) => {
         const rgb = skKelvin(l.kelvin || 2700);
         const at = ["18% 82%", "86% 18%", "60% 60%"][i];
@@ -553,14 +560,13 @@ class PurdySkyCard extends PurdyShellCard {
             ring == null ? "" : `<circle cx="22" cy="22" r="${R}" class="fl" stroke-dasharray="${(C * skClamp(ring / 100)).toFixed(1)} ${C.toFixed(1)}"/>`}</svg>
             <ha-icon icon="mdi:robot-vacuum"></ha-icon></span>${worn.length ? `<span class="sk-warn" title="${psEsc(worn[0].label)} ${Math.round(worn[0].v)}%"></span>` : ""}</span>
           <span class="sk-tv">${running && prog != null ? `<b>${Math.round(prog)}</b><small>%</small>` : bat == null ? `<b class="ps-nodata">—</b>` : `<b>${Math.round(bat)}</b><small>%</small>`}</span>
-          <span class="sk-tl">${psEsc(v.name || "Vacuum")} · ${psEsc(running ? (state === "returning" ? "returning" : "cleaning") : this._humanize(state))}${
-            worn.length ? ` · ${psEsc(worn[0].label.toLowerCase())} ${Math.round(worn[0].v)}%` : ""}</span></button>`);
+          <span class="sk-tl">${psEsc(v.name || "Vacuum")} · ${psEsc(running ? (state === "returning" ? "returning" : "cleaning") : this._humanize(state))}</span></button>`);
     }
     const l = crew && crew.litter;
     if (l && (l.waste_drawer || l.litter_level)) {
       const dr = pcNum(h, l.waste_drawer), lv = pcNum(h, l.litter_level);
       const bar = (x, cls) => `<span class="sk-tank ${cls}${x == null ? " none" : ""}"><i style="height:${x == null ? 0 : skClamp(x / 100) * 100}%"></i></span>`;
-      tiles.push(`<button class="sk-tile" type="button" data-sktab="house" data-skto="sk-c-crew" aria-label="${psEsc(l.name || "Litter box")}, drawer ${dr == null ? "no reading" : Math.round(dr) + "%"}">
+      tiles.push(`<button class="sk-tile" type="button" data-sktab="house" data-skto="sk-c-litter" aria-label="${psEsc(l.name || "Litter box")}, drawer ${dr == null ? "no reading" : Math.round(dr) + "%"}">
           <span class="sk-trow"><span class="sk-tanks">${bar(dr, "dr")}${bar(lv, "lv")}</span><span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span></span>
           <span class="sk-tv">${dr == null ? `<b class="ps-nodata">—</b>` : `<b>${Math.round(dr)}</b><small>%</small>`}</span>
           <span class="sk-tl">Drawer${lv == null ? "" : ` · litter ${Math.round(lv)}%`}</span></button>`);
@@ -581,8 +587,11 @@ class PurdySkyCard extends PurdyShellCard {
     const w = crew && crew.washer;
     if (w && w.entity) {
       const ws = String(pcState(h, w.entity) || "").toLowerCase();
-      if (ws && !/^(off|idle|empty|unknown|unavailable|none)$/.test(ws)) {
-        tiles.push(`<button class="sk-tile wide" type="button" data-sktab="house" data-skto="sk-c-crew">
+      /* A finished load is already raised twice — the hero's fault chip and
+         the crew row that says "has finished" — so the tile carries a RUNNING
+         washer only, the one state nothing else on Home shows. */
+      if (ws && !/^(off|idle|empty|unknown|unavailable|none)$/.test(ws) && !/done|finish|complete/.test(ws)) {
+        tiles.push(`<button class="sk-tile wide" type="button" data-sktab="house" data-skto="sk-c-washer">
             <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="${psEsc(w.icon || "mdi:washing-machine")}"></ha-icon></span>
               <span class="sk-tl" style="margin-left:10px">${psEsc(w.name || "Washer")}</span><span class="ps-chip ${/done|finish|complete/.test(ws) ? "warn" : "cool"}" style="margin-left:auto"><span class="ps-dot"></span>${psEsc(this._humanize(ws))}</span></span></button>`);
       }
@@ -770,6 +779,7 @@ class PurdySkyCard extends PurdyShellCard {
       if (this._skArmed === k) {
         clearTimeout(this._skArmT); this._skArmed = null;
         if (el.dataset.skpress) this._hass.callService(el.dataset.skpress.split(".")[0], "press", { entity_id: el.dataset.skpress });
+        if (el.dataset.sktog) this._hass.callService(el.dataset.sktog.split(".")[0], "toggle", { entity_id: el.dataset.sktog });
         this._render();
         return;
       }
@@ -788,7 +798,7 @@ class PurdySkyCard extends PurdyShellCard {
        the finger moves (a render would detach the node under it), sent once
        on release, and the release is bound to the window so it cannot be missed.
        Nothing moves until the gesture has said what it is: a sideways move past
-       8px is a drag, a vertical one is the page's scroll and lets go, and a
+       10px, more across than down, is a drag, a vertical one is the page's scroll and lets go, and a
        release that never moved is a tap. A CANCEL sends nothing and puts the
        rungs back — the browser cancels exactly when it takes a scroll, and
        treating that as a release set the volume to wherever a swipe began. */
@@ -799,7 +809,10 @@ class PurdySkyCard extends PurdyShellCard {
       const out = this.shadowRoot.getElementById("sk-volv");
       const was = rungs.map((x) => x.classList.contains("on"));
       const wasTxt = out ? out.textContent : null;
-      const x0 = e.clientX, y0 = e.clientY;
+      const x0 = e.clientX, y0 = e.clientY, t0 = Date.now();
+      /* A touch within 150ms of a scroll is a thumb stopping a coasting page,
+         not a choice of volume — it may still become a drag, never a tap. */
+      const coasting = !!(this._scrollAt && t0 - this._scrollAt < 150);
       let v = null, live = false;
       const set = (ev) => {
         const r = lad.getBoundingClientRect();
@@ -821,14 +834,16 @@ class PurdySkyCard extends PurdyShellCard {
       const mv = (ev) => {
         if (!live) {
           const dx = Math.abs(ev.clientX - x0), dy = Math.abs(ev.clientY - y0);
-          if (dy > 8 && dy >= dx) { end(); return; }
-          if (dx <= 8) return;
+          if (dy > 10 && dy >= dx) { end(); restore(); return; }
+          if (dx <= 10 || dx <= dy) return;
           live = true;
           this._dragging = true;
         }
         set(ev);
       };
       const up = (ev) => {
+        /* The page moved under the finger: a scroll, whatever the pointer says. */
+        if (!live && (coasting || (this._scrollAt || 0) > t0)) { end(); restore(); return; }
         if (!live) set(ev);
         end();
         if (v != null) this._hass.callService("media_player", "volume_set", { entity_id: ent, volume_level: v / 100 });

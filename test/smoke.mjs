@@ -11376,7 +11376,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   });
   check('the ladder paints nothing on pointerdown — a vertical move lets go', () => {
     const down = ladSrc.slice(0, ladSrc.indexOf('const set ='));
-    return !/set\(e\)/.test(ladSrc) && /dy > 8 && dy >= dx/.test(ladSrc) && !/_dragging = true/.test(down);
+    return !/set\(e\)/.test(ladSrc) && /dy > 10 && dy >= dx/.test(ladSrc) && /dx <= 10 \|\| dx <= dy/.test(ladSrc) && !/_dragging = true/.test(down);
   });
   /* ---- light rows: a scroll is not a tap (v1.96.2) -------------------------
    * "If I go to scroll I immediately misspress a light." The row toggled on
@@ -11445,6 +11445,76 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       /window\.addEventListener\("scroll", this\._onAnyScroll, \{ capture: true, passive: true \}\)/.test(core) &&
       /window\.removeEventListener\("scroll", this\._onAnyScroll, \{ capture: true \}\)/.test(core);
   });
+
+  /* ---- the v1.97.3 audit (2026-11-23) ------------------------------------ */
+  const pgSrc = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
+  check('Skylight styles size from the scale, not loose pixels', () => {
+    const own = SK.styles.slice(SH.styles.length);
+    return own.length > 5000 && (own.match(/font-size: *[0-9.]+px/g) || []).length === 0;
+  });
+  check('the night light is a two-tap arm while the Hatch plays, a plain toggle otherwise', () => {
+    const asleep = sk._skNightLightTile({ light: 'light.nl' }, { playing: true }, true, 5, '255,160,70');
+    const awake = sk._skNightLightTile({ light: 'light.nl' }, { playing: false }, true, 5, '255,160,70');
+    return /data-skarm="nl"/.test(asleep) && /data-sktog="light\.nl"/.test(asleep) && !/data-sktoggle=/.test(asleep) &&
+      /data-sktoggle="light\.nl"/.test(awake) && !/data-skarm=/.test(awake);
+  });
+  check('an armed tap can toggle as well as press', /if \(el\.dataset\.sktog\) this\._hass\.callService\(el\.dataset\.sktog\.split/.test(skSrc));
+  check('two paused rooms read "2 paused", never "2 playing"', () => {
+    const p = sk._skPlayingChip([{ st: { state: 'paused' } }, { st: { state: 'paused' } }]);
+    const q = sk._skPlayingChip([{ st: { state: 'playing' } }, { st: { state: 'paused' } }]);
+    return /2 paused/.test(p) && !/playing/.test(p) && /1 playing/.test(q);
+  });
+  check('a night still running has not "slept through" yet', () => {
+    const t = Date.now();
+    const past = [0, 1].map((k) => ({ from: t - (k + 2) * 864e5, settleMinutes: 20, events: [], asleepMinutes: 600 }));
+    const live = sk._skVsUsual({ from: t - 3600000, settleMinutes: 20, events: [], active: true }, past);
+    const done = sk._skVsUsual({ from: t - 864e5 / 2, settleMinutes: 20, events: [], active: false }, past);
+    return /none yet/.test(live) && !/slept through/.test(live) && /slept through/.test(done);
+  });
+  check('tonight\'s row in the week carries no slept-through tick', /s\.active \? "" : `<ha-icon icon="mdi:check">/.test(pgSrc));
+  check('a player that reports no volume is a dash, never 0', /volume_level : null;/.test(pgSrc) && !/volume_level : 0;/.test(pgSrc) && /pv == null \? "—"/.test(pgSrc));
+  check('a thermostat with no current_temperature is missing, not 0°', /ct == null \|\| ct === "" \? null : Number\(ct\)/.test(pgSrc));
+  check('the litter and washer tiles land on their own House cards', () => {
+    const c = skCfg();
+    c.sections.find((x) => x.type === 'crew').litter = { entity: 'vacuum.lb', waste_drawer: 'sensor.dr' };
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass(); h.states['input_select.w'] = { state: 'Running', attributes: {} };
+    h.states['sensor.dr'] = { state: '40', attributes: {} }; h.states['vacuum.lb'] = { state: 'docked', attributes: {} };
+    s2._hass = h;
+    const t = s2._skTiles(), hs = s2._skHouse();
+    return /data-skto="sk-c-litter"/.test(t) && /data-skto="sk-c-washer"/.test(t) &&
+      /id="sk-c-litter"/.test(hs) && /id="sk-c-washer"/.test(hs);
+  });
+  check('the lights tile counts the way the Lights chip does', () => {
+    const c = skCfg();
+    c.sections.find((x) => x.type === 'lights').lights = [{ entity: 'light.a', name: 'Lamp' },
+      { entity: 'light.nl', name: 'Night light', protect: { when: 'media_player.h', state: 'playing' } }];
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass(); h.states['light.nl'] = { state: 'on', attributes: { brightness: 10 } };
+    s2._hass = h;
+    return /<b>1<\/b><small>on<\/small>/.test(s2._skTiles()) && /1 of 1 on/.test(s2._lightChip(s2._lightList(s2._skSec('lights'))));
+  });
+  check('a tile label wraps rather than truncating', /\.sk-tl \{[^}]*overflow-wrap: anywhere/.test(SK.styles) && !/\.sk-tl \{[^}]*text-overflow/.test(SK.styles));
+  check('a coasting page cannot set the volume', /const coasting = !!\(this\._scrollAt && t0 - this\._scrollAt < 150\)/.test(skSrc) &&
+    /if \(!live && \(coasting \|\| \(this\._scrollAt \|\| 0\) > t0\)\) \{ end\(\); restore\(\); return; \}/.test(skSrc));
+  check('an entity Home Assistant no longer has is named, not dumped', () => {
+    const c = skCfg();
+    c.sections.find((x) => x.type === 'lights').lights = [{ entity: 'light.a', name: 'Lamp', members: ['light.spare_bedside_lamp_2'] }];
+    const s2 = new SK(); s2.setConfig(c); s2._hass = d2Hass();
+    const body = s2._lightsBody(s2._skSec('lights'), s2._lightList(s2._skSec('lights')));
+    return /Spare bedside lamp 2/.test(body) && !/light\.spare_bedside/.test(body);
+  });
+  check('a finished washer is not a Home tile — the chip and the crew row already say it', () => {
+    const h = d2Hass(); h.states['input_select.w'] = { state: 'Finished', attributes: {} };
+    const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = h;
+    const fin = s2._skTiles();
+    h.states['input_select.w'] = { state: 'Running', attributes: {} };
+    return !/data-skto="sk-c-washer"/.test(fin) && /data-skto="sk-c-washer"/.test(s2._skTiles());
+  });
+  check('the hero text carries its own ink for the band (the sky is a sibling, not a parent)',
+    /:host\(\[data-sk-theme="light"\]\) \.sk-heroin\.sky-night \{ --si: #F3F5FA/.test(SK.styles) && /class="sk-heroin sky-\$\{band\}"/.test(skSrc));
+  check('a warn chip over the sky keeps its card', /:host\(\[data-sk-theme\]\) \.sk-hchips \.ps-chip\.warn/.test(SK.styles));
+  check('Home\'s Joel tiles never repeat the big number', /n\.longestStretch !== n\.asleepMinutes/.test(pgSrc) && !/Still asleep/.test(pgSrc));
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');

@@ -34,6 +34,7 @@ const SHELL = "tag=custom:purdy-shell-card&view=phone2";
 const PHONE = [390, 844];
 const DESK = [1440, 900];
 const D2 = "tag=custom:purdy-desk2-card&view=desk2";
+const SKY = "tag=custom:purdy-sky-card&dash=skylight-phone&view=home";
 /* One entry per thing worth looking at. Phone first: it is the view that ships. */
 const PRESETS = {
   /* Section keys are the live config's: joel · clim · now · people · crew ·
@@ -148,6 +149,21 @@ const PRESETS = {
   "desk2-climate": [DESK, D2 + "&sheet=climate"],
   "desk2-wx":      [DESK, D2 + "&sheet=wx"],
   "desk2-short":   [[1400, 666], D2],
+  /* Skylight, from its own dashboard. theme= pins the palette (the harness
+     sets no HA dark mode), tab= the page, face= the Media face. */
+  "sky-home":         [PHONE, SKY + "&theme=light"],
+  "sky-home-dark":    [PHONE, SKY + "&theme=dark"],
+  "sky-joel":         [PHONE, SKY + "&theme=light&tab=joel"],
+  "sky-climate":      [PHONE, SKY + "&theme=light&tab=climate"],
+  "sky-watch":        [PHONE, SKY + "&theme=light&tab=media&face=watch"],
+  "sky-listen":       [PHONE, SKY + "&theme=light&tab=media&face=listen"],
+  "sky-house":        [PHONE, SKY + "&theme=light&tab=house"],
+  "sky-house-dark":   [PHONE, SKY + "&theme=dark&tab=house"],
+  "sky-nas":          [PHONE, SKY + "&theme=light&mode=systems&page=overview"],
+  "sky-nas-docker":   [PHONE, SKY + "&theme=light&mode=systems&page=docker"],
+  "sky-nas-storage":  [PHONE, SKY + "&theme=light&mode=systems&page=storage"],
+  "sky-alerts":       [PHONE, SKY + "&theme=light&sheet=alerts"],
+  "sky-notes":        [PHONE, SKY + "&theme=light&sheet=notifications"],
   "desk-weather": [DESK, "tag=custom:purdy-desk-card&view=desktop&patch=weather-desk"],
 };
 
