@@ -568,7 +568,7 @@ Object.assign(PurdySkyCard.prototype, {
           <span class="sk-mt"><b>${psEsc(t.name)} TV</b><small>${on ? psEsc(appOk ? app : "On") : appOk ? `Off · ${psEsc(app)} last` : "Off"}</small></span>
           <span class="sk-dotst ${on ? "on" : ""}">${on ? "On" : "Off"}</span></button>`);
     });
-    const live = ((this._config.now_playing || {}).players || []).map((p) => ({ p, st: h.states[p.entity] })).filter((x) => psLiveMusic(x.st));
+    const live = ((this._config.now_playing || {}).players || []).map((p) => ({ p, st: h.states[p.entity] })).filter((x) => this._liveMusic(x.st));
     if (live.length) {
       const first = live.find((x) => x.st.state === "playing") || live[0];
       const a = first.st.attributes;
@@ -621,7 +621,7 @@ Object.assign(PurdySkyCard.prototype, {
     const h = this._hass;
     const target = this._activePlayer();
     const tst = target && h.states[target];
-    const tm = psLiveMusic(tst);
+    const tm = this._liveMusic(tst);
     const a = (tm && tm.attributes) || {};
     const playing = !!(tm && tst.state === "playing");
     const vol = tst && tst.attributes.volume_level != null ? Math.round(tst.attributes.volume_level * 100) : null;
@@ -634,7 +634,7 @@ Object.assign(PurdySkyCard.prototype, {
       Array.from({ length: rungs }, (_, i) => `<i class="${vol != null && i < Math.round(vol / 100 * rungs) ? "on" : ""}" style="height:${30 + i * 4.4}%"></i>`).join("")}</div>`;
     const roomsGrid = (sec.players || []).map((p) => {
       const st = h.states[p.entity];
-      const lv = st && psLiveMusic(st);
+      const lv = st && this._liveMusic(st);
       const stt = lv ? (st.state === "playing" ? "Playing" : "Paused") : st && st.state === "unavailable" ? "Offline" : "Idle";
       return `<button class="sk-rm" type="button" data-pick="${psEsc(p.entity)}" aria-pressed="${p.entity === target}">
           <span class="n">${psEsc(p.name)}</span><span class="s"><i class="${lv ? (st.state === "playing" ? "play" : "pause") : ""}"></i>${stt}</span></button>`;

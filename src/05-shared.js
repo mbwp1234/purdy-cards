@@ -194,11 +194,40 @@ function pcIsMusicState(st) {
    because it had already been inlined four times and was wrong in two of them:
    the desk card was fixed for it and the shell's music sheet and pin button
    never were, which is precisely what "the same rule in four places" buys. */
-function pcLiveMusicState(st) {
+function pcLiveMusicState(st, hass, screens) {
   if (!st) return null;
   if (st.state !== "playing" && st.state !== "paused") return null;
   if (!pcIsMusicState(st) || !st.attributes.media_title) return null;
+  /* A PAUSED session can outlive the room by a day. The living-room Google
+     TV's Spotify app kept "Here Come the Grannies!" paused from 4:57 PM to the
+     next morning — the Samsung it plays through was off from 10:42 PM — and
+     every cast reconnect re-announced it as paused with a fresh last_changed,
+     so no age test can see it: the timestamps are as new as a real pause.
+     The screen can. A player whose `screen:` is off cannot be paused mid-song
+     in any sense worth a row, so it is not now playing. PLAYING is still
+     trusted whatever the screen says — that half of the signal is not stale. */
+  if (st.state === "paused" && hass && screens) {
+    const scr = screens[st.entity_id];
+    const ss = scr && hass.states[scr];
+    if (ss && PC_SCREEN_DARK.indexOf(ss.state) >= 0) return null;
+  }
   return st;
+}
+const PC_SCREEN_DARK = ["off", "standby"];
+
+/* `screen:` rides on any `{entity, screen}` pair anywhere in a card's config —
+   the music players, now_playing.players, the desk's copies — so the link is
+   written once per room wherever that room is listed. */
+function pcScreensOf(config) {
+  const out = {};
+  const walk = (o, d) => {
+    if (!o || typeof o !== "object" || d > 8) return;
+    if (Array.isArray(o)) { o.forEach((v) => walk(v, d + 1)); return; }
+    if (typeof o.entity === "string" && typeof o.screen === "string") out[o.entity] = o.screen;
+    for (const k in o) walk(o[k], d + 1);
+  };
+  walk(config, 0);
+  return out;
 }
 
 

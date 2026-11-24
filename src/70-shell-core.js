@@ -2083,7 +2083,7 @@ class PurdyShellCard extends PcBaseCard {
     return {
       minsToClock: psMinsToClock, dur: psDur, esc: psEsc, isMusic: psIsMusic,
       lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeStars,
-      liveMusic: psLiveMusic, parseTs: psParseTs,
+      liveMusic: psLiveMusic, screensOf: pcScreensOf, parseTs: psParseTs,
       numOf: pcNumOf, reading: pcReading, offline: pcOffline, ringArc: pcRingArc, ringAngle: pcRingAngle, ringRotate: pcRingRotate,
       sparkPoly: pcSparkPoly, downsample: pcDownsample,
       nurserySessions: psNurserySessions, nurseryStats: psNurseryStats,

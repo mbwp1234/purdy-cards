@@ -161,7 +161,7 @@ Object.assign(PurdyDeskCard.prototype, {
     const h = this._hass;
     const target = this._activePlayer();
     const st = target && h.states[target];
-    const live = !!psLiveMusic(st);
+    const live = !!this._liveMusic(st);
     const playing = !!st && st.state === "playing";
     const title = live ? st.attributes.media_title : null;
     const art = live ? st.attributes.entity_picture_local : null;

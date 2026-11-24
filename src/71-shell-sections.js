@@ -797,7 +797,7 @@ Object.assign(PurdyShellCard.prototype, {
        different things. */
     (this._config.now_playing || {}).players?.forEach((p) => {
       const st = this._hass.states[p.entity];
-      if (!psLiveMusic(st)) return;
+      if (!this._liveMusic(st)) return;
       const a = st.attributes;
       const np = { ...p, st, playing: st.state === "playing" };
       const art = a.entity_picture_local;
