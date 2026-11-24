@@ -33,7 +33,12 @@ const SK_STYLES = `
         --sk-r2: #3BC9DB;
         --sk-r3: #A9E34B;
         --sk-visit: #FFA94D;
-        --sk-barh: calc(56px + env(safe-area-inset-top, 0px));
+        /* The bar takes only the part of the notch nothing else already covers
+           (--sk-inset, written by _skSafe). HA's own toolbar sits over the notch
+           at the top of the page and scrolls away below it, so a fixed
+           env() pad doubled it: 47pt of empty band under the toolbar, and the
+           bar's title half-faded over the page's own. */
+        --sk-barh: calc(56px + var(--sk-inset, 0px));
         display: block;
         max-width: 560px;
         margin: 0 auto;
@@ -110,9 +115,13 @@ const SK_STYLES = `
       .sk-homecards { padding: 0 14px; margin-top: -30px; position: relative; z-index: 2; }
 
       /* ---- top bar ---- */
+      .sk-safepad { height: var(--sk-safepad, 0px); }
+      /* The inset is a TRANSFORM, never padding: it changes with the scroll,
+         and an in-flow bar that grew 47px as the toolbar left would shove the
+         page under the thumb — the v1.96.1 feedback loop by another route. */
       .sk-bar { position: sticky; top: 0; z-index: 20; pointer-events: none;
-                padding-top: env(safe-area-inset-top, 0px); }
-      .sk-barbg { position: absolute; inset: 0; opacity: var(--solid, 0); background: var(--sk-bar);
+                transform: translateY(var(--sk-inset, 0px)); }
+      .sk-barbg { position: absolute; inset: 0; top: calc(-1 * var(--sk-inset, 0px)); opacity: var(--solid, 0); background: var(--sk-bar);
                   -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6);
                   border-bottom: 1px solid var(--sk-edge); transition: opacity .15s linear, bottom .3s cubic-bezier(.2,.8,.2,1); }
       .sk-barrow { position: relative; height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 18px; }
@@ -150,7 +159,7 @@ const SK_STYLES = `
       .sk-pill span { overflow: hidden; text-overflow: ellipsis; }
 
       /* ---- the sky ---- */
-      .sk-hero { position: relative; margin-top: calc(-1 * var(--sk-barh)); padding-top: var(--sk-barh); min-height: 400px; overflow: hidden; }
+      .sk-hero { position: relative; margin-top: -56px; padding-top: 56px; min-height: 400px; overflow: hidden; }
       .sk-sky { position: absolute; inset: 0; --s1: #9CC9F2; --s2: #DCEBFA; --si: #101623; --si2: #44506A; --stars: 0;
                 background: linear-gradient(180deg, var(--s1) 0%, var(--s2) 62%, var(--sk-bg) 100%); }
       :host([data-sk-theme="light"]) .sk-sky.sky-dawn  { --s1: #B9CDE8; --s2: #F7D9C6; }
