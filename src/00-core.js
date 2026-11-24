@@ -13,7 +13,7 @@
  * https://github.com/mbwp1234/purdy-cards
  */
 
-const PC_VERSION = "1.97.2";
+const PC_VERSION = "1.97.3";
 
 /* Shared design tokens. Every card derives its own prefixed variables from
    these, so a colour or radius changes in exactly one place.
@@ -76,6 +76,13 @@ const PC_TOKENS = `
            reading has no ring, so the numeral itself has to carry the hero
            role. 2xl at 22px reads as a chip beside the min/avg/max tiles. */
         --pc-fs-3xl: 40px;
+        /* Skylight's display numerals, also ring-less: the page titles and the
+           tiles' one number (4xl), the climate dial's reading (5xl) and the
+           outside temperature that IS the Home hero (6xl). Named steps, so a
+           new big number picks one rather than inventing a pixel size. */
+        --pc-fs-4xl: 32px;
+        --pc-fs-5xl: 64px;
+        --pc-fs-6xl: 96px;
 
         /* radius */
         --pc-r-hair: 2px;

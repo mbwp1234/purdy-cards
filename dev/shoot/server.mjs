@@ -307,8 +307,10 @@ async function haRest(method, apiPath) {
 
 /* Pull one card's config straight out of Lovelace, so the harness renders what
  * is actually deployed rather than a copy that can drift from it. */
-async function cardConfig(view, tag, index) {
-  const cfg = await haws.send({ type: "lovelace/config", url_path: null });
+async function cardConfig(view, tag, index, dash) {
+  /* `dash=` names a dashboard other than the default (Skylight lives on
+     skylight-phone); without it every shot silently reads the default one. */
+  const cfg = await haws.send({ type: "lovelace/config", url_path: dash || null });
   const v = (cfg.views || []).find((x) => x.path === view) || (cfg.views || [])[Number(view) || 0];
   if (!v) throw new Error("no view " + view);
   const cards = v.cards || [];
@@ -337,7 +339,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname === "/h/config") {
       const cfg = await cardConfig(u.searchParams.get("view") || "phone2",
         u.searchParams.get("tag") || "custom:purdy-shell-card",
-        u.searchParams.get("index"));
+        u.searchParams.get("index"), u.searchParams.get("dash"));
       return json(res, 200, patchConfig(cfg, u.searchParams.get("patch")));
     }
 

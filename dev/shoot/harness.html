@@ -176,6 +176,7 @@ function buildHass(states) {
         .then((r) => r.json()),
       fetch("/h/config?" + new URLSearchParams({
         view: P.get("view") || "phone2", tag: TAG, ...(P.get("index") ? { index: P.get("index") } : {}),
+        ...(P.get("dash") ? { dash: P.get("dash") } : {}),
         /* A section that is not deployed yet still has to be photographable —
            see patchConfig() in server.mjs. Nothing in HA is touched. */
         ...(P.get("patch") ? { patch: P.get("patch") } : {}),

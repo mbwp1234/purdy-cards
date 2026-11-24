@@ -121,7 +121,11 @@ function pcState(hass, id) {
 
 function pcName(hass, id, fallback) {
   if (fallback) return fallback;
-  if (!id || !hass || !hass.states[id]) return id || "";
+  if (!id || !hass) return id || "";
+  /* An entity Home Assistant no longer has: its object id, made readable.
+     A raw "light.spare_bedside_lamp_2" on a light row is a dump, not
+     a name. */
+  if (!hass.states[id]) return String(id).replace(/^[^.]*\./, "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
   return hass.states[id].attributes.friendly_name || id;
 }
 
