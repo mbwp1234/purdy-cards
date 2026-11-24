@@ -11614,6 +11614,8 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return once && fed && removed.length === 1 && s2._skHooked === null;
   });
   check('the document fallback is not cached for the life of the card', /if \(this\._skScDoc && now - this\._skScDocAt < 1000\) return this\._skScDoc;/.test(skSrc) && !/this\._skSc = \(typeof document/.test(skSrc));
+  check('the bar title is painted on its own node and hidden at zero (iOS stale-paint guard)',
+    /bt\.style\.opacity = op;/.test(skSrc) && /bt\.style\.visibility = title > 0 \? "visible" : "hidden";/.test(skSrc));
   check('Home\'s Joel tiles never repeat the big number', /n\.longestStretch !== n\.asleepMinutes/.test(pgSrc) && !/Still asleep/.test(pgSrc));
 }
 

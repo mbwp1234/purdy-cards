@@ -1108,6 +1108,23 @@ class PurdySkyCard extends PurdyShellCard {
     }
     bar.style.setProperty("--solid", solid.toFixed(3));
     bar.style.setProperty("--titlep", title.toFixed(3));
+    /* The bar's title is written onto ITSELF, not left to inherit --titlep.
+       iOS WebKit did not always repaint a child whose opacity reads an
+       inherited variable: back at the top, --titlep and --solid both said 0
+       and the ground had cleared, but the collapsed "56° Sunny · Tue" stayed
+       painted at half strength over the avatars (2026-11-24, after v1.97.5
+       had already fixed the scroll events). A style on the node itself is
+       always invalidated, and at 0 it is hidden outright so a stale layer
+       has nothing left to show. */
+    const bt = root.getElementById("sk-bart");
+    if (bt && bt.style) {
+      const op = title.toFixed(3);
+      if (bt.style.opacity !== op) {
+        bt.style.opacity = op;
+        bt.style.transform = `translateY(${((1 - title) * 6).toFixed(1)}px)`;
+        bt.style.visibility = title > 0 ? "visible" : "hidden";
+      }
+    }
 
     /* The mini player steps aside while you read downwards and comes back the
        moment you scroll up. */
