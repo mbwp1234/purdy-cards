@@ -10577,6 +10577,30 @@ check('once offered, the season switch has three segments in order', (() => {
   const m = seHtml().match(/<div class="ps-season three"[\s\S]*?<\/div>/);
   return !!m && /data-season="heat"[\s\S]*data-season="both"[\s\S]*data-season="cool"/.test(m[0]);
 })());
+/* Off. GTTC's season select has no Off — it is the thermostat's hvac_mode —
+   so the segment rides on the climate entity offering it. */
+const shseTh = shse._hass.states['climate.g'];
+check('no Off segment while the thermostat does not offer off', !/data-season="off"/.test(seHtml()));
+shse._hass.states['climate.g'] = { state: 'heat', attributes: { current_temperature: 70, temperature: 69,
+  hvac_action: 'heating', hvac_modes: ['off', 'heat', 'cool', 'heat_cool'] } };
+check('offered, Off is the fourth segment, last', () => {
+  const m = seHtml().match(/<div class="ps-season four"[\s\S]*?<\/div>/);
+  return !!m && /data-season="cool"[\s\S]*data-season="off"/.test(m[0]) && !/ps-sbtn off on/.test(m[0]);
+});
+shse._hass.states['climate.g'].state = 'off';
+check('while off, Off is lit and no season is', () => {
+  const m = seHtml().match(/<div class="ps-season four"[\s\S]*?<\/div>/)[0];
+  return /ps-sbtn off on/.test(m) && !/ps-sbtn (heat|cool|both) on/.test(m);
+});
+shse._seasonArm = 'heat';
+check('while off, the season in force can be armed — it is how the house comes back on',
+  () => /ps-sbtn heat\s+armed[\s\S]*Tap: Heat/.test(seHtml()));
+shse._seasonArm = null;
+check('the Off segment writes hvac_mode off, and leaving Off restores the mode after the season', () => {
+  const src = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+  return /hvac_mode: "off"/.test(src) && /pick\.then\(\(\) => this\._hass\.callService\("climate", "set_hvac_mode"/.test(src);
+});
+shse._hass.states['climate.g'] = shseTh;
 shse._hass.states['select.gttc_season_mode'].state = 'Heat/Cool';
 check('Heat/Cool in force marks its own segment and neither of the others',
   /ps-sbtn both on[^>]*aria-pressed="true"/.test(seHtml()) && !/ps-sbtn heat on/.test(seHtml()) && !/ps-sbtn cool on/.test(seHtml()));
