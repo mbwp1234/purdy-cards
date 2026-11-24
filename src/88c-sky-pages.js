@@ -746,6 +746,7 @@ Object.assign(PurdySkyCard.prototype, {
     const miles = area != null && mi.path_width_m ? (area * 0.092903 / mi.path_width_m) / 1609.34 : null;
     const sel = v.room_select && h.states[v.room_select];
     const pick = sel ? String(sel.state).replace(/^\S+ - /, "") : "";
+    const go = v.room_multi && sel && v.room_script ? this._crewGoMulti(v) : null;
     return `<div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-good)"><ha-icon icon="mdi:robot-vacuum"></ha-icon></span><span class="sk-hn">${psEsc(v.name || "Vacuum")}</span>
         <span class="sk-status ${busy ? "good" : st === "error" ? "bad" : ""}">${psEsc(this._humanize(st))}${room && room !== "unknown" ? ` · ${psEsc(room)}` : ""}</span></div>
       <div class="sk-vtop">
@@ -763,8 +764,8 @@ Object.assign(PurdySkyCard.prototype, {
         <div class="sk-wearhint">hold a part to clean it</div>` : ""}
       ${this._skVacOpts(v, sib)}
       <div class="sk-vrooms">${this._crewRooms(v)}</div>
-      <button class="sk-bigbtn pri wide vac" type="button" data-crewgo="${psEsc(v.entity)}" data-script="${psEsc(v.room_script || "")}">
-        <ha-icon icon="${busy ? "mdi:pause" : "mdi:play"}"></ha-icon>${busy ? "Pause" : pick ? `Clean ${psEsc(pick)}` : "Start cleaning"}</button>
+      <button class="sk-bigbtn pri wide vac" type="button" data-crewgo="${psEsc(v.entity)}" data-script="${psEsc(v.room_script || "")}"${go ? go.attrs : ""}>
+        <ha-icon icon="${busy ? "mdi:pause" : "mdi:play"}"></ha-icon>${busy ? "Pause" : go ? psEsc(go.text) : pick ? `Clean ${psEsc(pick)}` : "Start cleaning"}</button>
       <div class="sk-btnrow three">
         ${v.map_sheet ? `<button class="sk-bigbtn" type="button" data-sheet="${psEsc(v.map_sheet)}"><ha-icon icon="mdi:map-marker-radius"></ha-icon>Map</button>` : ""}
         <button class="sk-bigbtn" type="button" data-crewact="vacuum.return_to_base" data-target="${psEsc(v.entity)}"><ha-icon icon="mdi:home-import-outline"></ha-icon>Dock</button>

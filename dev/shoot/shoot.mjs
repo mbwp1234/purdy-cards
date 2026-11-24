@@ -159,6 +159,8 @@ const PRESETS = {
   "sky-listen":       [PHONE, SKY + "&theme=light&tab=media&face=listen"],
   "sky-house":        [PHONE, SKY + "&theme=light&tab=house"],
   "sky-house-dark":   [PHONE, SKY + "&theme=dark&tab=house"],
+  "sky-house-multi":  [PHONE, SKY + "&theme=light&tab=house&patch=vacmulti"],
+  "sky-house-multi2": [PHONE, SKY + "&theme=light&tab=house&patch=vacmulti&vacpick=" + encodeURIComponent("1F - Kitchen|1F - Living Room")],
   "sky-nas":          [PHONE, SKY + "&theme=light&mode=systems&page=overview"],
   "sky-nas-docker":   [PHONE, SKY + "&theme=light&mode=systems&page=docker"],
   "sky-nas-storage":  [PHONE, SKY + "&theme=light&mode=systems&page=storage"],
