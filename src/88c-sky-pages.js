@@ -62,8 +62,11 @@ Object.assign(PurdySkyCard.prototype, {
      6 PM to 8 AM of the evening it began. */
   _skRail(s, big, opts) {
     const o = opts || {};
-    const W = 340, id = "skjg" + (++skUid);
-    const th = big ? 14 : 8, y = big ? 24 : 8, H = big ? 58 : 20;
+    /* The week's rails draw in a ~150px column, so a 340-wide viewBox scaled
+       them to under half size: a 3.6px bar with 1.3px wake marks. The small
+       rail's viewBox is its drawn width, so its strokes are the size written. */
+    const W = big ? 340 : 160, id = "skjg" + (++skUid);
+    const th = big ? 14 : 10, y = big ? 24 : 9, H = big ? 58 : 21;
     const t0d = new Date(s.from);
     if (t0d.getHours() < 12) t0d.setDate(t0d.getDate() - 1);
     t0d.setHours(18, 0, 0, 0);
@@ -81,10 +84,12 @@ Object.assign(PurdySkyCard.prototype, {
     out += `<rect x="${xa.toFixed(1)}" y="${y}" width="${Math.max(th, xe - xa).toFixed(1)}" height="${th}" rx="${th / 2}" fill="url(#${id})"${s.active ? ` class="live"` : ""}/>`;
     (s.events || []).forEach((t) => {
       const xv = x(t);
-      out += `<rect x="${(xv - 1.5).toFixed(1)}" y="${y}" width="3" height="${th}" class="vis"/>`;
+      out += big
+        ? `<rect x="${(xv - 1.5).toFixed(1)}" y="${y}" width="3" height="${th}" class="vis"/>`
+        : `<rect x="${(xv - 1.75).toFixed(1)}" y="${y - 1}" width="3.5" height="${th + 2}" rx="1.75" class="vis vcut"/>`;
       out += big
         ? `<line x1="${xv.toFixed(1)}" x2="${xv.toFixed(1)}" y1="${y - 9}" y2="${y}" class="visl"/><circle cx="${xv.toFixed(1)}" cy="${y - 12}" r="3.6" class="visd"/>`
-        : `<circle cx="${xv.toFixed(1)}" cy="3" r="2.3" class="visd"/>`;
+        : "";
     });
     if (big) {
       [[0, "6p"], [3, "9p"], [6, "12a"], [9, "3a"], [12, "6a"]].forEach(([hh, l]) => {
@@ -683,15 +688,10 @@ Object.assign(PurdySkyCard.prototype, {
           <div class="st3 wide"><b>${miles == null ? "—" : "≈" + miles.toFixed(1) + " mi"}</b><span>${runs == null ? "Lifetime" : `${Math.round(runs)} runs`}</span></div>
         </div>
       </div>
-      ${wear.length ? `<div class="sk-wear">${wear.map((w) => `<div class="sk-wr${w.v != null && w.v <= (w.warn_below == null ? 20 : w.warn_below) ? " due" : ""}">
-          <span class="r">${w.v == null ? `<span class="hatch"></span>` : this._skRing(w.v, 52, 6, w.v <= (w.warn_below == null ? 20 : w.warn_below) ? "var(--ps-warn)" : "var(--ps-good)")}<b>${w.v == null ? "—" : Math.round(w.v) + "%"}</b></span>
-          <span>${psEsc(w.label)}${w.v != null && w.v <= 0 ? "<small>replace</small>" : ""}</span></div>`).join("")}</div>` : ""}
-      <div class="sk-opts">
-        ${this._skSelSeg(v.cleaning_mode, "Mode")}
-        ${this._skSelSeg(v.suction, "Suction")}
-        ${this._skSelSeg(sib("mop_pad_humidity"), "Mop water")}
-        ${this._skSelSeg(sib("cleaning_route"), "Route")}
-      </div>
+      ${wear.length ? `<div class="sk-wear" style="--n:${wear.length}">${wear.map((w) => `<div class="sk-wr${w.v != null && w.v <= (w.warn_below == null ? 20 : w.warn_below) ? " due" : ""}">
+          <span class="r">${w.v == null ? `<span class="hatch"></span>` : this._skRing(w.v, 44, 5, w.v <= (w.warn_below == null ? 20 : w.warn_below) ? "var(--ps-warn)" : "var(--ps-good)")}<b>${w.v == null ? "—" : Math.round(w.v) + "%"}</b></span>
+          <span>${psEsc(w.label)}</span></div>`).join("")}</div>` : ""}
+      ${this._skVacOpts(v, sib)}
       <div class="sk-vrooms">${this._crewRooms(v)}</div>
       <button class="sk-bigbtn pri wide vac" type="button" data-crewgo="${psEsc(v.entity)}" data-script="${psEsc(v.room_script || "")}">
         <ha-icon icon="${busy ? "mdi:pause" : "mdi:play"}"></ha-icon>${busy ? "Pause" : pick ? `Clean ${psEsc(pick)}` : "Start cleaning"}</button>
@@ -701,6 +701,24 @@ Object.assign(PurdySkyCard.prototype, {
         ${v.emptied_button ? `<button class="sk-bigbtn" type="button" data-crewact="input_button.press" data-target="${psEsc(v.emptied_button)}"><ha-icon icon="mdi:cup-water"></ha-icon>Emptied</button>` : ""}
       </div>
       <div class="sk-shellbits">${this._crewNightly(v)}${this._crewDeep(v)}</div>`;
+  },
+
+  /* The four selects are set once and read every day, so at rest they are ONE
+     line of what is chosen, and the segmented rows open in place on a tap.
+     Four stacked selectors were most of the card's height. */
+  _skVacOpts(v, sib) {
+    /* Each value carries its noun except the mode, which names itself —
+       "Standard · Standard" was suction and route, and said neither. */
+    const ids = [[v.cleaning_mode, "Mode", ""], [v.suction, "Suction", "suction"], [sib("mop_pad_humidity"), "Mop water", "water"], [sib("cleaning_route"), "Route", "route"]]
+      .filter(([id]) => this._skSelSeg(id, ""));
+    if (!ids.length) return "";
+    const open = !!this._skVacOpen;
+    const now = ids.map(([id, , noun]) => { const st = this._hass.states[id].state; const w = SK_SHORT[st] || psCrewWords(st) || st; return noun ? `${w} ${noun}` : w; });
+    return `<div class="sk-opts ${open ? "open" : ""}">
+        <button class="sk-optsum" type="button" data-skvacopts aria-expanded="${open}">
+          <ha-icon icon="mdi:tune-variant"></ha-icon><span class="ps-grow">${now.map(psEsc).join(" · ")}</span><ha-icon icon="${open ? "mdi:chevron-up" : "mdi:chevron-down"}"></ha-icon></button>
+        ${open ? ids.map(([id, label]) => this._skSelSeg(id, label)).join("") : ""}
+      </div>`;
   },
 
   _skLitter(l) {

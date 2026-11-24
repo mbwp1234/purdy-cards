@@ -751,6 +751,11 @@ class PurdySkyCard extends PurdyShellCard {
       pcHaptic("light");
       this._hass.callService("select", "select_option", { entity_id: el.dataset.sksel, option: el.dataset.val });
     }));
+    this._each("[data-skvacopts]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._skVacOpen = !this._skVacOpen;
+      this._render();
+    }));
     this._each("[data-sktoggle]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       const id = el.dataset.sktoggle;
