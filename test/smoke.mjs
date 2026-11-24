@@ -1349,6 +1349,30 @@ check('power prefers the media player over the remote', !!pw);
 check('on-state reads from the media player', rc._isOn({media_player:'media_player.lr', remote:'remote.br'}) === true);
 check('off media player reads as off', rc._isOn({media_player:'media_player.br', remote:'remote.lr'}) === false);
 
+/* A panel with no TURN_ON bit (the Samsungs read 24381) wakes over CEC when its
+   box comes on, so an off one is switched on through the box's remote — HA
+   answers media_player.turn_on with "does not support action". */
+{
+  const ph = { states: {
+      'media_player.pnl': { state: 'off', attributes: { supported_features: 24381 } },
+      'media_player.wol': { state: 'off', attributes: { supported_features: 24381 | 128 } },
+      'remote.box': { state: 'off', attributes: {} } },
+    _calls: [], callService(d, s, data) { this._calls.push([d, s, data]); } };
+  const pc = new RC();
+  pc.setConfig({ tvs: [{ name: 'P', remote: 'remote.box', media_player: 'media_player.pnl' },
+                       { name: 'W', remote: 'remote.box', media_player: 'media_player.wol' }], apps: [] });
+  pc.hass = ph; pc._touched = true; pc._sel = 0;
+  ph._calls.length = 0; pc._power();
+  check('an off panel with no TURN_ON is woken through the box remote', () =>
+    ph._calls.length === 1 && ph._calls[0][0] === 'remote' && ph._calls[0][1] === 'turn_on' && ph._calls[0][2].entity_id === 'remote.box');
+  ph.states['media_player.pnl'].state = 'on'; ph._calls.length = 0; pc._power();
+  check('an on panel with no TURN_ON is still switched off at the panel', () =>
+    ph._calls.length === 1 && ph._calls[0][0] === 'media_player' && ph._calls[0][1] === 'turn_off');
+  pc._sel = 1; ph._calls.length = 0; pc._power();
+  check('a panel that publishes TURN_ON is turned on directly', () =>
+    ph._calls.length === 1 && ph._calls[0][0] === 'media_player' && ph._calls[0][1] === 'turn_on');
+}
+
 /* An off television used to be a sentence and nothing else. One call powers the
    set on AND opens the app, so the grid is the right thing to draw on a cold
    set — replacing a surface orphans whatever was only reachable through it, and
@@ -11266,6 +11290,16 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
     const v = pg.slice(pg.indexOf('  _skVacuum(v) {'), pg.indexOf('  _skLitter(l) {'));
     return /data-sheet="\$\{psEsc\(v\.map_sheet\)\}"/.test(v) && /vacuum\.return_to_base/.test(v) && /this\._crewNightly\(v\)/.test(v) && /this\._crewDeep\(v\)/.test(v) && /this\._crewRooms\(v\)/.test(v);
+  })());
+  check('the week rails draw at their own width, not a 340 viewBox scaled under half', () => {
+    const r = sk._skRail({ from: Date.now() - 6 * 3600000, settledAt: Date.now() - 5.5 * 3600000, to: Date.now(), wokeAt: Date.now(), events: [Date.now() - 3 * 3600000], interventions: 1 }, false).svg;
+    return /viewBox="0 0 160 21"/.test(r) && /height="12" rx="1.75" class="vis vcut"/.test(r);
+  });
+  check('the vacuum settings rest as one summary line and open in place', (() => {
+    const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
+    const o = pg.slice(pg.indexOf('  _skVacOpts(v, sib) {'), pg.indexOf('  _skLitter(l) {'));
+    return /data-skvacopts/.test(o) && /open \? ids\.map/.test(o) && /this\._skVacOpts\(v, sib\)/.test(pg) &&
+      /\[data-skvacopts\]/.test(skSrc);
   })());
   check('the notification log is reachable from House and the bell', /data-sheet="notifications"/.test(house) &&
     /want = faults\.length \? "alerts" : notes \? "notifications"/.test(skSrc));

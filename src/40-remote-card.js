@@ -530,10 +530,22 @@ class PurdyRemoteCard extends PcBaseCard {
   _power() {
     const t = this._tv();
     const on = this._isOn(t);
-    if (t.media_player && this._hass.states[t.media_player]) {
-      this._hass.callService("media_player", on ? "turn_off" : "turn_on", {
-        entity_id: t.media_player,
-      });
+    /* A panel that cannot be woken over the network publishes no TURN_ON bit
+       (128) — the Samsungs here read 24381 — and HA answers turn_on with
+       "does not support action". Those panels wake over HDMI-CEC when the box
+       in front of them comes on (box 20:23:59 → panel 20:24:06, measured), so
+       the box's remote is the way to switch one ON. Off still goes to the
+       panel, which does publish TURN_OFF. */
+    const mp = t.media_player && this._hass.states[t.media_player];
+    if (mp) {
+      const canOn = (Number(mp.attributes.supported_features) & 128) !== 0;
+      if (on || canOn || !t.remote) {
+        this._hass.callService("media_player", on ? "turn_off" : "turn_on", {
+          entity_id: t.media_player,
+        });
+        return;
+      }
+      this._hass.callService("remote", "turn_on", { entity_id: t.remote });
       return;
     }
     if (!t.remote) return;
