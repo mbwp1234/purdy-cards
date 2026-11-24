@@ -93,6 +93,12 @@ class PurdySkyCard extends PurdyShellCard {
       const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f) => setTimeout(f, 16);
       raf(() => { this._skTick = false; this._skFrame(); });
     };
+    /* The same, for a scroller that is not the document. A scroll event is
+       not composed: one fired by an element inside Home Assistant's shadow
+       trees never reaches a window listener, capture phase or not. So the
+       element that actually scrolls gets a listener of its own, and it feeds
+       the shell's _scrollAt too — the tap guard is blind without it. */
+    this._skOnElScroll = () => { this._scrollAt = Date.now(); this._skOnScroll(); };
     /* A touch is a scroll until it proves otherwise — for EVERY button on the
        card, not only the gesture controls. A finger that lands within 150ms of
        a scroll is a thumb stopping a coasting page, and whether the browser
@@ -140,7 +146,21 @@ class PurdySkyCard extends PurdyShellCard {
       window.removeEventListener("scroll", this._skOnScroll, { capture: true });
       window.removeEventListener("resize", this._skOnScroll);
     }
+    if (this._skHooked) this._skHooked.removeEventListener("scroll", this._skOnElScroll);
+    this._skHooked = null;
     this._skSc = null;
+  }
+
+  /* Listen to the scroller itself when it is an element. Re-checked on every
+     frame, which is cheap: _skScroller is cached once it finds an element. */
+  _skHook() {
+    const sc = this._skScroller();
+    const doc = typeof document !== "undefined" ? document : null;
+    const el = !sc || !doc || sc === doc.scrollingElement || sc === doc.documentElement || sc === doc.body ? null : sc;
+    if (el === this._skHooked) return;
+    if (this._skHooked) this._skHooked.removeEventListener("scroll", this._skOnElScroll);
+    this._skHooked = el;
+    if (el && el.addEventListener) el.addEventListener("scroll", this._skOnElScroll, { passive: true });
   }
 
   /* The skeleton. `ps-ground`, `ps-sheetslot`, `ps-stat`, `ps-dockwrap` and
@@ -248,6 +268,13 @@ class PurdySkyCard extends PurdyShellCard {
      document; found once by walking up through shadow roots. */
   _skScroller() {
     if (this._skSc && this._skSc.isConnected) return this._skSc;
+    /* The document is the FALLBACK, and it is not cached for long: asked
+       before the view has content, no ancestor overflows yet, and caching the
+       answer then meant every later frame measured the wrong scroller for as
+       long as the card lived. Re-walk at most once a second until an element
+       turns up. */
+    const now = Date.now();
+    if (this._skScDoc && now - this._skScDocAt < 1000) return this._skScDoc;
     let n = this;
     for (let i = 0; i < 40 && n; i++) {
       const p = n.assignedSlot || n.parentElement || (n.parentNode && n.parentNode.host) || null;
@@ -257,8 +284,9 @@ class PurdySkyCard extends PurdyShellCard {
       const oy = getComputedStyle(n).overflowY;
       if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight + 2) { this._skSc = n; return n; }
     }
-    this._skSc = (typeof document !== "undefined" && (document.scrollingElement || document.documentElement)) || null;
-    return this._skSc;
+    this._skScDoc = (typeof document !== "undefined" && (document.scrollingElement || document.documentElement)) || null;
+    this._skScDocAt = now;
+    return this._skScDoc;
   }
 
   _skView() { return this._mode === "systems" ? "sys" : this._skTab; }
@@ -988,6 +1016,7 @@ class PurdySkyCard extends PurdyShellCard {
     const sk = root.getElementById("sk");
     if (!bar || !sk || !bar.getBoundingClientRect) return;
     const view = this._skView();
+    this._skHook();
     this._skSafe(bar);
     const barR = bar.getBoundingClientRect();
     const ins = this._skIns || 0;
