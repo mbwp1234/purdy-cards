@@ -615,6 +615,8 @@ class PurdySkyCard extends PurdyShellCard {
         const needs = this._secCrew(crew);
         if (needs) push("needs", `<div class="ps-sect">${needs}</div>`, null);
       }
+      const veh = this._skVehicleHome();
+      if (veh) push("truck", veh.html, veh.pill, "sk-pad sk-veh");
       const tiles = this._skTiles();
       if (tiles) {
         const lsec = this._skSec("lights");
@@ -628,6 +630,124 @@ class PurdySkyCard extends PurdyShellCard {
     const pillHtml = pills.map((p) => `<button class="sk-pill" type="button" data-skpill="${p.key}" style="--pc:${p.color || "var(--ps-text)"}">
         <ha-icon icon="${p.icon}"></ha-icon><span>${psEsc(p.text)}</span></button>`).join("");
     return { html: out.join(""), pills: pillHtml };
+  }
+
+  /* `vehicle:` is a TOP-LEVEL key, so the section walk never sees it — the same
+     treatment weather_fx and people needed. */
+  _collectWatched() {
+    const ids = super._collectWatched();
+    const v = this._config.vehicle;
+    if (v) [v.entity, v.next, v.fuel].forEach((x) => { if (x && ids.indexOf(x) < 0) ids.push(x); });
+    return ids;
+  }
+
+  /* The Garage integration owns the maths (what is due, where it lives on the
+     truck, when the next one lands); this card only draws it. One read of
+     garage/get whenever the overdue or next-service sensor changes — never a
+     second derivation here, which is how the morning recap drifted. */
+  _skVehLoad() {
+    const v = this._config.vehicle, h = this._hass;
+    if (!v || !h || typeof h.callWS !== "function") return;
+    const sig = [v.entity, v.next].map((id) => { const s = id && h.states[id]; return s ? s.state + "@" + s.last_updated : ""; }).join("|");
+    if (this._skVehBusy || (this._skVeh && this._skVehSig === sig)) return;
+    this._skVehBusy = true;
+    const msg = { type: "garage/get" };
+    if (v.entry) msg.entry_id = v.entry;
+    Promise.resolve(h.callWS(msg)).then((r) => {
+      this._skVeh = r && r.vehicle ? { v: r.vehicle, settings: r.settings || {} } : null;
+      this._skVehSig = sig;
+      this._skVehErr = null;
+      this._skVehImage();
+    }).catch((e) => { this._skVehErr = (e && e.message) || "Garage did not answer"; this._skVehSig = sig; })
+      .then(() => { this._skVehBusy = false; this._render(); });
+  }
+
+  /* The picture lives in the vehicle's folder on the share, behind auth, so it
+     is fetched once into a blob URL. The URL is part of the rendered string and
+     never changes, so the patching renderer keeps the <img>. */
+  _skVehImage() {
+    const V = this._skVeh && this._skVeh.v, h = this._hass;
+    if (!V || this._skVehImgFor === V.entry_id || !h || typeof h.fetchWithAuth !== "function") return;
+    this._skVehImgFor = V.entry_id;
+    Promise.resolve(h.fetchWithAuth("/api/garage/" + V.entry_id + "/image")).then((r) => (r && r.ok ? r.blob() : null))
+      .then((b) => { if (b && typeof URL !== "undefined") { this._skVehImg = URL.createObjectURL(b); this._render(); } })
+      .catch(() => {});
+  }
+
+  /* "2 wk", "Dec", "2028": how far off a date is, at the grain that matters. */
+  _skVehWhen(iso) {
+    const p = String(iso || "").split("-");
+    if (p.length !== 3) return "";
+    const d = new Date(+p[0], +p[1] - 1, +p[2]);
+    const days = Math.round((d.getTime() - this._nowMs()) / 864e5);
+    if (days <= 1) return "now";
+    if (days < 10) return `${days} days`;
+    if (days < 60) return `${Math.round(days / 7)} wk`;
+    return d.toLocaleDateString("en-US", days < 330 ? { month: "short" } : { month: "short", year: "numeric" });
+  }
+
+  _skVehStatus() {
+    const V = this._skVeh && this._skVeh.v;
+    if (!V || !V.summary) return null;
+    const s = V.summary;
+    if (s.over) return { cls: "over", n: String(s.over), label: "overdue", pill: `${s.over} due`, color: "var(--ps-bad)" };
+    if (s.soon) return { cls: "soon", n: String(s.soon), label: "due soon", pill: `${s.soon} soon`, color: "var(--ps-warn)" };
+    const nx = s.next;
+    return nx ? { cls: "ok", n: Math.round(nx.remaining).toLocaleString("en-US"), label: `mi to ${nx.short}`, pill: nx.short, color: "var(--ps-good)" }
+      : { cls: "ok", n: "—", label: "nothing due", pill: "Truck", color: "var(--ps-good)" };
+  }
+
+  /* Home: one picture and one number. The picture is the truck with a dot where
+     something is overdue or due soon; the number is how many. The chip is the
+     next service's ETA — a different fact from the count, never a restatement. */
+  _skVehicleHome() {
+    const cfg = this._config.vehicle;
+    if (!cfg) return null;
+    this._skVehLoad();
+    const V = this._skVeh && this._skVeh.v;
+    if (!V) return null;
+    const st = this._skVehStatus();
+    const s = V.summary || {};
+    const nx = s.next;
+    const when = nx && nx.eta ? this._skVehWhen(nx.eta) : "";
+    const chip = nx && when ? `<span class="ps-chip"><ha-icon icon="mdi:clock-outline"></ha-icon>${psEsc(nx.short)} ≈ ${psEsc(when)}</span>` : "";
+    const hs = (this._skVeh.settings && this._skVeh.settings.hotspots) || {};
+    const rank = { over: 0, soon: 1 };
+    const zones = {};
+    (V.items || []).forEach((i) => {
+      if (rank[i.status] == null || !hs[i.zone]) return;
+      if (zones[i.zone] == null || rank[i.status] < rank[zones[i.zone]]) zones[i.zone] = i.status;
+    });
+    const dots = this._skVehImg ? Object.keys(zones).map((z) =>
+      `<i class="sk-vdot ${zones[z]}" style="left:${Number(hs[z][0])}%;top:${Number(hs[z][1])}%"></i>`).join("") : "";
+    const art = this._skVehImg ? `<span class="sk-vart"><img src="${this._skVehImg}" alt="">${dots}</span>`
+      : `<span class="sk-vart none"><ha-icon icon="mdi:car-wrench"></ha-icon></span>`;
+    /* Fuel is read live, not from the snapshot: it moves while nothing is due. A
+       sleeping truck's tank is MISSING, drawn hatched — never an empty tank. */
+    const fuelId = cfg.fuel || V.fuel_entity;
+    const litres = fuelId ? pcNum(this._hass, fuelId) : null;
+    const pct = litres != null && V.tank_l ? skClamp(litres / V.tank_l) * 100 : null;
+    const fuel = fuelId ? `<span class="sk-vfuel"><ha-icon icon="mdi:gas-station-outline"></ha-icon>
+        <span class="sk-vcap${pct == null ? " none" : ""}"><i style="width:${pct == null ? 0 : pct.toFixed(0)}%"></i></span><span>${pct == null ? "—" : Math.round(pct) + "%"}</span></span>` : "";
+    const html = `<div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-truck)"><ha-icon icon="mdi:car-wrench"></ha-icon></span><span class="sk-hn">${psEsc(V.name || "Vehicle")}</span>${chip}</div>
+      <div class="sk-vbody" data-sknav="${psEsc(cfg.path || "/garage")}" role="button" tabindex="0" aria-label="${psEsc(V.name || "Vehicle")}: ${psEsc(st.n)} ${psEsc(st.label)}">
+        <span class="sk-vnum ${st.cls}"><b>${psEsc(st.n)}</b><span>${psEsc(st.label)}</span></span>${art}</div>${fuel}`;
+    return { html, pill: { icon: "mdi:car-wrench", text: st.pill, color: st.color } };
+  }
+
+  /* The House row: the same front door, as a row. */
+  _skVehicleRow() {
+    const cfg = this._config.vehicle;
+    if (!cfg) return "";
+    this._skVehLoad();
+    const V = this._skVeh && this._skVeh.v;
+    if (!V) return "";
+    const st = this._skVehStatus();
+    const nx = (V.summary || {}).next;
+    const sub = st.cls === "ok" ? (nx ? `Next: ${nx.short}` : "Nothing due") : `${st.n} ${st.label}${nx ? ` · next ${nx.short}` : ""}`;
+    return `<button class="sk-card sk-rowcard" type="button" data-sknav="${psEsc(cfg.path || "/garage")}">
+        <span class="sk-ico" style="--c:var(--sk-truck)"><ha-icon icon="mdi:car-wrench"></ha-icon></span>
+        <span class="ps-grow"><b>${psEsc(V.name || "Vehicle")}</b><small>${psEsc(sub)}</small></span><ha-icon icon="mdi:chevron-right"></ha-icon></button>`;
   }
 
   /* The house at a glance: one picture and one number per tile. */
@@ -809,6 +929,11 @@ class PurdySkyCard extends PurdyShellCard {
   /* ---------------------------------------------------------------- binding --- */
 
   _skBind() {
+    /* A card that is another app's front door (the Garage panel). */
+    this._each("[data-sknav]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pcNavigate(this, el.dataset.sknav);
+    }));
     this._each("[data-sktab]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       this._skGo(el.dataset.sktab, { to: el.dataset.skto, face: el.dataset.face });
