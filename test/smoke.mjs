@@ -11514,6 +11514,52 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   check('the hero text carries its own ink for the band (the sky is a sibling, not a parent)',
     /:host\(\[data-sk-theme="light"\]\) \.sk-heroin\.sky-night \{ --si: #F3F5FA/.test(SK.styles) && /class="sk-heroin sky-\$\{band\}"/.test(skSrc));
   check('a warn chip over the sky keeps its card', /:host\(\[data-sk-theme\]\) \.sk-hchips \.ps-chip\.warn/.test(SK.styles));
+  /* ---- v1.97.4 ---------------------------------------------------------- */
+  check('a tap whose finger lands on a moving page is swallowed before any handler', () =>
+    /this\._skStopper = !!\(this\._scrollAt && Date\.now\(\) - this\._scrollAt < 150\)/.test(skSrc) &&
+    /addEventListener\("click", \(e\) => \{\s*if \(!this\._skStopper && !this\._skEatClick\) return;/.test(skSrc) &&
+    /e\.stopPropagation\(\);\s*e\.preventDefault\(\);\s*\}, \{ capture: true \}/.test(skSrc));
+  check('a wet day is named for its rain, not its clouds', () => {
+    const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
+    s2._wxFc = [{ today: false, ts: Date.now() + 2 * 864e5, pop: 91, condition: 'cloudy', lo: 40, hi: 50 }];
+    const a1 = s2._skWetChip();
+    s2._wxFc = [{ today: false, ts: Date.now() + 2 * 864e5, pop: 80, condition: 'snowy', lo: 20, hi: 30 }];
+    return /Rain .* 91%/.test(a1) && !/Cloudy/.test(a1) && /Snow/.test(s2._skWetChip());
+  });
+  check('the day\'s high comes from the station, not the sun on the yard sensor', () => {
+    const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
+    s2._wxStats = [{ partial: true, min: 50, max: 79 }];
+    s2._wxFc = [{ today: true, lo: 35, hi: null }];
+    s2._skAir = { day: new Date(s2._nowMs()).toDateString(), hi: 73, lo: 48 };
+    const r = s2._skTodayRange();
+    s2._skAir = null;
+    const r2 = s2._skTodayRange();
+    return r.hi === 73 && r.lo === 35 && r2.hi === 79;
+  });
+  check('a one-ended day in the week draws its low label below its own stub', () => {
+    const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
+    s2._wxFc = [{ today: true, ts: Date.now(), lo: 35, hi: null }, { ts: Date.now() + 864e5, lo: 26, hi: 53 }];
+    const svg = s2._skWeekRail();
+    const rect = /<rect x="[\d.]+" y="([\d.]+)" width="12" height="([\d.]+)" rx="6" fill/.exec(svg);
+    const lo = /y="([\d.]+)" text-anchor="middle" class="lo">35</.exec(svg);
+    return rect && lo && Number(lo[1]) - 10 > Number(rect[1]) + Number(rect[2]);
+  });
+  check('the dial reads the active zone\'s sensor, so it agrees with its own label', /const cur = zt != null \? zt :/.test(pgSrc));
+  check('Inside and out carries a key, its range and a clock', /_skWaveCard\(sec\)/.test(pgSrc) && /class="sk-keys"/.test(pgSrc) && /class="sk-wax"/.test(pgSrc) && /this\._waveRange\.lo/.test(pgSrc));
+  check('holding a wear ring opens its part sheet; the sheet resets that part', () => {
+    const c = skCfg();
+    c.sections.find((x) => x.type === 'crew').vacuum.wear = [{ label: 'Side brush', entity: 'sensor.sb', reset: 'button.rsb' }, { label: 'Wheel', entity: 'sensor.wh' }];
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass(); h.states['sensor.sb'] = { state: '0', attributes: {} }; h.states['button.rsb'] = { state: 'unknown', attributes: {} };
+    s2._hass = h;
+    s2._skPart = 0; s2._sheet = 'skpart';
+    const a1 = s2._sheetHtml([]);
+    s2._skPart = 1;
+    const b1 = s2._sheetHtml([]);
+    return /data-skpartdone="button\.rsb"/.test(a1) && /Pull off wrapped hair/.test(a1) && /id="ps-close"/.test(a1) &&
+      !/data-skpartdone/.test(b1) && /no reset button/.test(b1) &&
+      /data-skpart="\$\{i\}"/.test(pgSrc) && /\}, 380\);/.test(skSrc) && /this\._skEatClick = true;/.test(skSrc);
+  });
   check('Home\'s Joel tiles never repeat the big number', /n\.longestStretch !== n\.asleepMinutes/.test(pgSrc) && !/Still asleep/.test(pgSrc));
 }
 
