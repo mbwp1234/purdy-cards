@@ -7216,8 +7216,34 @@ check('an off player is not live music',
   !liveMusic({ state: 'off', attributes: bluey }) && !liveMusic(null));
 check('the live-music rule is shared, not written out per surface',
   ['73-shell-music.js', '74-shell-alerts.js', '82-desk-stage.js', '85-desk-systems.js']
-    .every((f) => /psLiveMusic\(/.test(
+    .every((f) => /this\._liveMusic\(/.test(
       fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf8'))));
+check('no surface calls the bare rule and skips the screen check',
+  fs.readdirSync(new URL('../src/', import.meta.url)).filter((f) => /^[78]/.test(f))
+    .every((f) => !/(^|[^\w.])psLiveMusic\(/.test(
+      fs.readFileSync(new URL('../src/' + f, import.meta.url), 'utf8'))));
+
+/* A paused Spotify session on the living-room Google TV outlived the room by a
+   day: every cast reconnect re-announced it as paused with fresh timestamps.
+   The screen it plays through is the witness. */
+{
+  const grannies = { media_content_type: 'music', media_title: 'Here Come the Grannies!', app_id: 'spotify' };
+  const lr = { entity_id: 'media_player.lr_cast', state: 'paused', attributes: grannies };
+  const screens = SH.helpers.screensOf({ sections: [{ players: [{ entity: 'media_player.lr_cast', screen: 'media_player.lr_tv' }] }] });
+  check('screen: is collected from anywhere in the config',
+    screens['media_player.lr_cast'] === 'media_player.lr_tv');
+  const hassWith = (tv) => ({ states: { 'media_player.lr_tv': { state: tv } } });
+  check('a paused room whose screen is off is not now playing',
+    !liveMusic(lr, hassWith('off'), screens));
+  check('a paused room whose screen is on still is',
+    !!liveMusic(lr, hassWith('on'), screens));
+  check('a PLAYING room is trusted whatever the screen says',
+    !!liveMusic({ ...lr, state: 'playing' }, hassWith('off'), screens));
+  check('an unreadable screen hides nothing — missing is not off',
+    !!liveMusic(lr, hassWith('unavailable'), screens) && !!liveMusic(lr, { states: {} }, screens));
+  check('a room with no screen: is untouched',
+    !!liveMusic({ ...lr, entity_id: 'media_player.kitchen' }, hassWith('off'), screens));
+}
 
 /* ---- climate setpoint: optimistic, and steppable more than once ---- */
 /* GTTC takes several seconds to acknowledge a setpoint. The stepper read the
@@ -8963,7 +8989,10 @@ check('every borrowed name resolved', DK.helpers.borrowMissing.length === 0);
    a message naming the method and its caller. */
 check('a borrowed method calls nothing the desk cannot reach', (() => {
   const borrowed = DK.helpers.borrowed || [];
-  const own = new Set(Object.getOwnPropertyNames(DK.prototype));
+  /* Inherited counts: a method on PcBaseCard is reachable from both cards. */
+  const own = new Set();
+  for (let p = DK.prototype; p && p !== Object.prototype; p = Object.getPrototypeOf(p))
+    Object.getOwnPropertyNames(p).forEach((n) => own.add(n));
   const set = new Set(borrowed);
   const bad = [];
   for (const name of borrowed) {

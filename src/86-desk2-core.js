@@ -785,7 +785,7 @@ class PurdyDesk2Card extends PurdyShellCard {
     const rows = [];
     ((this._config.now_playing || {}).players || []).forEach((p) => {
       const st = h.states[p.entity];
-      if (!psLiveMusic(st)) return;
+      if (!this._liveMusic(st)) return;
       const a = st.attributes;
       const art = a.entity_picture_local;
       /* WHERE, first. On a desk built around the nursery, white noise with no

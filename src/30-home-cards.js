@@ -160,6 +160,12 @@ function pcAction(node, hass, action, fallbackEntity) {
 
 /* Shared plumbing: re-render only when a watched entity actually changed. */
 class PcBaseCard extends HTMLElement {
+  /* pcLiveMusicState with this card's hass and its configured screens. The
+     map is rebuilt only when the config object changes. */
+  _liveMusic(st) {
+    if (this._screensFor !== this._config) { this._screensFor = this._config; this._screens = pcScreensOf(this._config); }
+    return pcLiveMusicState(st, this._hass, this._screens);
+  }
   constructor() {
     super();
     this.attachShadow({ mode: "open" });

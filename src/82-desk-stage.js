@@ -781,7 +781,7 @@ Object.assign(PurdyDeskCard.prototype, {
        room reports "Bluey Theme Tune" hours after it stopped. psLiveMusic is
        the shared rule; this used to be written out here, which is how the
        shell's copies stayed broken after this one was fixed. */
-    const live = !!psLiveMusic(st);
+    const live = !!this._liveMusic(st);
     const title = live ? st.attributes.media_title : null;
     const art = live ? st.attributes.entity_picture_local : null;
     const artist = live ? (st.attributes.media_artist || st.attributes.media_album_name) : null;
