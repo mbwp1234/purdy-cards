@@ -5440,6 +5440,47 @@ check('dispatch reads the room list from the helper the script obeys',
   /data-crewroom="input_select\.room"/.test(crewVac));
 check('the hero names the room it would clean', /Clean Living Room/.test(crewVac));
 
+/* room_multi: a SET within one floor plus "All". Nothing picked is the whole
+   floor; a pick never spans floors because one run is one map; the go button
+   carries the set to the script rather than writing the one-room helper. */
+{
+  const mcfg = { ...crewCfg, vacuum: { ...crewCfg.vacuum, room_multi: true } };
+  const mk = (pick) => { const s = mkCrew(); if (pick) s._crewPick = pick; return s; };
+  const opts = crewStates['input_select.room'].attributes.options;
+  const one = opts.filter((o) => o.startsWith('1F'));
+  const two = opts.filter((o) => o.startsWith('2F'));
+  const none = mk()._crewRooms(mcfg.vacuum);
+  check('multi: an All chip leads and is lit when nothing is picked',
+    /ps-cwroom all on[^>]*data-crewpick=""/.test(none));
+  check('multi: rooms are toggles, not helper writes',
+    /data-crewpick="1F - /.test(none) && !/data-crewroom=/.test(none));
+  check('multi: nothing picked says Clean all and names the floor',
+    mk()._crewGoMulti(mcfg.vacuum).text === 'Clean all · 1F');
+  const both = mk({ floor: '1F', rooms: one.slice(0, 2) });
+  const bh = both._crewRooms(mcfg.vacuum);
+  check('multi: two picked rooms are both lit and All goes dark',
+    (bh.match(/ps-cwroom on/g) || []).length === 2 && !/ps-cwroom all on/.test(bh));
+  const g2 = both._crewGoMulti(mcfg.vacuum);
+  check('multi: two rooms read as a count', g2.text === 'Clean 2 rooms');
+  check('multi: the button carries the floor and the exact set',
+    /data-floor="1F"/.test(g2.attrs) && g2.attrs.includes(psEsc(JSON.stringify(one.slice(0, 2)))));
+  check('multi: one room is named', mk({ floor: '1F', rooms: [one[0]] })._crewGoMulti(mcfg.vacuum).text === 'Clean ' + one[0].slice(5));
+  check('multi: a room from another floor never rides along',
+    mk({ floor: '1F', rooms: [one[0], two[0]] })._crewPickOf(mcfg.vacuum).rooms.length === 1);
+  check('multi: a room the helper no longer offers drops out',
+    mk({ floor: '1F', rooms: ['1F - Gone'] })._crewPickOf(mcfg.vacuum).rooms.length === 0);
+  check('multi: the pick decides the tab',
+    /ps-cwtab on[^>]*data-crewfloor="2F"/.test(mk({ floor: '2F', rooms: [two[0]] })._crewRooms(mcfg.vacuum)));
+  check('without room_multi the helper picker is unchanged',
+    /data-crewroom=/.test(mkCrew()._crewRooms(crewCfg.vacuum)) && !/data-crewpick/.test(mkCrew()._crewRooms(crewCfg.vacuum)));
+  const src = fs.readFileSync(new URL('../src/78-shell-crew.js', import.meta.url), 'utf8');
+  check('multi: the go handler sends floor and rooms as script variables',
+    /variables: \{ floor: el\.getAttribute\("data-floor"\), rooms \}/.test(src));
+  check('multi: the pick handler is bound', /this\._each\("\[data-crewpick\]"/.test(src));
+  const sky = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
+  check('Skylight: the vacuum button speaks the multi pick', /this\._crewGoMulti\(v\)/.test(sky) && /go \? go\.attrs/.test(sky));
+}
+
 /* Only consumables that are actually low earn a line; deep clean is gone —
    it named a house routine no longer in use. */
 /* The map sheet's only door was the Quick tile's tap_action, and replacing

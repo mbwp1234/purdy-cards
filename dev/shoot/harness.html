@@ -238,6 +238,9 @@ function buildHass(states) {
          `theme=` pins it the way `sky=` pins the hour. */
       if (P.get("tab")) { el._skTab = P.get("tab"); touched = true; }
       if (P.get("face")) { el._skFace = P.get("face"); touched = true; }
+      /* The vacuum's multi-room pick lives on the card, not in a helper, so it
+         is unphotographable without writing it: vacpick=1F - Kitchen|1F - Bathroom */
+      if (P.get("vacpick")) { const r = P.get("vacpick").split("|"); el._crewPick = { floor: r[0].split(" - ")[0], rooms: r }; touched = true; }
       if (P.get("theme")) { el._skThemeCfg = P.get("theme"); touched = true; }
       if (P.get("sheet")) { el._sheet = P.get("sheet"); touched = true; }
       /* WHICH person the sheet is showing. The sheet is opened by tapping an

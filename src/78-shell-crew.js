@@ -341,6 +341,17 @@ Object.assign(PurdyShellCard.prototype, {
       groups.forEach((g) => { if (g.name === this._crewFloor) active = g.name; });
     }
 
+    /* `room_multi:` — a SET within one floor, plus an "All" chip. The robot
+       runs one map at a time, so a pick never spans floors: the floor of the
+       pick is the active tab, and changing tab drops the pick. Nothing picked
+       IS "All" — the empty set has to mean something, and the whole floor is
+       the only thing it could. The set lives on the card, not in a helper,
+       because the input_select can hold one room and the bedtime automation
+       still reads it. */
+    const multi = !!v.room_multi;
+    const pick = multi ? this._crewPickOf(v) : null;
+    if (pick && pick.rooms.length) active = pick.floor;
+
     const tabs = groups.length > 1
       ? `<div class="ps-cwtabs">${groups.map((g) =>
         `<button class="ps-cwtab ${g.name === active ? "on" : ""}" type="button"
@@ -350,11 +361,48 @@ Object.assign(PurdyShellCard.prototype, {
     let chips = "";
     groups.forEach((g) => {
       if (g.name !== active) return;
+      if (multi) {
+        const on = (o) => pick.rooms.indexOf(o) >= 0;
+        chips = `<button class="ps-cwroom all ${pick.rooms.length ? "" : "on"}" type="button"
+           data-crewpick="" data-floor="${psEsc(g.name)}" aria-pressed="${!pick.rooms.length}">All</button>`
+          + g.rooms.map((r) =>
+            `<button class="ps-cwroom ${on(r.option) ? "on" : ""}" type="button"
+               data-crewpick="${psEsc(r.option)}" data-floor="${psEsc(g.name)}" aria-pressed="${on(r.option)}">${psEsc(r.label)}</button>`).join("");
+        return;
+      }
       chips = g.rooms.map((r) =>
         `<button class="ps-cwroom ${r.option === cur ? "on" : ""}" type="button"
            data-crewroom="${psEsc(v.room_select)}" data-val="${psEsc(r.option)}">${psEsc(r.label)}</button>`).join("");
     });
     return `${tabs}<div class="ps-cwrooms">${chips}</div>`;
+  },
+
+  /* The multi-room pick, validated against the helper's options as they are
+     NOW: a room renamed or removed since it was tapped drops out rather than
+     being sent to a script that cannot map it. The floor comes from the pick,
+     else the tab, else the helper's own room. */
+  _crewPickOf(v) {
+    const sel = v.room_select && this._hass && this._hass.states[v.room_select];
+    const opts = sel && Array.isArray(sel.attributes.options) ? sel.attributes.options : [];
+    const floorOf = (o) => { const i = String(o).indexOf(" - "); return i > 0 ? o.slice(0, i) : ""; };
+    const raw = this._crewPick || { floor: null, rooms: [] };
+    const rooms = raw.rooms.filter((o) => opts.indexOf(o) >= 0 && floorOf(o) === raw.floor);
+    const floors = opts.map(floorOf);
+    let floor = rooms.length ? raw.floor : null;
+    if (floor == null && this._crewFloor != null && floors.indexOf(this._crewFloor) >= 0) floor = this._crewFloor;
+    if (floor == null && sel) floor = floorOf(sel.state);
+    if (floor == null || floors.indexOf(floor) < 0) floor = floors[0] || "";
+    return { floor, rooms };
+  },
+
+  /* What the go button says and sends under `room_multi`. */
+  _crewGoMulti(v) {
+    const p = this._crewPickOf(v);
+    const label = (o) => { const i = String(o).indexOf(" - "); return i > 0 ? o.slice(i + 3) : o; };
+    const text = !p.rooms.length ? `Clean all${p.floor ? ` · ${p.floor}` : ""}`
+      : p.rooms.length === 1 ? `Clean ${label(p.rooms[0])}` : `Clean ${p.rooms.length} rooms`;
+    const attrs = ` data-floor="${psEsc(p.floor)}" data-rooms="${psEsc(JSON.stringify(p.rooms))}"`;
+    return { text, attrs };
   },
 
   _crewBtn(label, icon, attrs) {
@@ -870,6 +918,23 @@ Object.assign(PurdyShellCard.prototype, {
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         this._crewFloor = el.getAttribute("data-crewfloor");
+        if (this._crewPick && this._crewPick.floor !== this._crewFloor) this._crewPick = null;
+        this._render();
+      });
+    });
+
+    /* A set: tap adds, tap again removes; "All" (empty value) clears. A pick
+       on another floor starts over, because one run is one map. */
+    this._each("[data-crewpick]", (el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const o = el.getAttribute("data-crewpick");
+        const floor = el.getAttribute("data-floor");
+        const cur = this._crewPick && this._crewPick.floor === floor ? this._crewPick.rooms.slice() : [];
+        const i = cur.indexOf(o);
+        const rooms = !o ? [] : i >= 0 ? cur.filter((x) => x !== o) : cur.concat([o]);
+        this._crewPick = { floor, rooms };
+        this._crewFloor = floor;
         this._render();
       });
     });
@@ -913,6 +978,13 @@ Object.assign(PurdyShellCard.prototype, {
         const script = el.getAttribute("data-script");
         const st = pcState(this._hass, ent);
         if (st === "cleaning") { this._hass.callService("vacuum", "pause", { entity_id: ent }); return; }
+        if (script && el.hasAttribute("data-floor")) {
+          let rooms = [];
+          try { rooms = JSON.parse(el.getAttribute("data-rooms") || "[]"); } catch (err) { rooms = []; }
+          this._hass.callService("script", "turn_on", { entity_id: script,
+            variables: { floor: el.getAttribute("data-floor"), rooms } });
+          return;
+        }
         if (script) { this._hass.callService("script", "turn_on", { entity_id: script }); return; }
         this._hass.callService("vacuum", "start", { entity_id: ent });
       });
