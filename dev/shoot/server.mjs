@@ -91,6 +91,8 @@ const WS_OK = new Set([
   /* Daily min/mean/max for the weather rail. A read, and a cheap one: eight
      rows where history/period would answer with every state change for a week. */
   "recorder/statistics_during_period",
+  /* The Garage integration's snapshot: what is due, where, and when. A read. */
+  "garage/get",
 ]);
 /* Services that only ANSWER. music_assistant.search and get_queue are how the
  * music sheet gets its results and its up-next line, so refusing them would
@@ -350,7 +352,7 @@ const server = http.createServer(async (req, res) => {
      * does not exist. Images only, and GET only. */
     if (u.pathname.startsWith("/api/")) {
       const p = u.pathname.slice(5) + (u.search || "");
-      const isImage = /^(image\/|media_player_proxy\/|camera_proxy\/|tts_proxy\/|person\/)/.test(p);
+      const isImage = /^(image\/|media_player_proxy\/|camera_proxy\/|tts_proxy\/|person\/|garage\/[^/?]+\/image$)/.test(p);
       if (req.method !== "GET" || !isImage) { noteRefusal(`${req.method} /api/${p}`); return send(res, 403, "text/plain", "read-only harness"); }
       const r = await fetch(`${HA}/api/${p}`, { headers: { authorization: "Bearer " + TOKEN } });
       const buf = Buffer.from(await r.arrayBuffer());

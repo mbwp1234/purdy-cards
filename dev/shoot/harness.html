@@ -132,6 +132,9 @@ function buildHass(states) {
       return r;
     }, "callApi " + apiPath),
 
+    /* Same-origin GET through the harness's own /api image proxy (allowlisted). */
+    fetchWithAuth: (url) => fetch(url),
+
     callWS: (msg) => tracked(async () => {
       const r = await post("/h/ws", msg);
       if (r.error) throw new Error(r.error);

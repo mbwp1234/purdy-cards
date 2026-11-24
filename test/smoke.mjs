@@ -11646,6 +11646,62 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   check('the bar title is painted on its own node and hidden at zero (iOS stale-paint guard)',
     /bt\.style\.opacity = op;/.test(skSrc) && /bt\.style\.visibility = title > 0 \? "visible" : "hidden";/.test(skSrc));
   check('Home\'s Joel tiles never repeat the big number', /n\.longestStretch !== n\.asleepMinutes/.test(pgSrc) && !/Still asleep/.test(pgSrc));
+
+  /* ---- v1.99.0: the vehicle (Garage integration) ------------------------- */
+  {
+    const VEH = {
+      entry_id: 'e1', name: 'Truck', tank_l: 80, fuel_entity: 'sensor.fuel',
+      summary: { over: 3, soon: 2, nolog: 7, ok: 4, next: { n: 7, short: 'Rear diff', remaining: 342, eta: '2026-10-07' } },
+      items: [{ n: 1, zone: 'engine', status: 'over' }, { n: 7, zone: 'rear', status: 'soon' }, { n: 3, zone: 'cabin', status: 'nolog' },
+        { n: 9, zone: 'engine', status: 'ok' }],
+    };
+    const mkVeh = (states, vehicle) => {
+      const c = skCfg();
+      c.vehicle = { entity: 'sensor.over', next: 'sensor.next', path: '/garage' };
+      const s2 = new SK(); s2.setConfig(c);
+      const h = d2Hass();
+      h.states['sensor.over'] = { state: '3', attributes: {}, last_updated: 'a' };
+      h.states['sensor.next'] = { state: 'Rear diff', attributes: {}, last_updated: 'b' };
+      Object.assign(h.states, states || {});
+      const asked = [];
+      h.callWS = (m) => { asked.push(m); return Promise.resolve({ vehicle: vehicle || VEH, settings: { hotspots: { engine: [30, 30], rear: [80, 70], cabin: [50, 30] } } }); };
+      s2._hass = h; s2._render = () => {}; s2._testNow = new Date(2026, 8, 23, 15, 0).getTime();
+      return { s2, asked };
+    };
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    check('no vehicle: key, no truck card and no House row', () => {
+      const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
+      return s2._skVehicleHome() === null && !/data-sknav/.test(s2._skHouse()) && !/id="sk-c-truck"/.test(s2._skHome([]).html);
+    });
+    const a = mkVeh({ 'sensor.fuel': { state: '40', attributes: {} } });
+    a.s2._skHome([]);
+    await settle(); await settle();
+    a.s2._skVehImg = 'blob:x';
+    const homeV = a.s2._skHome([]);
+    check('the truck card reads garage/get once, not per render', a.asked.length === 1 && a.asked[0].type === 'garage/get');
+    check('the truck card is one number: how many are overdue', /id="sk-c-truck"/.test(homeV.html) && /sk-vnum over"><b>3<\/b><span>overdue/.test(homeV.html));
+    check('the chip is the next service ETA, not the count again', /Rear diff ≈ 2 wk/.test(homeV.html) && !/ps-chip[^<]*3 overdue/.test(homeV.html));
+    check('dots mark overdue and due-soon zones only (never-logged is not a dot on Home)', (homeV.html.match(/class="sk-vdot /g) || []).length === 2 &&
+      /sk-vdot over/.test(homeV.html) && /sk-vdot soon/.test(homeV.html));
+    check('the truck card leaves a pill that says how many are due', /data-skpill="truck"/.test(homeV.pills) && /3 due/.test(homeV.pills));
+    check('the truck card opens the Garage panel', /data-sknav="\/garage"/.test(homeV.html) && /pcNavigate\(this, el\.dataset\.sknav\)/.test(skSrc));
+    check('fuel is drawn from the live tank', /sk-vcap"><i style="width:50%"><\/i><\/span><span>50%/.test(homeV.html));
+    check('the House tab carries the truck as a row', /class="sk-card sk-rowcard" type="button" data-sknav="\/garage"/.test(a.s2._skHouse()) && /3 overdue · next Rear diff/.test(a.s2._skHouse()));
+    check('the vehicle sensors are watched (a top-level key the section walk never sees)', () => {
+      const w = a.s2._collectWatched();
+      return w.indexOf('sensor.over') >= 0 && w.indexOf('sensor.next') >= 0;
+    });
+    const b = mkVeh({ 'sensor.fuel': { state: 'unavailable', attributes: {} } });
+    b.s2._skHome([]); await settle(); await settle();
+    const homeB = b.s2._skHome([]);
+    check('a sleeping truck\'s tank is missing, never empty', /sk-vcap none"><i style="width:0%"><\/i><\/span><span>—/.test(homeB.html) && !/<span>0%<\/span>/.test(homeB.html));
+    check('a changed overdue sensor fetches again', () => {
+      b.s2._hass.states['sensor.over'] = { state: '2', attributes: {}, last_updated: 'c' };
+      b.s2._skVehLoad();
+      return b.asked.length === 2;
+    });
+  }
 }
 
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');

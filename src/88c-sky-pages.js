@@ -702,6 +702,8 @@ Object.assign(PurdySkyCard.prototype, {
     if (crew && crew.washer && crew.washer.entity) parts.push(this._skCard("washer", this._skWasher(crew.washer), null, "sk-pad"));
     const s = this._sysCfg && this._sysCfg();
     if (s) parts.push(this._skCard("nas", this._skNasCard(s)));
+    const veh = this._skVehicleRow();
+    if (veh) parts.push(veh);
     if ((this._config.sheets || {}).notifications) {
       const n = this._logOpenCount();
       parts.push(`<button class="sk-card sk-rowcard" type="button" data-sheet="notifications">

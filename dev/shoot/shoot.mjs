@@ -159,6 +159,11 @@ const PRESETS = {
   "sky-listen":       [PHONE, SKY + "&theme=light&tab=media&face=listen"],
   "sky-house":        [PHONE, SKY + "&theme=light&tab=house"],
   "sky-house-dark":   [PHONE, SKY + "&theme=dark&tab=house"],
+  /* The Garage card on Home and its House row. patches/vehicle.json names the
+     Garage sensors (see vehicle.example.json). */
+  "sky-veh":          [PHONE, SKY + "&theme=light&patch=vehicle"],
+  "sky-veh-dark":     [PHONE, SKY + "&theme=dark&patch=vehicle"],
+  "sky-veh-house":    [PHONE, SKY + "&theme=light&tab=house&patch=vehicle"],
   "sky-house-multi":  [PHONE, SKY + "&theme=light&tab=house&patch=vacmulti"],
   "sky-house-multi2": [PHONE, SKY + "&theme=light&tab=house&patch=vacmulti&vacpick=" + encodeURIComponent("1F - Kitchen|1F - Living Room")],
   "sky-nas":          [PHONE, SKY + "&theme=light&mode=systems&page=overview"],

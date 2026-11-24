@@ -1,0 +1,1 @@
+{"vehicle": {"entity": "sensor.<vehicle>_services_overdue", "next": "sensor.<vehicle>_next_service", "fuel": "sensor.<vehicle>_fuel", "path": "/garage"}}
