@@ -329,7 +329,14 @@ Object.assign(PurdySkyCard.prototype, {
     const id = sec.goal || sec.thermostat;
     const th = h.states[sec.goal] || h.states[sec.thermostat];
     const ct = th ? th.attributes.current_temperature : null;
-    const cur = ct == null || ct === "" ? null : Number(ct);   // Number(null) is 0
+    /* GTTC publishes the active zone's temperature ROUNDED (72 against the
+       zone sensor's 72.3), and the dial printed it as "72.0° 2nd Floor" right
+       above a 2nd Floor tile reading 72.3°. The zone sensor is the reading
+       the label names, so the dial reads it; GTTC's figure is the fallback. */
+    const zc = sec.zones || {};
+    const zAct = (zc.options || []).find((z) => z.temp && pcState(h, zc.select) === z.option);
+    const zt = zAct ? pcNum(h, zAct.temp) : null;
+    const cur = zt != null ? zt : ct == null || ct === "" ? null : Number(ct);   // Number(null) is 0
     const goal = th ? this._optGoal(id, this._climGoalReal(th)) : null;
     const band = this._climateBand(sec);
     const action = th ? String(th.attributes.hvac_action || "idle") : "";
@@ -452,8 +459,32 @@ Object.assign(PurdySkyCard.prototype, {
             <span class="nm">${psEsc(x.r.name)}<small>${x.via ? `via ${psEsc(x.via)}` : x.hu != null ? `${Math.round(x.hu)}% humidity` : x.t == null ? "not reporting" : "&nbsp;"}</small></span>
             ${this._skSpark(x, 64, 26)}${this._skRoomVal(x)}</button>`).join("")}</div>
       </div>`);
-    if (sec.graph) parts.push(`<div class="sk-card sk-pad"><div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="mdi:home-thermometer-outline"></ha-icon></span><span class="sk-hn">Inside and out</span></div>${this._waveSvg(sec)}</div>`);
+    if (sec.graph) parts.push(this._skWaveCard(sec));
     return parts.join("");
+  },
+
+  /* Inside and out over the graph's window. The shell's wave is a bare
+     picture — on the phone its legend and range sit in the section around
+     it, and here they were never drawn: two unlabelled lines with no scale
+     and no clock. The key names each line with its reading now, the range
+     says what the height spans, and the axis says when. */
+  _skWaveCard(sec) {
+    const svg = this._waveSvg(sec);
+    const head = `<div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="mdi:home-thermometer-outline"></ha-icon></span><span class="sk-hn">Inside and out</span>${
+      svg && this._waveRange ? `<span class="ps-chip">${Math.round(this._waveRange.lo)}–${Math.round(this._waveRange.hi)}°</span>` : ""}</div>`;
+    if (!svg) return `<div class="sk-card sk-pad">${head}<div class="sk-empty">${this._histErr ? "History would not load" : "No history yet"}</div></div>`;
+    const g = sec.graph || {};
+    const inNow = pcNum(this._hass, g.inside), outNow = pcNum(this._hass, g.outside);
+    const key = (col, name, v) => `<span class="sk-key" style="--c:${col}"><i></i>${name}<b>${v == null ? "—" : pcDeg(Math.round(v * 10) / 10) + "°"}</b></span>`;
+    const hours = g.hours || 24, now = this._nowMs();
+    const ax = [0, 1, 2, 3, 4].map((k) => {
+      if (k === 4) return "<span>now</span>";
+      const t = now - hours * 3600000 + k * hours / 4 * 3600000;
+      return `<span>${psEsc(new Date(t).toLocaleTimeString([], { hour: "numeric" }).replace(/\s?([AP])M/i, (m, x) => x.toLowerCase()))}</span>`;
+    }).join("");
+    return `<div class="sk-card sk-pad">${head}
+        <div class="sk-keys">${key("var(--ps-cool)", "Inside", inNow)}${key("var(--ps-heat)", "Outside", outNow)}</div>
+        <div class="sk-wave">${svg}</div><div class="sk-wax">${ax}</div></div>`;
   },
 
   /* All rooms over 24 hours on one scale. The row under the chart lights its
@@ -502,12 +533,18 @@ Object.assign(PurdySkyCard.prototype, {
       const cx = cw * i + cw / 2, id = "skw" + (++skUid);
       const a = d.lo == null ? d.hi : d.lo, b = d.hi == null ? d.lo : d.hi;
       s += `<rect x="${(cx - 6).toFixed(1)}" y="${top}" width="12" height="${bot - top}" rx="6" class="trk"/>`;
+      /* Where the drawn capsule actually ends. A day with one end (NWS drops
+         today's high in the evening) draws a 12px stub CENTRED on its value;
+         the labels used to hang off the value itself, so the low's number sat
+         on top of its own stub. */
+      let cTop = b == null ? null : y(b), cBot = a == null ? null : y(a);
       if (a != null && b != null) {
+        if (cBot - cTop < 12) { const m = (cTop + cBot) / 2; cTop = m - 6; cBot = m + 6; }
         s += `<defs><linearGradient id="${id}" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="${skTempCol(a)}"/><stop offset="1" stop-color="${skTempCol(b)}"/></linearGradient></defs>`;
-        s += `<rect x="${(cx - 6).toFixed(1)}" y="${y(b).toFixed(1)}" width="12" height="${Math.max(12, y(a) - y(b)).toFixed(1)}" rx="6" fill="url(#${id})"/>`;
+        s += `<rect x="${(cx - 6).toFixed(1)}" y="${cTop.toFixed(1)}" width="12" height="${(cBot - cTop).toFixed(1)}" rx="6" fill="url(#${id})"/>`;
       }
-      if (d.hi != null) s += `<text x="${cx.toFixed(1)}" y="${(y(d.hi) - 7).toFixed(1)}" text-anchor="middle" class="hi">${Math.round(d.hi)}</text>`;
-      if (d.lo != null) s += `<text x="${cx.toFixed(1)}" y="${(y(d.lo) + 15).toFixed(1)}" text-anchor="middle" class="lo">${Math.round(d.lo)}</text>`;
+      if (d.hi != null) s += `<text x="${cx.toFixed(1)}" y="${(cTop - 7).toFixed(1)}" text-anchor="middle" class="hi">${Math.round(d.hi)}</text>`;
+      if (d.lo != null) s += `<text x="${cx.toFixed(1)}" y="${(cBot + 15).toFixed(1)}" text-anchor="middle" class="lo">${Math.round(d.lo)}</text>`;
       if (d.today && live != null) s += `<circle cx="${cx.toFixed(1)}" cy="${y(live).toFixed(1)}" r="6.5" fill="var(--sk-card)" stroke="var(--ps-text)" stroke-width="3"/>`;
       s += `<text x="${cx.toFixed(1)}" y="${H - 22}" text-anchor="middle" class="dw${d.today ? " td" : ""}">${psEsc(this._wxDow(d.ts, d.today))}</text>`;
       if (d.pop != null && d.pop >= 40) s += `<text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" class="pop">${Math.round(d.pop)}%</text>`;
@@ -719,9 +756,11 @@ Object.assign(PurdySkyCard.prototype, {
           <div class="st3 wide"><b>${miles == null ? "—" : "≈" + miles.toFixed(1) + " mi"}</b><span>${runs == null ? "Lifetime" : `${Math.round(runs)} runs`}</span></div>
         </div>
       </div>
-      ${wear.length ? `<div class="sk-wear" style="--n:${wear.length}">${wear.map((w) => `<div class="sk-wr${w.v != null && w.v <= (w.warn_below == null ? 20 : w.warn_below) ? " due" : ""}">
+      ${wear.length ? `<div class="sk-wear" style="--n:${wear.length}">${wear.map((w, i) => `<div class="sk-wr${w.v != null && w.v <= (w.warn_below == null ? 20 : w.warn_below) ? " due" : ""}"
+          data-skpart="${i}" role="button" tabindex="0" aria-label="${psEsc(w.label)} ${w.v == null ? "no reading" : Math.round(w.v) + "%"}, hold to clean">
           <span class="r">${w.v == null ? `<span class="hatch"></span>` : this._skRing(w.v, 44, 5, w.v <= (w.warn_below == null ? 20 : w.warn_below) ? "var(--ps-warn)" : "var(--ps-good)")}<b>${w.v == null ? "—" : Math.round(w.v) + "%"}</b></span>
-          <span>${psEsc(w.label)}</span></div>`).join("")}</div>` : ""}
+          <span>${psEsc(w.label)}</span></div>`).join("")}</div>
+        <div class="sk-wearhint">hold a part to clean it</div>` : ""}
       ${this._skVacOpts(v, sib)}
       <div class="sk-vrooms">${this._crewRooms(v)}</div>
       <button class="sk-bigbtn pri wide vac" type="button" data-crewgo="${psEsc(v.entity)}" data-script="${psEsc(v.room_script || "")}">
@@ -749,6 +788,37 @@ Object.assign(PurdySkyCard.prototype, {
         <button class="sk-optsum" type="button" data-skvacopts aria-expanded="${open}">
           <ha-icon icon="mdi:tune-variant"></ha-icon><span class="ps-grow">${now.map(psEsc).join(" · ")}</span><ha-icon icon="${open ? "mdi:chevron-up" : "mdi:chevron-down"}"></ha-icon></button>
         ${open ? ids.map(([id, label]) => this._skSelSeg(id, label)).join("") : ""}
+      </div>`;
+  },
+
+  /* The part sheet, opened by holding a wear ring: how to clean that part and
+     the vacuum's own reset for it. Holding is the gesture because the rings
+     sit in a scrolling card — a tap on one would be one stray thumb away from
+     resetting a counter. The sheet IS the confirmation, so its button needs
+     no second arm. `reset:` names the Dreame button per part; a part without
+     one still gets the instructions, and says it cannot be marked done here. */
+  _skPartSheet() {
+    const crew = this._skSec("crew");
+    const v = crew && crew.vacuum;
+    const w = v && (v.wear || [])[this._skPart];
+    if (!w) return "";
+    const h = this._hass;
+    const val = pcNum(h, w.entity);
+    const lim = w.warn_below == null ? 20 : w.warn_below;
+    const due = val != null && val <= lim;
+    const how = w.how || SK_PART_HOW[String(w.label || "").toLowerCase()] || "Clean it, then mark it done here.";
+    const reset = w.reset && h.states[w.reset] ? w.reset : null;
+    const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+    return `<div class="ps-scrim" id="ps-scrim"></div>
+      <div class="ps-sheet">
+        <div class="ps-sheeth"><span class="ps-lbl">${psEsc(v.name || "Vacuum")} · ${psEsc(w.label)}</span>${close}</div>
+        <div class="sk-part">
+          <span class="r">${val == null ? `<span class="hatch"></span>` : this._skRing(val, 96, 9, due ? "var(--ps-warn)" : "var(--ps-good)")}<b class="${due ? "due" : ""}">${val == null ? "—" : Math.round(val) + "%"}</b></span>
+          <p>${psEsc(how)}</p>
+          ${reset ? `<button class="sk-bigbtn pri wide" type="button" data-skpartdone="${psEsc(reset)}"><ha-icon icon="mdi:check"></ha-icon>Cleaned · reset to 100%</button>`
+            : `<div class="sk-empty">This part has no reset button configured.</div>`}
+        </div>
       </div>`;
   },
 
@@ -908,6 +978,15 @@ function skTB(str) {
   const n = parseFloat(m[1]);
   return n * ({ K: 1e-9, M: 1e-6, G: 1e-3, T: 1 }[m[2].toUpperCase()]);
 }
+
+/* One line on cleaning each part, keyed by its label. Config `how:` wins. */
+const SK_PART_HOW = {
+  "filter": "Tap the dust out over a bin. Replace it if it is torn or still clogged.",
+  "side brush": "Pull off wrapped hair. Replace it if the bristles are bent.",
+  "main brush": "Lift it out, cut away the hair, and clear both end caps.",
+  "wheel": "Wipe the wheels and pull out any hair around the axles.",
+  "sensors": "Wipe the cliff and wall sensors with a dry cloth.",
+};
 
 /* Short words for the vacuum's select options, so a segmented row fits a phone. */
 const SK_SHORT = {

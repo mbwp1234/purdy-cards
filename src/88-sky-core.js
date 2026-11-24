@@ -61,6 +61,16 @@ function skKelvin(k) {
 
 const skClamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 
+/* The word for a likely-wet day. The chip is there BECAUSE precipitation is
+   likely, but NWS keys the day by its daytime condition, which can be
+   "cloudy" over a 91% chance of rain — and "Cloudy Wed · 91%" read as a 91%
+   chance of clouds. A wet condition keeps its own word; anything else says
+   rain. */
+const SK_WET = /^(rainy|pouring|lightning|lightning-rainy|snowy|snowy-rainy|hail)$/;
+function skWetWord(cond) {
+  return SK_WET.test(String(cond || "")) ? (pcWxText(cond) || "Rain") : "Rain";
+}
+
 class PurdySkyCard extends PurdyShellCard {
   static getStubConfig() {
     return { weather: "weather.home", sections: [] };
@@ -83,6 +93,31 @@ class PurdySkyCard extends PurdyShellCard {
       const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f) => setTimeout(f, 16);
       raf(() => { this._skTick = false; this._skFrame(); });
     };
+    /* A touch is a scroll until it proves otherwise — for EVERY button on the
+       card, not only the gesture controls. A finger that lands within 150ms of
+       a scroll is a thumb stopping a coasting page, and whether the browser
+       then fires a click is the browser's choice, not ours (a headless fling
+       fired one onto the climate +). So the decision is taken at the DOWN,
+       from the shell's own _scrollAt, and the click that follows is
+       swallowed in the capture phase before any handler — ours or a hosted
+       card's — can see it. Reset on every click, so one stopped scroll costs
+       exactly one tap. */
+    if (this.shadowRoot && this.shadowRoot.addEventListener) {
+      this.shadowRoot.addEventListener("pointerdown", () => {
+        this._skStopper = !!(this._scrollAt && Date.now() - this._scrollAt < 150);
+        this._skEatClick = false;
+      }, { capture: true, passive: true });
+      /* _skEatClick: a press-and-hold has already done its job, and the
+         release's click lands on whatever the hold just opened — the sheet's
+         scrim, which would close it again under the finger. */
+      this.shadowRoot.addEventListener("click", (e) => {
+        if (!this._skStopper && !this._skEatClick) return;
+        this._skStopper = false;
+        this._skEatClick = false;
+        e.stopPropagation();
+        e.preventDefault();
+      }, { capture: true });
+    }
   }
 
   setConfig(config) {
@@ -324,6 +359,11 @@ class PurdySkyCard extends PurdyShellCard {
   /* With nothing raised the bell opens the log — what WAS raised — and counts
      the log's open warnings, the desk's rule: a badge never zero is a badge
      nobody reads, so info rows do not count. */
+  _sheetHtml(faults) {
+    if (this._sheet === "skpart") return this._skPartSheet();
+    return super._sheetHtml(faults);
+  }
+
   _skBell(faults) {
     const n = faults.length;
     const logN = n ? 0 : this._logOpenCount();
@@ -379,7 +419,7 @@ class PurdySkyCard extends PurdyShellCard {
     const st = pcState(h, c.weather);
     const wx = this._weatherSection();
     const feels = wx && wx.feels_from && h.states[wx.feels_from] ? h.states[wx.feels_from].attributes.apparent_temperature : null;
-    const r = this._wxTodayRange();
+    const r = this._skTodayRange();
     const live = t;
     let today = "";
     if (r.lo != null || r.hi != null) {
@@ -409,6 +449,48 @@ class PurdySkyCard extends PurdyShellCard {
         ${today}
         ${chips ? `<div class="sk-hchips">${chips}</div>` : ""}
       </div>`;
+  }
+
+  /* Today's low and high for the hero bar. The yard thermometer sits in the
+     sun: on 2026-11-23 it read 52.9° at 8 AM, 79° by noon and 54.9° at 10 PM
+     while the NWS station said 52° — so its daily MAX is a reading of the
+     sun on the sensor, not of the air, and the bar said "35° to 79°" in
+     November. Lows happen at night, out of the sun, so the measured minimum
+     stands. The high is the forecast's when NWS still publishes today's
+     daytime period, else the highest the NWS STATION itself observed today,
+     and only with neither does the yard's maximum come back. The live tick
+     stays the yard reading — that is the number the hero prints. */
+  _skTodayRange() {
+    const r = this._wxTodayRange();
+    const st = (this._wxStats || []).find((d) => d.partial);
+    const fc = (this._wxFc || []).find((d) => d.today);
+    const air = this._skAir && this._skAir.day === new Date(this._nowMs()).toDateString() ? this._skAir : null;
+    const his = [fc && fc.hi, air && air.hi].filter((v) => v != null);
+    const los = [st && st.min, fc && fc.lo, air && air.lo].filter((v) => v != null);
+    return { ...r, lo: los.length ? Math.min(...los) : r.lo, hi: his.length ? Math.max(...his) : r.hi };
+  }
+
+  /* The station's own observations since local midnight: one history read of
+     the weather entity with its attributes, ~24 rows from NWS's hourly
+     reports. Rides the shell's weather refresh, never a timer of its own. */
+  async _fetchWeather() {
+    await Promise.all([super._fetchWeather(), this._skFetchAir()]);
+    this._last = null;
+    this._render();
+  }
+
+  async _skFetchAir() {
+    const id = (this._config.sky || {}).air_station || this._config.weather;
+    if (!id || !this._hass || !this._hass.callApi) return;
+    const from = new Date(this._nowMs()); from.setHours(0, 0, 0, 0);
+    try {
+      const res = await this._hass.callApi("GET",
+        `history/period/${from.toISOString()}?filter_entity_id=${id}&end_time=${encodeURIComponent(pcNowIso())}`);
+      const temps = ((res || [])[0] || []).map((p) => Number((p.attributes || {}).temperature)).filter(Number.isFinite);
+      this._skAir = temps.length ? { day: from.toDateString(), hi: Math.max(...temps), lo: Math.min(...temps) } : null;
+    } catch (e) {
+      this._skAir = null;   // the bar falls back to the yard's own range
+    }
   }
 
   /* Where the sun is between rise and set. sun.sun only publishes the NEXT
@@ -457,7 +539,7 @@ class PurdySkyCard extends PurdyShellCard {
     const wet = (this._wxFc || []).find((d) => d.pop != null && d.pop >= 50);
     if (!wet) return "";
     const when = wet.today ? (new Date(this._nowMs()).getHours() >= 17 ? "tonight" : "today") : this._wxDow(wet.ts, false);
-    return `<button class="ps-chip cool" type="button" data-sheet="wx"><span class="ps-dot"></span>${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(when)} · ${Math.round(wet.pop)}%</button>`;
+    return `<button class="ps-chip cool" type="button" data-sheet="wx"><span class="ps-dot"></span>${psEsc(skWetWord(wet.condition))} ${psEsc(when)} · ${Math.round(wet.pop)}%</button>`;
   }
 
   _skCard(key, body, pill, extra) {
@@ -496,7 +578,7 @@ class PurdySkyCard extends PurdyShellCard {
         const heroWet = (this._wxFc || []).find((d) => d.pop != null && d.pop >= 50);
         const weekChip = wet && heroWet && heroWet.today;
         push("week", `<div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span><span class="sk-hn">This week</span>${
-            weekChip ? `<span class="ps-chip cool"><span class="ps-dot"></span>${psEsc(pcWxText(wet.condition) || "Rain")} ${psEsc(this._wxDow(wet.ts, false))}</span>` : ""}</div>
+            weekChip ? `<span class="ps-chip cool"><span class="ps-dot"></span>${psEsc(skWetWord(wet.condition))} ${psEsc(this._wxDow(wet.ts, false))}</span>` : ""}</div>
             <div class="sk-week" data-sheet="wx" role="button" tabindex="0">${this._skWeekRail()}</div>`,
           { icon: "mdi:weather-partly-rainy", text: wet ? this._wxDow(wet.ts, false) : "Week", color: "var(--ps-cool)" }, "sk-pad");
       }
@@ -786,6 +868,46 @@ class PurdySkyCard extends PurdyShellCard {
       this._skArmed = k;
       clearTimeout(this._skArmT);
       this._skArmT = setTimeout(() => { this._skArmed = null; this._render(); }, 5000);
+      this._render();
+    }));
+    /* A wear ring: hold to open its sheet. Nothing on the down; a move past
+       8px is a scroll and lets go; the release is bound to the window so it
+       cannot be missed; and a page that moved under the finger cancels. */
+    this._each("[data-skpart]", (el) => {
+      el.addEventListener("contextmenu", (e) => e.preventDefault());
+      el.addEventListener("pointerdown", (e) => {
+        if ((e.button != null && e.button > 0) || this._skStopper) return;
+        const x0 = e.clientX, y0 = e.clientY, t0 = Date.now();
+        let timer = null;
+        const end = () => {
+          clearTimeout(timer);
+          window.removeEventListener("pointermove", mv);
+          window.removeEventListener("pointerup", end, true);
+          window.removeEventListener("pointercancel", end, true);
+          el.classList.remove("hold");
+        };
+        const mv = (ev) => { if (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8) end(); };
+        el.classList.add("hold");
+        timer = setTimeout(() => {
+          end();
+          if ((this._scrollAt || 0) > t0) return;
+          pcHaptic("medium");
+          this._skPart = Number(el.dataset.skpart);
+          this._skEatClick = true;
+          this._sheet = "skpart";
+          this._render();
+        }, 380);
+        window.addEventListener("pointermove", mv);
+        window.addEventListener("pointerup", end, true);
+        window.addEventListener("pointercancel", end, true);
+      });
+    });
+    this._each("[data-skpartdone]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = el.dataset.skpartdone;
+      pcHaptic("success");
+      this._hass.callService(id.split(".")[0], "press", { entity_id: id });
+      this._sheet = null;
       this._render();
     }));
     /* Server page tabs. */
