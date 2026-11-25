@@ -245,6 +245,8 @@ function buildHass(states) {
          is unphotographable without writing it: vacpick=1F - Kitchen|1F - Bathroom */
       if (P.get("vacpick")) { const r = P.get("vacpick").split("|"); el._crewPick = { floor: r[0].split(" - ")[0], rooms: r }; touched = true; }
       if (P.get("theme")) { el._skThemeCfg = P.get("theme"); touched = true; }
+      /* The sky's clock: a season is unphotographable eleven months a year. at=2026-12-24T23:30 */
+      if (P.get("at")) { el._skAt = new Date(P.get("at")).getTime(); touched = true; }
       if (P.get("sheet")) { el._sheet = P.get("sheet"); touched = true; }
       /* WHICH person the sheet is showing. The sheet is opened by tapping an
          avatar, and the index that tap carries is the one thing the URL has to

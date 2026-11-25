@@ -11877,5 +11877,83 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   }
 }
 
+
+/* ===========================================================================
+   v1.103.0 — the Skylight arc and the seasons
+   =========================================================================== */
+{
+  const SK = defined['purdy-sky-card'];
+  const src = fs.readFileSync(new URL('../src/88d-sky-seasons.js', import.meta.url), 'utf8');
+  const core = fs.readFileSync(new URL('../src/88-sky-core.js', import.meta.url), 'utf8');
+  /* sun.sun publishes the NEXT rise and set; the card lays their clock
+     times onto whatever day it is drawing. 07:05 and 16:56 local. */
+  const mk = (sky, weather) => {
+    const c = d2Base(); delete c.stage;
+    if (sky) c.sky = sky;
+    const s = new SK(); s.setConfig(c);
+    const h = d2Hass();
+    h.states['sun.sun'] = { state: 'below_horizon', attributes: {
+      next_rising: new Date(2026, 10, 26, 7, 5).toISOString(), next_setting: new Date(2026, 10, 26, 16, 56).toISOString() } };
+    if (weather) h.states[c.weather] = { state: weather, attributes: {} };
+    s._hass = h;
+    return s;
+  };
+  const at = (y, m, d, hh, mm) => new Date(y, m, d, hh, mm || 0);
+  const s = mk();
+  const season = (y, m, d, hh, mm) => s._skSeason(at(y, m, d, hh, mm));
+
+  check('the sky band follows the sun, not the clock: 4:58 PM in November is dusk', s._skBand(at(2026, 10, 25, 16, 58)) === 'dusk' && s._skBand(at(2026, 10, 25, 14, 0)) === 'day');
+  check('... and night arrives after the dusk glow, not at 22:00', s._skBand(at(2026, 10, 25, 19, 0)) === 'night' && s._skBand(at(2026, 10, 26, 6, 40)) === 'dawn');
+  check('without sun.sun the band falls back to the hour', () => { const t = mk(); delete t._hass.states['sun.sun']; return t._skBand(at(2026, 10, 25, 23, 0)) === 'night'; });
+
+  check('leaves fall in the run-up to Thanksgiving, not after it', season(2026, 10, 20, 12) .leaves && season(2026, 10, 26, 12).leaves && !season(2026, 10, 27, 12).leaves);
+  check('Christmas is a SEASON: the day after Thanksgiving through Jan 6', season(2026, 10, 27, 12).christmas && season(2026, 11, 10, 12).christmas && season(2027, 0, 6, 12).christmas && !season(2027, 0, 7, 12).christmas && !season(2026, 10, 26, 12).christmas);
+  check('Halloween runs the week before, after dark only — and bats replace the leaves', season(2026, 9, 26, 21).halloween && !season(2026, 9, 26, 13).halloween && !season(2026, 9, 31, 21).leaves && !season(2026, 10, 3, 21).halloween);
+  check('Santa flies the nights of Dec 23-25, and 1 AM still belongs to the night before', season(2026, 11, 23, 21).santa && season(2026, 11, 25, 1).santa && season(2026, 11, 25, 21).santa && !season(2026, 11, 26, 21).santa && !season(2026, 11, 24, 12).santa);
+  check('fireworks: the Fourth week after dark, New Year\'s Eve in gold', season(2026, 6, 3, 22).fireworks === 'usa' && season(2026, 6, 4, 12).fireworks === '' && season(2026, 11, 31, 23).fireworks === 'gold' && season(2027, 0, 1, 1).fireworks === 'gold');
+  check('the greeting changes on the day itself, and only then', /Happy <b>Thanksgiving<\/b>/.test(s._skGreeting(at(2026, 10, 26, 9))) && !/Thanksgiving/.test(s._skGreeting(at(2026, 10, 25, 9))) && /Merry <b>Christmas Eve<\/b>/.test(s._skGreeting(at(2026, 11, 24, 9))));
+  check('sky.seasons: false turns every season and holiday greeting off', () => {
+    const t = mk({ seasons: false });
+    return t._skFx(at(2026, 11, 24, 23)) === '' && !/Christmas/.test(t._skGreeting(at(2026, 11, 24, 9)));
+  });
+
+  const day = s._skArc(at(2026, 10, 25, 14, 47)), night = s._skArc(at(2026, 10, 25, 22, 58));
+  check('by day the sun rides the arc and the moon the trough below', /<span class="sk-sun" /.test(day) && /<span class="sk-moon lo" /.test(day) && !/sk-arc night/.test(day));
+  check('after dark they swap: the moon above, the sun below', /<span class="sk-moon" /.test(night) && /<span class="sk-sun lo" /.test(night) && /sk-arc night/.test(night));
+  check('the end you are heading for carries the countdown (sunset by day, sunrise by night)', /class="sk-st r"><span class="sk-stn">in 2h 9m<\/span><b>4:56<\/b>/.test(day) && /class="sk-st r"><span class="sk-stn">in 8h 7m<\/span><b>7:05<\/b>/.test(night) && !/class="sk-st l"><span class="sk-stn">/.test(day));
+  check('the travelled part is solid and the rest dashed', /class="sk-done"/.test(day) && /class="sk-ahead"/.test(day) && /\.sk-arc \.sk-ahead \{[^}]*stroke-dasharray/.test(src));
+  check('the moon\'s phase is real: a full moon draws a full disc, a new moon none', () => {
+    /* 2024-01-25 17:54 UTC full, 2024-02-09 22:59 UTC new */
+    const full = s._skMoonSvg(new Date(Date.UTC(2024, 0, 25, 17, 54))), nw = s._skMoonSvg(new Date(Date.UTC(2024, 1, 9, 22, 59)));
+    /* Lit region = a semicircle plus the terminator half-ellipse. When both
+       arcs turn the same way the region is the whole disc; opposite ways, none. */
+    const sw = (x) => { const m = x.match(/A9 9 0 0 ([01]) 0 9 A([\d.]+) 9 0 0 ([01]) 0 -9/); return m && { same: m[1] === m[3], rx: +m[2] }; };
+    const f = sw(full), n = sw(nw);
+    return f && n && f.same && !n.same && f.rx > 8.5 && n.rx > 8.5;
+  });
+  check('Halloween tints the moon; Santa nights swap the arc\'s moon for a star', /#FFB066/.test(s._skArc(at(2026, 9, 28, 22))) && /#FFE066/.test(s._skArc(at(2026, 11, 24, 23))) && !/#FFE066/.test(night));
+
+  check('the seasons live in their OWN slot, so the hero\'s tick cannot restart them',
+    /id="sk-fx"/.test(core) && /this\._patch\("sk-fx", this\._skFx\(/.test(core) && /this\._patch\("sk-herob", this\._skHero\(/.test(core));
+  check('... and the season layer carries nothing that changes on the tick', s._skFx(at(2026, 11, 10, 18, 1)) === s._skFx(at(2026, 11, 10, 18, 31)) && s._skFx(at(2026, 11, 10, 18, 1)) !== '');
+  check('snow is the WEATHER, never the date', /sk-flake/.test(mk(null, 'snowy')._skFx(at(2026, 6, 10, 12))) && !/sk-flake/.test(s._skFx(at(2026, 11, 10, 12))));
+  check('it does not rain leaves in a snowstorm', !/sk-leaf/.test(mk(null, 'snowy')._skFx(at(2026, 10, 20, 12))) && /sk-leaf/.test(s._skFx(at(2026, 10, 20, 12))));
+  check('the tree stands all season; its lights go on the sun\'s path only after dark', () => {
+    const d = s._skFx(at(2026, 11, 10, 12)), n = s._skFx(at(2026, 11, 10, 19));
+    return /class="sk-tree lit"/.test(d) && !/sk-bulb/.test(d) && /sk-bulb/.test(n) && /sk-wire/.test(n);
+  });
+  check('an unplugged tree is not an OFF tree: unavailable keeps the season, "off" draws it dark', () => {
+    const t = mk({ tree: 'light.tree' });
+    t._hass.states['light.tree'] = { state: 'unavailable', attributes: {} };
+    const un = t._skFx(at(2026, 11, 10, 19));
+    t._hass.states['light.tree'] = { state: 'off', attributes: {} };
+    const off = t._skFx(at(2026, 11, 10, 19));
+    return /sk-tree lit/.test(un) && /class="sk-tree"/.test(off) && !/sk-bulb/.test(off);
+  });
+  check('the tree switch is watched', () => { const t = mk({ tree: 'light.tree' }); return t._collectWatched().indexOf('light.tree') >= 0; });
+  check('everything stops under reduced motion', /prefers-reduced-motion: reduce\) \{\s*\.sk-fx \*, \.sk-fx \{ animation: none !important; \}/.test(src));
+  check('the old dotted arc is gone (one arc, one stylesheet)', !/_skSunArc/.test(core) && !/sk-path/.test(fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8')));
+}
+
 console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
 process.exit(fail?1:0);

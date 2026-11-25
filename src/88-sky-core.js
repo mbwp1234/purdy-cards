@@ -200,7 +200,7 @@ class PurdySkyCard extends PurdyShellCard {
           <div class="sk-barrow"><div class="sk-bart" id="sk-bart"></div><div class="sk-barr" id="sk-barr"></div></div>
           <div class="sk-pills" id="sk-pills"></div>
         </header>
-        <section class="sk-view" data-v="home"><div class="sk-hero" id="sk-hero"></div><div class="sk-stack sk-homecards" id="sk-home"></div></section>
+        <section class="sk-view" data-v="home"><div class="sk-hero" id="sk-hero"><div class="sk-heroslot" id="sk-herob"></div><div class="sk-fx" id="sk-fx"></div></div><div class="sk-stack sk-homecards" id="sk-home"></div></section>
         <section class="sk-view" data-v="joel"><div class="sk-stack" id="sk-joel"></div></section>
         <section class="sk-view" data-v="climate"><div class="sk-stack" id="sk-climate"></div></section>
         <section class="sk-view" data-v="media"><div class="sk-stack" id="sk-media"></div></section>
@@ -383,7 +383,9 @@ class PurdySkyCard extends PurdyShellCard {
     this._patch("sk-mini", view === "media" ? "" : this._miniHtml());
 
     if (view === "home") {
-      this._patch("sk-hero", this._skHero(now, faults));
+      this._patch("sk-herob", this._skHero(now, faults));
+      /* Its own slot: the seasons animate, and the hero repaints every tick. */
+      this._patch("sk-fx", this._skFx(this._skClock(now)));
       const home = this._skHome(faults);
       this._patch("sk-home", home.html);
       this._patch("sk-pills", home.pills);
@@ -521,7 +523,7 @@ class PurdySkyCard extends PurdyShellCard {
   /* The rail's head: a little sky in a square, the same band as the hero,
      with the sun or the moon in it. Words only where the sidebar has room. */
   _skBrand(now) {
-    const band = this._skyBand(now.getHours()).replace("sky-", "");
+    const band = this._skBand(this._skClock(now));
     const words = this._skHas("desk")
       ? `<span class="sk-bt"><b>Skylight</b><small>${psEsc(now.toLocaleDateString([], { weekday: "short" }))} · ${psEsc(now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</small></span>` : "";
     return `<button class="sk-brandb" type="button" data-sktab="home" aria-label="Home"><span class="sk-orb sky-${band}"><i></i></span>${words}</button>`;
@@ -580,7 +582,8 @@ class PurdySkyCard extends PurdyShellCard {
   _skHero(now, faults) {
     const c = this._config;
     const h = this._hass;
-    const band = this._skyBand(now.getHours()).replace("sky-", "");
+    const sky = this._skClock(now);
+    const band = this._skBand(sky);
     const t = c.weather_temp != null ? pcNum(h, c.weather_temp) : null;
     const st = pcState(h, c.weather);
     const wx = this._weatherSection();
@@ -602,10 +605,10 @@ class PurdySkyCard extends PurdyShellCard {
     const who = this._who();
     const chips = this._skFaultChips(faults) + this._skWetChip();
     return `
-      <div class="sk-sky sky-${band}"><div class="sk-stars"></div>${this._skSunArc(now)}</div>
+      <div class="sk-sky sky-${band}"><div class="sk-stars"></div>${this._skArc(sky)}</div>
       <div class="sk-heroin sky-${band}" id="sk-heroin">
         <div class="sk-htop"><div class="sk-ppl">${this._hdrPeople()}</div></div>
-        <div class="sk-greet" id="sk-greet"><div class="sk-hi">${this._greeting()}${who ? `, ${psEsc(who)}` : ""}</div>
+        <div class="sk-greet" id="sk-greet"><div class="sk-hi">${this._skGreeting(now)}${who ? `, ${psEsc(who)}` : ""}</div>
           <div class="sk-date">${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div></div>
         <button class="sk-temp" type="button" id="sk-temp" data-sheet="wx" aria-label="Weather: ${t == null ? "no reading" : Math.round(t) + " degrees"}">
           <span class="sk-tn">${t == null ? `<span class="ps-nodata">—</span>` : `${Math.round(t)}<sup>°</sup>`}</span>
@@ -668,37 +671,6 @@ class PurdySkyCard extends PurdyShellCard {
     } catch (e) {
       this._skAir = null;   // the bar falls back to the yard's own range
     }
-  }
-
-  /* Where the sun is between rise and set. sun.sun only publishes the NEXT
-     rise and set, so once the sun is up today's rise is tomorrow's less a day. */
-  _skSunArc(now) {
-    const s = this._hass.states["sun.sun"];
-    if (!s) return "";
-    const nr = Date.parse(s.attributes.next_rising), ns = Date.parse(s.attributes.next_setting);
-    if (!Number.isFinite(nr) || !Number.isFinite(ns)) return "";
-    const t = now.getTime();
-    let rise = nr, set = ns;
-    if (nr > ns) rise = nr - 864e5;          // the sun is up: next rise is tomorrow's
-    else if (t > ns) { rise = nr - 864e5; set = ns - 864e5; }
-    const f = (t - rise) / (set - rise);
-    const W = 400, H = 120, L = 20, R = W - 20, base = 104, top = 22;
-    const pt = (q) => [L + q * (R - L), base - Math.sin(Math.PI * skClamp(q)) * (base - top)];
-    let d = "";
-    for (let i = 0; i <= 40; i++) { const [x, y] = pt(i / 40); d += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1); }
-    const clk = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(/\s?[AP]M$/i, "");
-    /* The path stretches with the hero; the sun, the moon and the times are
-       HTML on top of it, so they stay round and upright at any width. */
-    let body = "";
-    if (f >= 0 && f <= 1) {
-      const [x, y] = pt(f);
-      body = `<span class="sk-sun" style="left:${(x / W * 100).toFixed(2)}%;top:${(y / H * 100).toFixed(2)}%"></span>`;
-    } else {
-      body = `<span class="sk-moon" style="left:88%;top:30%"></span>`;
-    }
-    return `<div class="sk-arc" aria-hidden="true">
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${base}" y2="${base}" class="sk-hz"/><path d="${d}" class="sk-path"/></svg>
-        ${body}<span class="sk-st l">${clk(rise)}</span><span class="sk-st r">${clk(set)}</span></div>`;
   }
 
   /* Named, worst first, three at most — the desk's rule. With nothing raised
@@ -792,6 +764,10 @@ class PurdySkyCard extends PurdyShellCard {
   _collectWatched() {
     const ids = super._collectWatched();
     this._skVehCfgs().forEach((v) => [v.entity, v.next, v.fuel].forEach((x) => { if (x && ids.indexOf(x) < 0) ids.push(x); }));
+    /* The real tree's switch: an off tree is drawn dark. */
+    const tree = (this._config.sky || {}).tree;
+    if (tree && ids.indexOf(tree) < 0) ids.push(tree);
+    if (ids.indexOf("sun.sun") < 0) ids.push("sun.sun");
     return ids;
   }
 
@@ -1567,6 +1543,6 @@ class PurdySkyCard extends PurdyShellCard {
   static get styles() {
     /* The shell's sheet speaks white-alpha; rewritten once so the same rules
        read on paper. */
-    return PurdyShellCard.styles.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg),") + SK_STYLES;
+    return PurdyShellCard.styles.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg),") + SK_STYLES + SK_SKY_STYLES;
   }
 }

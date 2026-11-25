@@ -196,16 +196,6 @@ const SK_STYLES = `
           radial-gradient(1.2px 1.2px at 78% 9%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 88% 46%, #fff 50%, transparent 51%),
           radial-gradient(1px 1px at 6% 60%, #fff 50%, transparent 51%), radial-gradient(1.3px 1.3px at 54% 58%, #fff 50%, transparent 51%),
           radial-gradient(1px 1px at 35% 70%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 93% 66%, #fff 50%, transparent 51%); }
-      .sk-arc { position: absolute; left: 0; right: 0; bottom: 40px; height: 78px; pointer-events: none; }
-      .sk-arc svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-      .sk-arc .sk-hz { stroke: var(--si); stroke-opacity: .14; stroke-width: 1; vector-effect: non-scaling-stroke; }
-      .sk-arc .sk-path { fill: none; stroke: var(--si); stroke-opacity: .25; stroke-width: 1.3; stroke-dasharray: 1 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-      .sk-sun { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #FFB347;
-                box-shadow: 0 0 0 10px rgba(255,200,120,.28), 0 0 30px 10px rgba(255,190,100,.35); }
-      .sk-moon { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: transparent;
-                 box-shadow: inset -5px -2px 0 0 #E7ECFF; transform: rotate(-20deg); }
-      .sk-st { position: absolute; top: calc(100% - 9px); font-size: var(--pc-fs-xs); font-weight: 600; color: var(--si2); font-variant-numeric: tabular-nums; }
-      .sk-st.l { left: 18px; } .sk-st.r { right: 18px; }
       .sk-heroin { position: relative; z-index: 1; padding: 0 18px 112px; color: var(--si); display: flex; flex-direction: column; gap: 2px; will-change: transform; }
       .sk-htop { display: flex; align-items: center; height: 44px; margin: -50px 0 14px; padding-right: 56px; }
       .sk-hero .ps-pav { gap: 6px; }
@@ -796,7 +786,6 @@ const SK_STYLES = `
       /* Home: the sky across the page, the cards in a grid under it. */
       :host([data-sk-w~="tab"]) .sk-hero { min-height: 400px; }
       :host([data-sk-w~="tab"]) .sk-heroin { padding-left: var(--sk-padx); padding-right: var(--sk-padx); }
-      :host([data-sk-w~="tab"]) .sk-arc { bottom: 64px; }
       :host([data-sk-w~="tab"]) .sk-st.l { left: var(--sk-padx); } :host([data-sk-w~="tab"]) .sk-st.r { right: var(--sk-padx); }
       :host([data-sk-w~="tab"]) .sk-homecards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; grid-auto-flow: row dense;
         max-width: calc(var(--sk-maxw) + 2 * var(--sk-gut)); margin: -40px auto 0; padding: 0 var(--sk-gut); }
