@@ -11701,7 +11701,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const a = mkVeh({ 'sensor.fuel': { state: '40', attributes: {} } });
     a.s2._skHome([]);
     await settle(); await settle();
-    a.s2._skVehImg = 'blob:x';
+    a.s2._skVehSlot(0).img = 'blob:x';
     const homeV = a.s2._skHome([]);
     check('the truck card reads garage/get once, not per render', a.asked.length === 1 && a.asked[0].type === 'garage/get');
     check('the truck card is one number: how many are overdue', /id="sk-c-truck"/.test(homeV.html) && /sk-vnum over"><b>3<\/b><span>overdue/.test(homeV.html));
@@ -11724,6 +11724,50 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       b.s2._hass.states['sensor.over'] = { state: '2', attributes: {}, last_updated: 'c' };
       b.s2._skVehLoad();
       return b.asked.length === 2;
+    });
+
+    /* ---- v1.100.0: two vehicles, one Garage card ------------------------- */
+    const KONA = {
+      entry_id: 'e2', name: 'Kona', tank_l: 50, fuel_entity: null,
+      summary: { over: 0, soon: 0, nolog: 12, ok: 0, next: null },
+      items: [{ n: 1, zone: 'engine', status: 'nolog' }],
+    };
+    const mkTwo = (konaLog) => {
+      const c = skCfg();
+      c.vehicle = [{ entry: 'e1', entity: 'sensor.over', next: 'sensor.next' }, { entry: 'e2', entity: 'sensor.k_over' }];
+      const s2 = new SK(); s2.setConfig(c);
+      const h = d2Hass();
+      h.states['sensor.over'] = { state: '3', attributes: {}, last_updated: 'a' };
+      h.states['sensor.k_over'] = { state: '0', attributes: {}, last_updated: 'a' };
+      h.states['sensor.fuel'] = { state: '40', attributes: {} };
+      const asked = [];
+      h.callWS = (m) => { asked.push(m); return Promise.resolve(m.entry_id === 'e2'
+        ? { vehicle: KONA, settings: {}, log: konaLog || [] } : { vehicle: VEH, settings: {}, log: [{ id: 'x' }] }); };
+      s2._hass = h; s2._render = () => {}; s2._testNow = new Date(2026, 8, 23, 15, 0).getTime();
+      return { s2, asked };
+    };
+    const t = mkTwo();
+    t.s2._skHome([]); await settle(); await settle();
+    const home2 = t.s2._skHome([]);
+    check('two vehicles: garage/get once per vehicle, each by its own entry', t.asked.length === 2 &&
+      t.asked.map((m) => m.entry_id).sort().join() === 'e1,e2');
+    check('two vehicles share ONE Garage card with a column each', (home2.html.match(/id="sk-c-truck"/g) || []).length === 1 &&
+      /sk-hn">Garage</.test(home2.html) && (home2.html.match(/class="sk-vcol"/g) || []).length === 2);
+    check('each column opens its own vehicle in the panel', /data-sknav="\/garage\?vehicle=Truck"/.test(home2.html) && /data-sknav="\/garage\?vehicle=Kona"/.test(home2.html));
+    check('a vehicle with nothing logged reads "to catch up", never "nothing due"', /sk-vnum sm nolog"><b>12<\/b><span>to catch up/.test(home2.html) &&
+      !/nothing due/.test(home2.html));
+    check('a vehicle with no fuel sensor draws no gauge at all (only the truck has one)', (home2.html.match(/class="sk-vfuel"/g) || []).length === 1);
+    check('the pill counts across vehicles', /3 due/.test(home2.pills));
+    const house2 = t.s2._skHouse();
+    check('the House tab carries a row per vehicle', (house2.match(/sk-rowcard/g) || []).length >= 2 && /12 to catch up/.test(house2) && /3 overdue · next Rear diff/.test(house2));
+    check('every vehicle\'s sensors are watched', t.s2._collectWatched().indexOf('sensor.k_over') >= 0);
+    const t2 = mkTwo([{ id: 'y' }]);
+    t2.s2._skHome([]); await settle(); await settle();
+    check('once something is logged, never-logged items stop being the headline', !/to catch up/.test(t2.s2._skHome([]).html));
+    check('the picture tile follows the theme (no fixed dark box)', () => {
+      const css = fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8');
+      const rule = (css.match(/\.sk-vart \{[^}]*\}/) || [''])[0];
+      return /var\(--sk-vbg\)/.test(rule) && !/#0B0F16/i.test(rule) && (css.match(/--sk-vbg:/g) || []).length === 2;
     });
   }
 }

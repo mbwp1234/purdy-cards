@@ -164,6 +164,10 @@ const PRESETS = {
   "sky-veh":          [PHONE, SKY + "&theme=light&patch=vehicle"],
   "sky-veh-dark":     [PHONE, SKY + "&theme=dark&patch=vehicle"],
   "sky-veh-house":    [PHONE, SKY + "&theme=light&tab=house&patch=vehicle"],
+  /* Two vehicles: one Garage card, a House row each (patches/vehicle2.json). */
+  "sky-veh2":         [PHONE, SKY + "&theme=light&patch=vehicle2"],
+  "sky-veh2-dark":    [PHONE, SKY + "&theme=dark&patch=vehicle2"],
+  "sky-veh2-house":   [PHONE, SKY + "&theme=light&tab=house&patch=vehicle2"],
   "sky-house-multi":  [PHONE, SKY + "&theme=light&tab=house&patch=vacmulti"],
   "sky-house-multi2": [PHONE, SKY + "&theme=light&tab=house&patch=vacmulti&vacpick=" + encodeURIComponent("1F - Kitchen|1F - Living Room")],
   "sky-nas":          [PHONE, SKY + "&theme=light&mode=systems&page=overview"],
