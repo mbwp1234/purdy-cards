@@ -5425,6 +5425,37 @@ check('both zones can be open at once', (() => {
 })());
 check('an open card is marked open', /ps-cwcard open/.test(crewVac));
 
+/* The big vacuum button's LABEL and its TAP must agree in every state. The
+   label said Pause while returning and the tap only paused while cleaning, so
+   Dock-then-Pause ran the room script and restarted the clean (2026-11-24).
+   This drives the real handler rather than reading the source. */
+const crewTap = (state) => {
+  const s = mkCrew({ 'vacuum.j': { state, attributes: {} } });
+  const calls = [];
+  s._hass.callService = (d, sv, data) => calls.push(`${d}.${sv}`);
+  let tap = null;
+  const el = { getAttribute: (k) => ({ 'data-crewgo': 'vacuum.j', 'data-script': 'script.clean_room' })[k] ?? null,
+    hasAttribute: () => false, addEventListener: (t, cb) => { if (t === 'click') tap = cb; } };
+  s._each = (sel, fn) => { if (sel === '[data-crewgo]') fn(el); };
+  s._one = s._claim = () => {};
+  s._bindCrew();
+  tap({ stopPropagation() {} });
+  return calls;
+};
+check('the vacuum fixture is the entity the button names', crewCfg.vacuum.entity === 'vacuum.j');
+check('Pause while returning pauses, never restarts the clean', (() => {
+  const c = crewTap('returning');
+  return c.length === 1 && c[0] === 'vacuum.pause';
+})());
+check('Pause while cleaning pauses', crewTap('cleaning').join() === 'vacuum.pause');
+check('docked, the button runs the room script', crewTap('docked').join() === 'script.turn_on');
+check('the button reads Pause in exactly the states its tap pauses in',
+  ['cleaning', 'returning', 'docked', 'idle', 'paused'].every((st) => {
+    const html = mkCrew({ 'vacuum.j': { state: st, attributes: {} } }, { vac: true })._secCrew(crewCfg);
+    const says = /ps-cwt">Pause</.test(html);
+    return says === (crewTap(st).join() === 'vacuum.pause');
+  }));
+
 /* Thirteen pills over six rows was most of a screen. Rooms group by floor,
    only the active floor draws, and the prefix is stripped from the chip
    because the tab already says it. */
