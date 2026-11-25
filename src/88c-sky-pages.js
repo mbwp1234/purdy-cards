@@ -734,7 +734,7 @@ Object.assign(PurdySkyCard.prototype, {
   _skVacuum(v) {
     const h = this._hass;
     const st = pcState(h, v.entity) || "unavailable";
-    const busy = st === "cleaning" || st === "returning";
+    const busy = psVacBusy(st);
     const bat = pcNum(h, v.battery), prog = pcNum(h, v.progress);
     const room = pcState(h, v.current_room);
     const sib = (suffix) => {

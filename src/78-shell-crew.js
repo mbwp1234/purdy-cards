@@ -20,6 +20,14 @@
  * rather than 0 for an absent sensor; null renders as "—" and an empty ring.
  * ========================================================================== */
 
+/* ONE answer to "is the vacuum out on a job", read by the button's label AND
+   its tap. They used to disagree: the label said Pause while returning, the
+   tap paused only while cleaning, so a Pause pressed on the way home fell
+   through to the room script and started a fresh clean (2026-11-24). */
+function psVacBusy(st) {
+  return st === "cleaning" || st === "returning";
+}
+
 function psCrewNum(hass, id) {
   if (!id) return null;
   return pcNum(hass, id);
@@ -505,7 +513,7 @@ Object.assign(PurdyShellCard.prototype, {
   _crewVacPanel(v) {
     const h = this._hass;
     const st = pcState(h, v.entity);
-    const busy = st === "cleaning" || st === "returning";
+    const busy = psVacBusy(st);
     const mode = psCrewWords(pcState(h, v.cleaning_mode));
     const suction = psCrewWords(pcState(h, v.suction));
     const sel = v.room_select && h.states[v.room_select];
@@ -977,7 +985,7 @@ Object.assign(PurdyShellCard.prototype, {
         const ent = el.getAttribute("data-crewgo");
         const script = el.getAttribute("data-script");
         const st = pcState(this._hass, ent);
-        if (st === "cleaning") { this._hass.callService("vacuum", "pause", { entity_id: ent }); return; }
+        if (psVacBusy(st)) { this._hass.callService("vacuum", "pause", { entity_id: ent }); return; }
         if (script && el.hasAttribute("data-floor")) {
           let rooms = [];
           try { rooms = JSON.parse(el.getAttribute("data-rooms") || "[]"); } catch (err) { rooms = []; }
