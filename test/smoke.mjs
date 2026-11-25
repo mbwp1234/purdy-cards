@@ -11772,7 +11772,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   {
     const VEH = {
       entry_id: 'e1', name: 'Truck', tank_l: 80, fuel_entity: 'sensor.fuel',
-      summary: { over: 3, soon: 2, nolog: 7, ok: 4, next: { n: 7, short: 'Rear diff', remaining: 342, eta: '2026-10-07' } },
+      summary: { over: 3, soon: 2, nolog: 7, ok: 4, overdue_items: ['Grease', 'Oil', 'Plugs'], next: { n: 7, short: 'Rear diff', remaining: 342, eta: '2026-10-07' } },
       items: [{ n: 1, zone: 'engine', status: 'over' }, { n: 7, zone: 'rear', status: 'soon' }, { n: 3, zone: 'cabin', status: 'nolog' },
         { n: 9, zone: 'engine', status: 'ok' }],
     };
@@ -11808,6 +11808,14 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     check('the truck card leaves a pill that says how many are due', /data-skpill="truck"/.test(homeV.pills) && /3 due/.test(homeV.pills));
     check('the truck card opens the Garage panel', /data-sknav="\/garage"/.test(homeV.html) && /pcNavigate\(this, el\.dataset\.sknav\)/.test(skSrc));
     check('fuel is drawn from the live tank', /sk-vcap"><i style="width:50%"><\/i><\/span><span>50%/.test(homeV.html));
+    check('the overdue count names its item (a red number that never changes gets tuned out)', /<span>overdue · <em>Grease \+2<\/em><\/span>/.test(homeV.html) &&
+      /aria-label="Truck: 3 overdue, Grease \+2"/.test(homeV.html));
+    const r = mkVeh({ 'sensor.fuel': { state: '40', attributes: {} } }, Object.assign({}, VEH, { economy: { mpg: 18 } }));
+    r.s2._skHome([]); await settle(); await settle();
+    check('with a known mpg the gauge reads RANGE, not percent', /<span>≈190 mi<\/span>/.test(r.s2._skHome([]).html) && !/sk-vfuel low/.test(r.s2._skHome([]).html));
+    const lo = mkVeh({ 'sensor.fuel': { state: '5', attributes: {} } }, Object.assign({}, VEH, { economy: { mpg: 18 } }));
+    lo.s2._skHome([]); await settle(); await settle();
+    check('under 30 mi of range the gauge turns amber (the fill-up automation\'s line)', /class="sk-vfuel low"/.test(lo.s2._skHome([]).html) && /≈24 mi/.test(lo.s2._skHome([]).html));
     check('the House tab carries the truck as a row', /class="sk-card sk-rowcard" type="button" data-sknav="\/garage"/.test(a.s2._skHouse()) && /3 overdue · next Rear diff/.test(a.s2._skHouse()));
     check('the vehicle sensors are watched (a top-level key the section walk never sees)', () => {
       const w = a.s2._collectWatched();
@@ -11825,7 +11833,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
 
     /* ---- v1.100.0: two vehicles, one Garage card ------------------------- */
     const KONA = {
-      entry_id: 'e2', name: 'Kona', tank_l: 50, fuel_entity: null,
+      entry_id: 'e2', name: 'Kona', tank_l: 50, fuel_entity: null, odometer: 60850,
       summary: { over: 0, soon: 0, nolog: 12, ok: 0, next: null },
       items: [{ n: 1, zone: 'engine', status: 'nolog' }],
     };
@@ -11851,16 +11859,16 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     check('two vehicles share ONE Garage card with a column each', (home2.html.match(/id="sk-c-truck"/g) || []).length === 1 &&
       /sk-hn">Garage</.test(home2.html) && (home2.html.match(/class="sk-vcol"/g) || []).length === 2);
     check('each column opens its own vehicle in the panel', /data-sknav="\/garage\?vehicle=Truck"/.test(home2.html) && /data-sknav="\/garage\?vehicle=Kona"/.test(home2.html));
-    check('a vehicle with nothing logged reads "to catch up", never "nothing due"', /sk-vnum sm nolog"><b>12<\/b><span>to catch up/.test(home2.html) &&
+    check('a vehicle with nothing logged shows its mileage and "not set up yet" — never "nothing due", never a big count', /sk-vnum sm nolog"><b>60,850<small>mi<\/small><\/b><span>not set up yet/.test(home2.html) &&
       !/nothing due/.test(home2.html));
     check('a vehicle with no fuel sensor draws no gauge at all (only the truck has one)', (home2.html.match(/class="sk-vfuel"/g) || []).length === 1);
     check('the pill counts across vehicles', /3 due/.test(home2.pills));
     const house2 = t.s2._skHouse();
-    check('the House tab carries a row per vehicle', (house2.match(/sk-rowcard/g) || []).length >= 2 && /12 to catch up/.test(house2) && /3 overdue · next Rear diff/.test(house2));
+    check('the House tab carries a row per vehicle', (house2.match(/sk-rowcard/g) || []).length >= 2 && /12 never logged/.test(house2) && /3 overdue · next Rear diff/.test(house2));
     check('every vehicle\'s sensors are watched', t.s2._collectWatched().indexOf('sensor.k_over') >= 0);
     const t2 = mkTwo([{ id: 'y' }]);
     t2.s2._skHome([]); await settle(); await settle();
-    check('once something is logged, never-logged items stop being the headline', !/to catch up/.test(t2.s2._skHome([]).html));
+    check('once something is logged, never-logged items stop being the headline', !/not set up yet/.test(t2.s2._skHome([]).html));
     check('the picture tile follows the theme (no fixed dark box)', () => {
       const css = fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8');
       const rule = (css.match(/\.sk-vart \{[^}]*\}/) || [''])[0];

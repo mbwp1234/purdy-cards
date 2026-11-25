@@ -272,12 +272,18 @@ const SK_STYLES = `
       .sk-vname { font-size: var(--pc-fs-md); font-weight: 650; color: var(--ps-muted); }
       .sk-vnum.sm b { font-size: var(--pc-fs-3xl); }
       .sk-vnum.sm span { margin-top: 2px; }
-      .sk-vnum.nolog b { color: var(--ps-dim); }
+      .sk-vnum.nolog b, .sk-vnum.sm.nolog b { color: var(--ps-text); font-size: var(--pc-fs-2xl); font-weight: 500; letter-spacing: -.01em; line-height: 1.1; }
+      .sk-vnum.sm.nolog b { padding-top: 12px; }
+      .sk-vnum b small { margin-left: 4px; font-size: var(--pc-fs-sm); font-weight: 600; letter-spacing: 0; color: var(--ps-dim); }
+      .sk-vnum em { font-style: normal; color: var(--ps-text); }
       .sk-vdot { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid #fff; box-sizing: border-box;
                  background: var(--ps-bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ps-bad) 30%, transparent); }
       .sk-vdot.soon { background: var(--ps-warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ps-warn) 30%, transparent); }
       .sk-vfuel { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-muted); }
       .sk-vfuel ha-icon { --mdc-icon-size: 16px; color: var(--ps-dim); }
+      .sk-vfuel > span:last-child { color: var(--ps-text); }
+      .sk-vfuel.low ha-icon { color: var(--ps-warn); }
+      .sk-vfuel.low .sk-vcap i { background: var(--ps-warn); }
       .sk-vcap { position: relative; flex: 1; height: 8px; border-radius: 4px; background: var(--ps-track); overflow: hidden; }
       .sk-vcap i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--sk-truck); }
       .sk-vcap.none { background-image: repeating-linear-gradient(135deg, var(--ps-track) 0 2px, transparent 2px 6px); }

@@ -60,6 +60,8 @@ function skKelvin(k) {
 }
 
 const skClamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+/* A plain number from a payload field (garage/get), or null: never a zero for a missing one. */
+const skFinite = (v) => { const n = typeof v === "number" ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
 
 /* The word for a likely-wet day. The chip is there BECAUSE precipitation is
    likely, but NWS keys the day by its daytime condition, which can be
@@ -846,18 +848,39 @@ class PurdySkyCard extends PurdyShellCard {
     return d.toLocaleDateString("en-US", days < 330 ? { month: "short" } : { month: "short", year: "numeric" });
   }
 
-  /* The one number for a vehicle. A vehicle with nothing logged yet is "N to catch
-     up" in the missing-data colour — never "nothing due" in green, which is a claim. */
+  /* The one number for a vehicle. An overdue count names its item ("overdue · Grease"):
+     a red number that stays red for months and says nothing else gets tuned out. A
+     vehicle with nothing logged yet is a setup chore, not news, so it shows its mileage
+     and a quiet "not set up yet" — never "nothing due" in green, which is a claim, and
+     never a big grey count that outweighs the other vehicle's red one. */
   _skVehStatus(slot) {
     const V = slot && slot.data && slot.data.v;
     if (!V || !V.summary) return null;
     const s = V.summary;
-    if (s.over) return { cls: "over", n: String(s.over), label: "overdue", pill: `${s.over} due`, color: "var(--ps-bad)" };
+    if (s.over) {
+      const names = s.overdue_items || [];
+      const what = names.length ? names[0] + (names.length > 1 ? ` +${names.length - 1}` : "") : "";
+      return { cls: "over", n: String(s.over), label: "overdue", what, pill: `${s.over} due`, color: "var(--ps-bad)" };
+    }
     if (s.soon) return { cls: "soon", n: String(s.soon), label: "due soon", pill: `${s.soon} soon`, color: "var(--ps-warn)" };
-    if (s.nolog && !slot.data.logged) return { cls: "nolog", n: String(s.nolog), label: "to catch up", pill: `${s.nolog} to log`, color: "var(--ps-dim)" };
+    if (s.nolog && !slot.data.logged) {
+      const odo = skFinite(V.odometer);
+      return { cls: "nolog", n: odo == null ? "—" : Math.round(odo).toLocaleString("en-US"), unit: odo == null ? "" : "mi",
+        label: "not set up yet", row: `${s.nolog} never logged`, pill: `${s.nolog} to log`, color: "var(--ps-dim)" };
+    }
     const nx = s.next;
     return nx ? { cls: "ok", n: Math.round(nx.remaining).toLocaleString("en-US"), label: `mi to ${nx.short}`, pill: nx.short, color: "var(--ps-good)" }
       : { cls: "ok", n: "—", label: "nothing due", pill: V.name || "Vehicle", color: "var(--ps-good)" };
+  }
+
+  /* The number and its caption, shared by the one-vehicle and the shared card. */
+  _skVehNum(st, sm) {
+    return `<span class="sk-vnum${sm ? " sm" : ""} ${st.cls}"><b>${psEsc(st.n)}${st.unit ? `<small>${psEsc(st.unit)}</small>` : ""}</b>` +
+      `<span>${psEsc(st.label)}${st.what ? ` · <em>${psEsc(st.what)}</em>` : ""}</span></span>`;
+  }
+
+  _skVehAria(V, st) {
+    return `${V.name || "Vehicle"}: ${st.n}${st.unit ? " " + st.unit : ""} ${st.label}${st.what ? ", " + st.what : ""}`;
   }
 
   _skVehPath(cfg, V, many) {
@@ -882,14 +905,22 @@ class PurdySkyCard extends PurdyShellCard {
 
   /* Fuel is read live, not from the snapshot: it moves while nothing is due. A
      sleeping tank is MISSING, drawn hatched — never an empty tank. A vehicle with
-     no fuel sensor at all draws no gauge: a track that can never carry a reading. */
-  _skVehFuel(cfg, V) {
+     no fuel sensor at all draws no gauge: a track that can never carry a reading.
+     The figure is RANGE when Garage knows an mpg (learned, else the assumed one in
+     settings), because the decision is "fill up before leaving home?", and below
+     `fuel_low_mi` (30, the fill-up automation's line) the gauge turns amber. */
+  _skVehFuel(cfg, V, settings) {
     const fuelId = cfg.fuel || V.fuel_entity;
     if (!fuelId) return "";
     const litres = pcNum(this._hass, fuelId);
     const pct = litres != null && V.tank_l ? skClamp(litres / V.tank_l) * 100 : null;
-    return `<span class="sk-vfuel"><ha-icon icon="mdi:gas-station-outline"></ha-icon>
-        <span class="sk-vcap${pct == null ? " none" : ""}"><i style="width:${pct == null ? 0 : pct.toFixed(0)}%"></i></span><span>${pct == null ? "—" : Math.round(pct) + "%"}</span></span>`;
+    const mpg = skFinite((V.economy && V.economy.mpg) != null ? V.economy.mpg : (settings || {}).mpg);
+    const range = litres != null && mpg ? Math.round(litres / 3.78541 * mpg) : null;
+    const lowAt = skFinite(cfg.fuel_low_mi) != null ? skFinite(cfg.fuel_low_mi) : 30;
+    const low = range != null && range < lowAt;
+    const txt = pct == null ? "—" : range != null ? `≈${range.toLocaleString("en-US")} mi` : Math.round(pct) + "%";
+    return `<span class="sk-vfuel${low ? " low" : ""}"><ha-icon icon="mdi:gas-station-outline"></ha-icon>
+        <span class="sk-vcap${pct == null ? " none" : ""}"><i style="width:${pct == null ? 0 : pct.toFixed(0)}%"></i></span><span>${txt}</span></span>`;
   }
 
   /* Home: one picture and one number. With one vehicle the chip is the next
@@ -910,15 +941,15 @@ class PurdySkyCard extends PurdyShellCard {
       const when = nx && nx.eta ? this._skVehWhen(nx.eta) : "";
       const chip = nx && when ? `<span class="ps-chip"><ha-icon icon="mdi:clock-outline"></ha-icon>${psEsc(nx.short)} ≈ ${psEsc(when)}</span>` : "";
       const html = `<div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-truck)"><ha-icon icon="mdi:car-wrench"></ha-icon></span><span class="sk-hn">${psEsc(V.name || "Vehicle")}</span>${chip}</div>
-      <div class="sk-vbody" data-sknav="${psEsc(this._skVehPath(cfg, V, false))}" role="button" tabindex="0" aria-label="${psEsc(V.name || "Vehicle")}: ${psEsc(st.n)} ${psEsc(st.label)}">
-        <span class="sk-vnum ${st.cls}"><b>${psEsc(st.n)}</b><span>${psEsc(st.label)}</span></span>${this._skVehArt(slot)}</div>${this._skVehFuel(cfg, V)}`;
+      <div class="sk-vbody" data-sknav="${psEsc(this._skVehPath(cfg, V, false))}" role="button" tabindex="0" aria-label="${psEsc(this._skVehAria(V, st))}">
+        ${this._skVehNum(st, false)}${this._skVehArt(slot)}</div>${this._skVehFuel(cfg, V, slot.data.settings)}`;
       return { html, pill: { icon: "mdi:car-wrench", text: st.pill, color: st.color } };
     }
     const cols = rows.map(({ cfg, slot }) => {
       const V = slot.data.v, st = this._skVehStatus(slot);
-      return `<div class="sk-vcol" data-sknav="${psEsc(this._skVehPath(cfg, V, true))}" role="button" tabindex="0" aria-label="${psEsc(V.name || "Vehicle")}: ${psEsc(st.n)} ${psEsc(st.label)}">
+      return `<div class="sk-vcol" data-sknav="${psEsc(this._skVehPath(cfg, V, true))}" role="button" tabindex="0" aria-label="${psEsc(this._skVehAria(V, st))}">
         ${this._skVehArt(slot)}<span class="sk-vname">${psEsc(V.name || "Vehicle")}</span>
-        <span class="sk-vnum sm ${st.cls}"><b>${psEsc(st.n)}</b><span>${psEsc(st.label)}</span></span>${this._skVehFuel(cfg, V)}</div>`;
+        ${this._skVehNum(st, true)}${this._skVehFuel(cfg, V, slot.data.settings)}</div>`;
     }).join("");
     const sum = (k) => rows.reduce((a, r) => a + ((r.slot.data.v.summary || {})[k] || 0), 0);
     const over = sum("over"), soon = sum("soon");
@@ -941,7 +972,7 @@ class PurdySkyCard extends PurdyShellCard {
       if (!V) return "";
       const st = this._skVehStatus(slot);
       const nx = (V.summary || {}).next;
-      const sub = st.cls === "nolog" ? `${st.n} ${st.label}`
+      const sub = st.cls === "nolog" ? st.row
         : st.cls === "ok" ? (nx ? `Next: ${nx.short}` : "Nothing due") : `${st.n} ${st.label}${nx ? ` · next ${nx.short}` : ""}`;
       return `<button class="sk-card sk-rowcard" type="button" data-sknav="${psEsc(this._skVehPath(cfg, V, many))}">
         <span class="sk-ico" style="--c:var(--sk-truck)"><ha-icon icon="mdi:car-wrench"></ha-icon></span>
