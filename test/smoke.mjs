@@ -11494,6 +11494,33 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   })());
   check('the notification log is reachable from House and the bell', /data-sheet="notifications"/.test(house) &&
     /want = faults\.length \? "alerts" : notes \? "notifications"/.test(skSrc));
+  check('sitter mode: a switch row at the foot of House, reading the automation\'s helpers', (() => {
+    const cfg = sk._config, st = sk._hass.states;
+    const put = (id, state, attributes = {}) => { st[id] = { entity_id: id, state: String(state), attributes, last_changed: '', last_updated: '' }; };
+    const ids = ['input_boolean.t_sit', 'counter.t_visits', 'input_number.t_last', 'counter.t_opens', 'input_datetime.t_arr'];
+    const saved = ids.map((id) => st[id]);
+    sk._config = { ...cfg, sitter: { mode: ids[0], visits: ids[1], last: ids[2], opens: ids[3], arrived: ids[4] } };
+    try {
+      put(ids[0], 'off'); put(ids[1], 0); put(ids[2], 0); put(ids[3], 0); put(ids[4], '', { timestamp: 0 });
+      const off = sk._skSitter();
+      put(ids[0], 'on'); put(ids[1], 2); put(ids[2], 72);
+      const done = sk._skSitter();
+      put(ids[3], 1); put(ids[4], 'x', { timestamp: Date.now() / 1000 - 600 });
+      const here = sk._skSitter();
+      const house = sk._skHouse();
+      const watched = sk._collectWatched();
+      sk._config = cfg;
+      const none = sk._skSitter();
+      return /aria-checked="false"/.test(off) && /<small>Off<\/small>/.test(off) && !/sk-sitn/.test(off) &&
+        /data-sktoggle="input_boolean\.t_sit"/.test(done) && /class="sk-sitn">1h 12m</.test(done) && /2 visits · last/.test(done) &&
+        /sk-sitter on here/.test(here) && /class="sk-sitn">10m</.test(here) && /Here now · since/.test(here) &&
+        house.lastIndexOf('sk-sitter') > house.lastIndexOf('data-sheet="notifications"') &&
+        ids.every((id) => watched.indexOf(id) >= 0) && none === '';
+    } finally {
+      sk._config = cfg;
+      ids.forEach((id, i) => { if (saved[i]) st[id] = saved[i]; else delete st[id]; });
+    }
+  })());
   check('the server pages are reachable from a Home tile, with power and parity actions', (() => {
     const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
     return /data-skmode="systems"/.test(skSrc) && /this\._skSys\(faults\)/.test(skSrc) && /this\._syPower\(s\)/.test(pg) && /this\._syParity\(s\)/.test(pg);
