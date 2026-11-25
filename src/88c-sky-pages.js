@@ -65,7 +65,11 @@ Object.assign(PurdySkyCard.prototype, {
     /* The week's rails draw in a ~150px column, so a 340-wide viewBox scaled
        them to under half size: a 3.6px bar with 1.3px wake marks. The small
        rail's viewBox is its drawn width, so its strokes are the size written. */
-    const W = big ? 340 : 160, id = "skjg" + (++skUid);
+    /* From 700px a rail is drawn two to three times wider than the phone's,
+       and a viewBox that wide keeps its marks and its hour labels at the size
+       they were designed at instead of blowing them up. The phone keeps 340/160. */
+    const wideW = this._skHas && this._skHas("tab");
+    const W = o.w || (big ? (wideW ? 440 : 340) : (wideW ? 300 : 160)), id = "skjg" + (++skUid);
     const th = big ? 14 : 10, y = big ? 24 : 9, H = big ? 58 : 21;
     const t0d = new Date(s.from);
     if (t0d.getHours() < 12) t0d.setDate(t0d.getDate() - 1);
@@ -146,8 +150,27 @@ Object.assign(PurdySkyCard.prototype, {
         <span class="sk-wk"><ha-icon icon="mdi:door-open"></ha-icon>${n.blindMin ? `${n.interventions}+` : n.interventions}</span>
         <span class="sk-cap2">${n.active ? "tonight" : "last night"}</span></div>
       <div class="sk-railbox">${rail.svg}</div>
+      ${this._skHas("desk") ? this._skJoelWeekStrip(n, past) : ""}
       <div class="sk-st3" style="--n:${tiles.length}">${tiles.join("")}</div>
       ${line ? `<div class="sk-line"><span>${psEsc(m.statusL || "")}</span><span>${psEsc(m.statusR || "")}</span></div>` : ""}`;
+  },
+
+  /* From 1100px the Joel card is as tall as the Climate card beside it, and
+     the room under its rail holds the six nights before, small — so the
+     shape of the week sits under the night it is compared with. */
+  _skJoelWeekStrip(n, past) {
+    const prev = past.filter((s) => s.from !== n.from).slice(-6);
+    if (!prev.length) return "";
+    return `<div class="sk-jwk" aria-label="The nights before">${prev.map((s) => `<span class="sk-jr"><b>${psEsc(skDayName(s.from, true).slice(0, 2))}</b>${
+      this._skRail(s, false, { w: 560 }).svg}</span>`).join("")}</div>`;
+  },
+
+  /* Columns for the two- and three-pane layouts. Each is its own flex stack,
+     so a tall card in one never stretches a row in another. The phone never
+     calls this: its markup is exactly what it was. */
+  _skCols(cols, cls) {
+    const live = cols.map((c) => c.filter(Boolean).join("")).filter(Boolean);
+    return `<div class="sk-cols n${live.length} ${cls || ""}">${live.map((c, i) => `<div class="sk-col c${i}">${c}</div>`).join("")}</div>`;
   },
 
   _skJoel() {
@@ -158,6 +181,7 @@ Object.assign(PurdySkyCard.prototype, {
     const pick = nights.find((s) => s.from === this._skNight) || m.nightSession || nights[nights.length - 1];
     const status = m.chipTxt ? `<span class="sk-status big ${m.chipCls || ""}">${psEsc(m.chipTxt)}</span>` : "";
     const parts = [this._skTitle(name, status)];
+    const P = {};
 
     /* TODAY first: the predictions are the question asked of this tab at
        eleven in the morning. The shell's day rail is the drawing that answers
@@ -167,7 +191,7 @@ Object.assign(PurdySkyCard.prototype, {
       ? this._nurseryDayRail(m.sessions, m.todayKey, m.stats.bedMean, norms) : "";
     const playing = m.playing;
     const lineDup = !!(pick && m.live && m.live.from === pick.from);
-    parts.push(`<div class="sk-card sk-pad" id="sk-c-jtoday">
+    P.today = (`<div class="sk-card sk-pad" id="sk-c-jtoday">
         <div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-j2)"><ha-icon icon="mdi:white-balance-sunny"></ha-icon></span><span class="sk-hn">Today</span>
           ${m.todayNaps.length ? `<span class="ps-chip lt">${m.todayNaps.length} nap${m.todayNaps.length > 1 ? "s" : ""} · ${psHM(m.napMins)}</span>` : ""}</div>
         ${dayRail ? `<div class="sk-dayrail">${dayRail}</div>` : ""}
@@ -179,13 +203,14 @@ Object.assign(PurdySkyCard.prototype, {
           ${this._manualStore(sec) ? `<button class="sk-bigbtn" type="button" data-jlog="1"><ha-icon icon="mdi:clock-plus-outline"></ha-icon>Log by hand</button>` : ""}
         </div>
       </div>`);
+    parts.push(P.today);
 
     if (pick) {
       const rail = this._skRail(pick, true);
       const isLast = m.nightSession && pick.from === m.nightSession.from;
       const label = pick.active ? "Tonight" : isLast ? "Last night" : `${skDayName(pick.from, true)} night`;
       const canFix = pick.manual ? !!this._manualStore(sec) : !!this._napEditStore(sec);
-      parts.push(`<div class="sk-nightwrap" id="sk-nightwrap">
+      P.night = (`<div class="sk-nightwrap" id="sk-nightwrap">
         <div class="sk-card sk-pad sk-nighthero" id="sk-c-night">
           <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:weather-night"></ha-icon></span>
             <span class="sk-hn">${psEsc(label)}</span>${pick.edited ? `<span class="ps-chip">corrected</span>` : pick.manual ? `<span class="ps-chip">logged by hand</span>` : ""}${this._skNightDelta(pick, past)}</div>
@@ -197,9 +222,11 @@ Object.assign(PurdySkyCard.prototype, {
         ${canFix ? `<button class="sk-bigbtn wide" type="button" data-napopen="${pick.from}" data-entity="${psEsc(sec.hatch || "")}">
             <ha-icon icon="mdi:pencil-outline"></ha-icon>Fix this night's times</button>` : ""}
       </div>`);
-      parts.push(this._skVsUsual(pick, past));
+      P.vs = this._skVsUsual(pick, past);
+      parts.push(P.night, P.vs);
     } else {
-      parts.push(`<div class="sk-card sk-pad"><div class="sk-empty">${m.loaded ? "No night recorded yet" : "Loading the nights…"}</div></div>`);
+      P.night = `<div class="sk-card sk-pad"><div class="sk-empty">${m.loaded ? "No night recorded yet" : "Loading the nights…"}</div></div>`;
+      parts.push(P.night);
     }
 
     /* The week, one rail a night, with the wake-ups beside each. Tap a night
@@ -208,7 +235,7 @@ Object.assign(PurdySkyCard.prototype, {
     if (week.length) {
       const avgLen = skAvg(past.slice(-7).map((s) => s.asleepMinutes));
       const avgW = skAvg(past.slice(-7).filter((s) => !s.blindMin).map((s) => s.interventions));
-      parts.push(`<div class="sk-card sk-pad" id="sk-c-week">
+      P.week = (`<div class="sk-card sk-pad" id="sk-c-week">
           <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:calendar-week"></ha-icon></span><span class="sk-hn">Nights</span>
             ${avgLen == null ? "" : `<span class="ps-chip">avg ${psHM(Math.round(avgLen))}${avgW == null ? "" : ` · ${avgW.toFixed(1)} wake-ups`}</span>`}</div>
           <div class="sk-wks">${week.map((s) => `<button class="sk-wkrow ${pick && s.from === pick.from ? "sel" : ""}" type="button" data-sknight="${s.from}" aria-pressed="${!!(pick && s.from === pick.from)}">
@@ -216,9 +243,16 @@ Object.assign(PurdySkyCard.prototype, {
               <span class="w ${s.interventions ? "" : "z"}">${s.interventions ? `<ha-icon icon="mdi:door-open"></ha-icon>${s.blindMin ? s.interventions + "+" : s.interventions}` : s.active ? "" : `<ha-icon icon="mdi:check"></ha-icon>`}</span>
               <span class="l">${s.active ? "now" : psHM(s.asleepMinutes)}</span></button>`).join("")}</div>
         </div>`);
+      parts.push(P.week);
     }
-    parts.push(this._skNaps(sec, m));
-    parts.push(this._skHatchCard(sec, m));
+    P.naps = this._skNaps(sec, m);
+    P.hatch = this._skHatchCard(sec, m);
+    parts.push(P.naps, P.hatch);
+    /* Two panes: the night and its events on the left (the cursor still
+       follows the row under the pinned rail), everything else on the right.
+       Three: the week's two rasters get a column of their own. */
+    if (this._skHas("wide")) return parts[0] + this._skCols([[P.night, P.vs], [P.week, P.naps], [P.today, P.hatch]], "sk-joelcols");
+    if (this._skHas("split")) return parts[0] + this._skCols([[P.night, P.vs], [P.today, P.week, P.naps, P.hatch]], "sk-joelcols");
     return parts.join("");
   },
 
@@ -432,7 +466,8 @@ Object.assign(PurdySkyCard.prototype, {
     const zc = sec.zones || {};
     const zones = (zc.options || []).map((z) => ({ label: z.label || z.option, t: pcNum(this._hass, z.temp), on: pcState(this._hass, zc.select) === z.option }));
     const parts = [this._skTitle(sec.title || "Climate", status)];
-    parts.push(`<div class="sk-card sk-pad sk-dialcard">
+    const P = {};
+    P.dial = (`<div class="sk-card sk-pad sk-dialcard">
         ${chips ? `<div class="sk-chiprow">${chips}</div>` : ""}
         <div class="sk-dial">${this._skGauge(280, 18, { inside: cur, goal, mode, ticks: true, active: action === "heating" || action === "cooling" })}
           <div class="sk-dialc big"><b>${cur == null ? "—" : cur.toFixed(1)}<sup>°</sup></b><span>${psEsc(this._climateSource(sec, cur))}</span></div></div>
@@ -443,13 +478,15 @@ Object.assign(PurdySkyCard.prototype, {
         </div>
         <div class="sk-ctlrows">${this._seasonHtml(sec)}${this._planHtml(sec)}${this._holdHtml(sec)}</div>
       </div>`);
+    parts.push(P.dial);
     const strip = sec.schedule ? this._schedStripHtml(sec) : "";
-    if (strip) parts.push(`<div class="sk-card sk-pad sk-sched">${strip}</div>`);
+    if (strip) { P.sched = `<div class="sk-card sk-pad sk-sched">${strip}</div>`; parts.push(P.sched); }
     if (zones.length || outside != null) {
-      parts.push(`<div class="sk-zones">${zones.map((z) => `<div class="st3${z.on ? " on" : ""}"><b>${z.t == null ? "—" : z.t.toFixed(1) + "°"}</b><span>${psEsc(z.label)}</span></div>`).join("")}${
+      P.zones = (`<div class="sk-zones">${zones.map((z) => `<div class="st3${z.on ? " on" : ""}"><b>${z.t == null ? "—" : z.t.toFixed(1) + "°"}</b><span>${psEsc(z.label)}</span></div>`).join("")}${
         outside == null ? "" : `<div class="st3"><b>${outside.toFixed(1)}°</b><span>Outside</span></div>`}</div>`);
+      parts.push(P.zones);
     }
-    parts.push(`<div class="sk-chartwrap" id="sk-chartwrap">
+    P.chart = (`<div class="sk-chartwrap" id="sk-chartwrap">
         <div class="sk-card sk-pad sk-chartcard" id="sk-c-chart">
           <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-heat)"><ha-icon icon="mdi:chart-bell-curve-cumulative"></ha-icon></span><span class="sk-hn" id="sk-chartt">Rooms</span><span class="ps-chip" id="sk-chartv">24h</span></div>
           ${this._skRoomChart(rooms, goal)}
@@ -459,7 +496,13 @@ Object.assign(PurdySkyCard.prototype, {
             <span class="nm">${psEsc(x.r.name)}<small>${x.via ? `via ${psEsc(x.via)}` : x.hu != null ? `${Math.round(x.hu)}% humidity` : x.t == null ? "not reporting" : "&nbsp;"}</small></span>
             ${this._skSpark(x, 64, 26)}${this._skRoomVal(x)}</button>`).join("")}</div>
       </div>`);
-    if (sec.graph) parts.push(this._skWaveCard(sec));
+    parts.push(P.chart);
+    if (sec.graph) { P.wave = this._skWaveCard(sec); parts.push(P.wave); }
+    /* The dial and its controls hold still on the left (pinned while they
+       fit the window) while the rooms scroll past on the right. */
+    const pin = (x) => `<div class="sk-pin">${x.filter(Boolean).join("")}</div>`;
+    if (this._skHas("wide")) return parts[0] + this._skCols([[pin([P.dial, P.zones])], [P.chart], [P.sched, P.wave]], "sk-climcols");
+    if (this._skHas("split")) return parts[0] + this._skCols([[pin([P.dial, P.zones])], [P.sched, P.chart, P.wave]], "sk-climcols");
     return parts.join("");
   },
 
@@ -599,6 +642,18 @@ Object.assign(PurdySkyCard.prototype, {
         <button type="button" role="tab" data-skface="watch" aria-selected="${face === "watch"}">${dot(live.tv)}Watch</button>
         <button type="button" role="tab" data-skface="listen" aria-selected="${face === "listen"}">${dot(live.music)}Listen</button></div>`;
     const title = this._skTitle("Media");
+    const sheets0 = this._config.sheets || {};
+    const spec0 = (sheets0.media && sheets0.media.card) ? sheets0.media : sheets0.tv;
+    /* From 1100px there is room for both faces at once, so the switch goes:
+       Watch on the left, Listen on the right, each under its own name with
+       the same live dot the switch carried. */
+    if (this._skHas("desk")) {
+      const hd = (t, on) => `<h2 class="sk-facehd">${on ? `<span class="sk-live"></span>` : ""}${t}</h2>`;
+      const watch = spec0 && spec0.card
+        ? `<div class="sk-card sk-remotecard"><div class="ps-host" id="sk-remote"></div></div>`
+        : `<div class="sk-card sk-pad"><div class="sk-empty">No television is configured.</div></div>`;
+      return title + this._skCols([[hd("Watch", live.tv), watch], [hd("Listen", live.music), this._skListen()]], "sk-mediacols");
+    }
     if (face === "watch") {
       const sheets = this._config.sheets || {};
       const spec = (sheets.media && sheets.media.card) ? sheets.media : sheets.tv;
@@ -688,28 +743,33 @@ Object.assign(PurdySkyCard.prototype, {
 
   _skHouse() {
     const parts = [this._skTitle("House")];
+    const P = {};
     const lsec = this._skSec("lights");
     if (lsec) {
       const lights = this._lightList(lsec);
       if (lights.length) {
-        parts.push(this._skCard("lights", `<div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-lamp)"><ha-icon icon="mdi:lightbulb-outline"></ha-icon></span><span class="sk-hn">Lights</span>${this._lightChip(lights)}</div>
+        parts.push(P.lights = this._skCard("lights", `<div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-lamp)"><ha-icon icon="mdi:lightbulb-outline"></ha-icon></span><span class="sk-hn">Lights</span>${this._lightChip(lights)}</div>
           <div class="sk-lights">${this._lightsBody(lsec, lights)}</div>`, null, "sk-pad"));
       }
     }
     const crew = this._skSec("crew");
-    if (crew && crew.vacuum && crew.vacuum.entity) parts.push(this._skCard("crew", this._skVacuum(crew.vacuum), null, "sk-pad"));
-    if (crew && crew.litter && crew.litter.entity) parts.push(this._skCard("litter", this._skLitter(crew.litter), null, "sk-pad"));
-    if (crew && crew.washer && crew.washer.entity) parts.push(this._skCard("washer", this._skWasher(crew.washer), null, "sk-pad"));
+    if (crew && crew.vacuum && crew.vacuum.entity) parts.push(P.vac = this._skCard("crew", this._skVacuum(crew.vacuum), null, "sk-pad"));
+    if (crew && crew.litter && crew.litter.entity) parts.push(P.litter = this._skCard("litter", this._skLitter(crew.litter), null, "sk-pad"));
+    if (crew && crew.washer && crew.washer.entity) parts.push(P.washer = this._skCard("washer", this._skWasher(crew.washer), null, "sk-pad"));
     const s = this._sysCfg && this._sysCfg();
-    if (s) parts.push(this._skCard("nas", this._skNasCard(s)));
+    if (s) parts.push(P.nas = this._skCard("nas", this._skNasCard(s)));
     const veh = this._skVehicleRow();
-    if (veh) parts.push(veh);
+    if (veh) parts.push(P.veh = veh);
     if ((this._config.sheets || {}).notifications) {
       const n = this._logOpenCount();
-      parts.push(`<button class="sk-card sk-rowcard" type="button" data-sheet="notifications">
+      parts.push(P.notes = `<button class="sk-card sk-rowcard" type="button" data-sheet="notifications">
           <span class="sk-ico" style="--c:var(--ps-warn)"><ha-icon icon="mdi:bell-outline"></ha-icon></span>
           <span class="ps-grow"><b>Notifications</b><small>${n ? `${n} unread` : "Everything read"}</small></span><ha-icon icon="mdi:chevron-right"></ha-icon></button>`);
     }
+    /* The vacuum is the tallest thing in the house, so it gets a column of
+       its own and the rest stack beside it. */
+    if (this._skHas("wide")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer], [P.vac], [P.nas, P.veh, P.notes]], "sk-housecols");
+    if (this._skHas("split")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer, P.nas], [P.vac, P.veh, P.notes]], "sk-housecols");
     return parts.join("");
   },
 
@@ -883,7 +943,7 @@ Object.assign(PurdySkyCard.prototype, {
     }[page.key];
     return `<button class="sk-back" type="button" data-skback="1"><ha-icon icon="mdi:chevron-left"></ha-icon>House</button>
       ${this._skTitle(s.name || "Server", `<span class="sk-status big ${online ? "good" : "bad"}">${online ? `Up ${psEsc(up && up !== "unknown" ? up : "")}` : r.ok ? psEsc(String(r.st.state)) : "No data"}</span>`)}
-      ${tabs}${body ? body() : ""}`;
+      ${tabs}${body ? (this._skHas("tab") ? `<div class="sk-sysbody pg-${psEsc(page.key)}">${body()}</div>` : body()) : ""}`;
   },
 
   _skSysOverview(s) {
