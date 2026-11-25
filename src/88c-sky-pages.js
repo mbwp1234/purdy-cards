@@ -766,11 +766,49 @@ Object.assign(PurdySkyCard.prototype, {
           <span class="sk-ico" style="--c:var(--ps-warn)"><ha-icon icon="mdi:bell-outline"></ha-icon></span>
           <span class="ps-grow"><b>Notifications</b><small>${n ? `${n} unread` : "Everything read"}</small></span><ha-icon icon="mdi:chevron-right"></ha-icon></button>`);
     }
+    const sit = this._skSitter();
+    if (sit) parts.push(P.sit = sit);
     /* The vacuum is the tallest thing in the house, so it gets a column of
        its own and the rest stack beside it. */
-    if (this._skHas("wide")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer], [P.vac], [P.nas, P.veh, P.notes]], "sk-housecols");
-    if (this._skHas("split")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer, P.nas], [P.vac, P.veh, P.notes]], "sk-housecols");
+    if (this._skHas("wide")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer], [P.vac], [P.nas, P.veh, P.notes, P.sit]], "sk-housecols");
+    if (this._skHas("split")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer, P.nas], [P.vac, P.veh, P.notes, P.sit]], "sk-housecols");
     return parts.join("");
+  },
+
+  /* Sitter mode: one switch and one number. The automation that tracks the
+     visit owns every derivation (door opens in pairs, 15 min quiet, the 3h
+     backstop) and writes its answers to helpers, so this row only reads
+     them — a second "is the sitter here" rule in the card would drift from
+     the one that sends the message. `sitter: {mode, visits, last, opens,
+     arrived}`; only `mode` is required. Mid-visit the number is the live
+     minutes since the door first opened; otherwise the last visit's length,
+     and the trip's visit count as the caption. Off with no visits logged,
+     it says nothing beyond "Off". */
+  _skSitter() {
+    const c = this._config.sitter;
+    const h = this._hass;
+    if (!c || !c.mode || !h.states[c.mode]) return "";
+    const on = h.states[c.mode].state === "on";
+    const visits = pcNum(h, c.visits), last = pcNum(h, c.last), opens = pcNum(h, c.opens);
+    const arr = c.arrived && h.states[c.arrived] ? Number(h.states[c.arrived].attributes.timestamp) : null;
+    const here = on && opens != null && opens > 0 && arr;
+    const dur = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m` : `${Math.round(m)}m`;
+    let num = "", sub;
+    if (here) {
+      const m = Math.max(0, (Date.now() / 1000 - arr) / 60);
+      num = dur(m);
+      sub = `Here now · since ${skClk(arr * 1000)}`;
+    } else if (visits) {
+      num = last ? dur(last) : "";
+      sub = `${visits} visit${visits === 1 ? "" : "s"}${last ? " · last" : ""}`;
+      if (!on) sub = `Off · ${sub}`;
+    } else sub = on ? "Waiting for the door" : "Off";
+    return `<button class="sk-card sk-rowcard sk-sitter ${on ? "on" : ""} ${here ? "here" : ""}" type="button" data-sktoggle="${psEsc(c.mode)}"
+        role="switch" aria-checked="${on}" aria-label="Sitter mode ${on ? "on" : "off"}">
+        <span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span>
+        <span class="ps-grow"><b>Sitter mode</b><small>${psEsc(sub)}</small></span>
+        ${num ? `<span class="sk-sitn">${psEsc(num)}</span>` : ""}
+        <span class="sk-sitsw" aria-hidden="true"><i></i></span></button>`;
   },
 
   _skRing(v, size, stroke, col) {

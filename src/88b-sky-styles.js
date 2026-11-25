@@ -280,6 +280,12 @@ const SK_STYLES = `
       .sk-rowcard { display: flex; align-items: center; gap: 12px; padding: 14px 18px; text-align: left; width: 100%; }
       .sk-rowcard b { display: block; font-size: var(--pc-fs-lg); font-weight: 650; }
       .sk-rowcard small { display: block; font-size: var(--pc-fs-sm); color: var(--ps-dim); }
+      .sk-sitn { font-size: var(--pc-fs-lg); font-weight: 650; font-variant-numeric: tabular-nums; }
+      .sk-sitter.here .sk-sitn { color: var(--sk-litter); }
+      .sk-sitsw { position: relative; flex: none; width: 42px; height: 24px; border-radius: 12px; background: var(--ps-track); }
+      .sk-sitsw i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+      .sk-sitter.on .sk-sitsw { background: var(--sk-litter); }
+      .sk-sitter.on .sk-sitsw i { transform: translateX(18px); }
 
       /* ---- tiles ---- */
       .sk-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

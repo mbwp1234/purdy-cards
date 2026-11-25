@@ -768,6 +768,8 @@ class PurdySkyCard extends PurdyShellCard {
     const tree = (this._config.sky || {}).tree;
     if (tree && ids.indexOf(tree) < 0) ids.push(tree);
     if (ids.indexOf("sun.sun") < 0) ids.push("sun.sun");
+    const sit = this._config.sitter || {};
+    [sit.mode, sit.visits, sit.last, sit.opens, sit.arrived].forEach((x) => { if (x && ids.indexOf(x) < 0) ids.push(x); });
     return ids;
   }
 
