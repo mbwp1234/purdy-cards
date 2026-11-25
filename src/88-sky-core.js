@@ -86,6 +86,11 @@ class PurdySkyCard extends PurdyShellCard {
     this._skAnchorView = null;
     this._skTick = false;
     this._skRemoteEl = null;
+    /* The width tiers this card is laid out for (see _skSize). Empty is the
+       phone, and the phone is the default: nothing below 700px reads it. */
+    this._skW = "";
+    this._skRO = null;
+    this._skOnKey = (e) => this._skKey(e);
     /* One handler, kept on the card so disconnect removes exactly what it added. */
     this._skOnScroll = () => {
       if (this._skTick) return;
@@ -137,7 +142,20 @@ class PurdySkyCard extends PurdyShellCard {
     if (typeof window !== "undefined" && window.addEventListener) {
       window.addEventListener("scroll", this._skOnScroll, { capture: true, passive: true });
       window.addEventListener("resize", this._skOnScroll);
+      window.addEventListener("keydown", this._skOnKey);
     }
+    /* The card measures ITSELF, not the window: Home Assistant's sidebar and
+       the view's own padding take space the viewport does not know about. A
+       ResizeObserver callback runs after layout and before paint, so the tier
+       is in place before the first frame anyone sees. */
+    if (typeof ResizeObserver === "function" && !this._skRO) {
+      this._skRO = new ResizeObserver((ents) => {
+        const r = ents && ents[0] && ents[0].contentRect;
+        this._skSize(r ? r.width : this.clientWidth);
+      });
+      this._skRO.observe(this);
+    }
+    this._skFromHash();
   }
 
   disconnectedCallback() {
@@ -145,7 +163,9 @@ class PurdySkyCard extends PurdyShellCard {
     if (typeof window !== "undefined" && window.removeEventListener) {
       window.removeEventListener("scroll", this._skOnScroll, { capture: true });
       window.removeEventListener("resize", this._skOnScroll);
+      window.removeEventListener("keydown", this._skOnKey);
     }
+    if (this._skRO) { this._skRO.disconnect(); this._skRO = null; }
     if (this._skHooked) this._skHooked.removeEventListener("scroll", this._skOnElScroll);
     this._skHooked = null;
     this._skSc = null;
@@ -184,7 +204,7 @@ class PurdySkyCard extends PurdyShellCard {
         <section class="sk-view" data-v="media"><div class="sk-stack" id="sk-media"></div></section>
         <section class="sk-view" data-v="house"><div class="sk-stack" id="sk-house"></div></section>
         <section class="sk-view sk-sys" data-v="sys"><div class="sk-stack" id="sk-sys"></div></section>
-        <footer class="sk-foot" id="sk-foot"><div class="sk-mini" id="sk-mini"></div><nav class="sk-dock" id="sk-dock" aria-label="Tabs"></nav></footer>
+        <footer class="sk-foot" id="sk-foot"><div class="sk-brand" id="sk-brand"></div><div class="sk-mini" id="sk-mini"></div><nav class="sk-dock" id="sk-dock" aria-label="Tabs"></nav></footer>
       </div>
       <div id="ps-sheetslot"></div>`;
     this._mounted = true;
@@ -204,6 +224,10 @@ class PurdySkyCard extends PurdyShellCard {
 
   /* The sheets must clear the dock and the mini bar, which live in the foot. */
   _reserve() {
+    /* From 700px the foot is the side rail, a full screen tall, and the
+       sheets are a drawer that does not sit above it. Forgetting the last
+       reading means coming back to the phone measures again. */
+    if (this._skHas("tab")) { this._dockH = null; return; }
     const foot = this.shadowRoot && this.shadowRoot.getElementById("sk-foot");
     if (!foot || typeof foot.offsetHeight !== "number") return;
     const h = foot.offsetHeight;
@@ -221,7 +245,7 @@ class PurdySkyCard extends PurdyShellCard {
   /* Music's queue is only read while the music sheet is open. The Listen face
      IS that sheet here, so it answers as one while it is on screen. */
   _syncQueue() {
-    if (!this._sheet && !this._mode && this._skTab === "media" && this._skFaceNow() === "listen") {
+    if (!this._sheet && !this._mode && this._skTab === "media" && (this._skFaceNow() === "listen" || this._skHas("desk"))) {
       this._sheet = "music";
       try { super._syncQueue(); } finally { this._sheet = null; }
       return;
@@ -309,6 +333,7 @@ class PurdySkyCard extends PurdyShellCard {
     }
     if (o.face) this._skFace = o.face;
     this._render();
+    this._skToHash();
     const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f) => setTimeout(f, 0);
     raf(() => {
       if (!sc) return;
@@ -351,6 +376,7 @@ class PurdySkyCard extends PurdyShellCard {
 
     this._patch("sk-bart", this._skBarTitle(view, now));
     this._patch("sk-barr", this._skBell(faults));
+    this._patch("sk-brand", this._skHas("tab") ? this._skBrand(now) : "");
     this._patch("sk-dock", this._skDock(view));
     this._patch("sk-mini", view === "media" ? "" : this._miniHtml());
 
@@ -426,9 +452,119 @@ class PurdySkyCard extends PurdyShellCard {
     const cur = view === "sys" ? "house" : view;
     const tabs = SK_TABS.filter((t) => !t.type || this._skSec(t.type));
     const i = Math.max(0, tabs.findIndex((t) => t.key === cur));
-    return `<span class="sk-lens" style="--n:${tabs.length};--i:${i}"></span>` + tabs.map((t) => `
-      <button class="sk-db ${t.key === cur ? "on" : ""}" type="button" data-sktab="${t.key}"${t.key === cur ? ` aria-current="page"` : ""}>
-        <ha-icon icon="${t.icon}"></ha-icon><span>${psEsc(t.key === "joel" ? this._skTabName("joel") : t.name)}</span></button>`).join("");
+    /* The sidebar's roll-ups are drawn only where they show. On the phone
+       they would be hidden text that still changes the dock's string, and a
+       dock repainted under a thumb because the temperature moved is a tap
+       lost. */
+    const vals = this._skHas("desk") ? this._skTabVals() : null;
+    const keys = tabs.map((t, n) => n < 9 ? ` aria-keyshortcuts="${n + 1}"` : "");
+    return `<span class="sk-lens" style="--n:${tabs.length};--i:${i}"></span>` + tabs.map((t, n) => `
+      <button class="sk-db ${t.key === cur ? "on" : ""}" type="button" data-sktab="${t.key}"${t.key === cur ? ` aria-current="page"` : ""}${vals ? keys[n] : ""}>
+        <ha-icon icon="${t.icon}"></ha-icon><span>${psEsc(t.key === "joel" ? this._skTabName("joel") : t.name)}</span>${
+          vals && vals[t.key] ? `<span class="sk-dv">${psEsc(vals[t.key])}</span>` : ""}</button>`).join("");
+  }
+
+  /* ------------------------------------------------------------- widths --- */
+
+  /* Tiers, not pixels: each is a token in data-sk-w, so ">= 940" is
+     [data-sk-w~="split"] and a rule says which layout it belongs to.
+       tab    700   the dock stands up into a rail; sheets become a drawer
+       split  940   the detail tabs go two-pane
+       desk  1100   a labelled sidebar; Home becomes a grid; Watch and Listen together
+       wide  1500   three columns; content stops widening at 1320
+     Coming DOWN through a line takes 12px more than going up, so a scrollbar
+     that comes and goes with the layout cannot flip the layout back. */
+  _skSize(w) {
+    if (!(w > 0)) return;
+    const had = this._skW || "";
+    const t = [[700, "tab"], [940, "split"], [1100, "desk"], [1500, "wide"]]
+      .filter(([px, k]) => w >= (this._skHas(k) ? px - 12 : px)).map(([, k]) => k).join(" ");
+    if (t === had) return;
+    this._skW = t;
+    if (this.setAttribute) {
+      if (t) this.setAttribute("data-sk-w", t); else this.removeAttribute("data-sk-w");
+    }
+    if (this._mounted && this._hass) this._render();
+  }
+
+  _skHas(k) { return (" " + (this._skW || "") + " ").indexOf(" " + k + " ") >= 0; }
+
+  /* What each tab would tell you if you opened it, one fact each, for the
+     sidebar: a night's length, a reading, a room, a count. Never the tab's
+     own name again — the chip rule. Home has no roll-up; it IS the roll-up. */
+  _skTabVals() {
+    const out = {};
+    try {
+      const N = this._skNurse();
+      const n = N && N.m.nightSession;
+      if (n) out.joel = n.active ? "asleep" : psHM(n.asleepMinutes);
+    } catch (e) { /* no nursery model yet */ }
+    const C = this._skClim();
+    if (C && C.cur != null) out.climate = `${C.cur.toFixed(1)}°`;
+    const np = this._nowPlaying && this._nowPlaying();
+    if (np) out.media = np.name;
+    else {
+      const sec = this._skSec("nowplaying");
+      const on = ((sec && sec.tvs) || []).find((t) => {
+        const st = pcState(this._hass, t.media_player || t.remote);
+        return st && st !== "off" && st !== "unavailable" && st !== "unknown";
+      });
+      if (on) out.media = `${on.name} TV`;
+    }
+    const lsec = this._skSec("lights");
+    if (lsec) out.house = `${this._lightList(lsec).filter((l) => l.on && !l.cfg.protect && !l.gone).length} lit`;
+    return out;
+  }
+
+  /* The rail's head: a little sky in a square, the same band as the hero,
+     with the sun or the moon in it. Words only where the sidebar has room. */
+  _skBrand(now) {
+    const band = this._skyBand(now.getHours()).replace("sky-", "");
+    const words = this._skHas("desk")
+      ? `<span class="sk-bt"><b>Skylight</b><small>${psEsc(now.toLocaleDateString([], { weekday: "short" }))} · ${psEsc(now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</small></span>` : "";
+    return `<button class="sk-brandb" type="button" data-sktab="home" aria-label="Home"><span class="sk-orb sky-${band}"><i></i></span>${words}</button>`;
+  }
+
+  /* Keys, where there is a keyboard to press them: 1-5 are the tabs in dock
+     order, Escape closes a sheet. Never while typing, never with a modifier,
+     and only once the layout is a desktop's — a phone's Bluetooth keyboard
+     is not a reason to change how the phone behaves. */
+  _skKey(e) {
+    if (!this._skHas("tab") || !this.isConnected || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [e.target];
+    const t = path[0];
+    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "") || t.isContentEditable)) return;
+    if (e.key === "Escape") {
+      if (this._sheet) { this._sheet = null; this._render(); e.preventDefault(); }
+      return;
+    }
+    if (!/^[1-9]$/.test(e.key)) return;
+    const tabs = SK_TABS.filter((x) => !x.type || this._skSec(x.type));
+    const tab = tabs[Number(e.key) - 1];
+    if (!tab) return;
+    e.preventDefault();
+    this._skGo(tab.key);
+  }
+
+  /* A tab is a link on a desktop: #joel, #climate… so a bookmark or a second
+     window opens where you meant. Written with replaceState (no history entry
+     per tab, and Home Assistant's router never hears it) and only from 700px;
+     read on connect at any width, and only when it names a tab exactly. */
+  _skToHash() {
+    if (!this._skHas("tab") || typeof history === "undefined" || !history.replaceState || typeof location === "undefined") return;
+    const want = this._mode === "systems" ? "#nas" : this._skTab === "home" ? "" : "#" + this._skTab;
+    if ((location.hash || "") === want) return;
+    try { history.replaceState(history.state, "", location.pathname + location.search + want); } catch (e) { /* a sandboxed frame */ }
+  }
+
+  _skFromHash() {
+    if (typeof location === "undefined" || !this._config) return;
+    const h = String(location.hash || "").replace(/^#/, "");
+    if (!h || this._skHashDone === h) return;
+    this._skHashDone = h;
+    if (h === "nas" && this._sysCfg && this._sysCfg()) { this._skTab = "house"; this._mode = "systems"; return; }
+    const tab = SK_TABS.find((x) => x.key === h && (!x.type || this._skSec(x.type)));
+    if (tab) { this._skTab = tab.key; this._mode = null; }
   }
 
   _skTitle(name, extra) {
@@ -476,7 +612,18 @@ class PurdySkyCard extends PurdyShellCard {
         </button>
         ${today}
         ${chips ? `<div class="sk-hchips">${chips}</div>` : ""}
+        ${this._skHas("desk") ? this._skHeroWeek() : ""}
       </div>`;
+  }
+
+  /* From 1100px the week rides in the sky on glass, beside the reading it
+     extends, and the Home card that carried it steps aside. Same capsules,
+     same door to the weather sheet. */
+  _skHeroWeek() {
+    if (!this._weatherSection()) return "";
+    return `<div class="sk-hweek" data-sheet="wx" role="button" tabindex="0" aria-label="The week ahead">
+        <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="mdi:weather-partly-cloudy"></ha-icon></span><span class="sk-hn">This week</span></div>
+        <div class="sk-week">${this._skWeekRail()}</div></div>`;
   }
 
   /* Today's low and high for the hero bar. The yard thermometer sits in the
@@ -599,7 +746,8 @@ class PurdySkyCard extends PurdyShellCard {
       if (C) push("clim", this._skClimateHome(), { icon: "mdi:thermostat", text: C.cur == null ? "Climate" : `${C.cur.toFixed(1)}°`, tab: "climate", color: "var(--ps-heat)" }, "sk-pad sk-tap");
       if (media) push("now", media, { icon: "mdi:music-note", text: liveNp ? (liveNp.st.attributes.media_title || "Playing") : "Media", tab: "media", color: "var(--sk-media)" }, "sk-pad");
       const wsec = this._weatherSection();
-      if (wsec) {
+      /* From 1100px the week is in the sky (_skHeroWeek), not a card. */
+      if (wsec && !this._skHas("desk")) {
         const wet = (this._wxFc || []).find((d) => !d.today && d.pop != null && d.pop >= 50);
         /* The hero's chip already names the first wet day. This one only adds
            something when the hero's is TODAY and the week has another. */
@@ -1274,13 +1422,25 @@ class PurdySkyCard extends PurdyShellCard {
       }
     }
     /* Listen: the cover steps back as you scroll past it. */
-    if (view === "media" && !reduce) {
+    /* From 700px the cover sits BESIDE the transport (or in its own column),
+       so stepping it back would only open a hole; the phone keeps it. */
+    if (view === "media" && !reduce && !this._skHas("tab")) {
       const art = root.getElementById("sk-art");
       if (art) {
         const r = art.getBoundingClientRect();
         const q = skClamp((barR.bottom + 40 - r.top) / 320);
         art.style.transform = `scale(${(1 - q * 0.14).toFixed(3)}) translateY(${(q * 36).toFixed(1)}px)`;
       }
+    }
+    /* A two-pane column pins itself beside the long one only when it fits on
+       the screen: a sticky column taller than the window hides its own foot
+       until the page ends, which is worse than not pinning at all. */
+    if (this._skHas("split")) {
+      const vh = typeof innerHeight === "number" ? innerHeight : 900;
+      root.querySelectorAll(".sk-view.on .sk-pin").forEach((c) => {
+        const fit = c.offsetHeight > 0 && c.offsetHeight < vh - barR.height - 28;
+        if (c.classList.contains("stuck") !== fit) c.classList.toggle("stuck", fit);
+      });
     }
     bar.style.setProperty("--solid", solid.toFixed(3));
     bar.style.setProperty("--titlep", title.toFixed(3));
@@ -1347,7 +1507,7 @@ class PurdySkyCard extends PurdyShellCard {
   _skCover() {
     const bar = this.shadowRoot && this.shadowRoot.getElementById("sk-bar");
     if (!bar || !bar.getBoundingClientRect) return 100;
-    return Math.max(0, bar.getBoundingClientRect().bottom) + (bar.classList.contains("pilled") ? 46 : 0);
+    return Math.max(0, bar.getBoundingClientRect().bottom) + (bar.classList.contains("pilled") && !this._skHas("tab") ? 46 : 0);
   }
 
   /* The notch, measured, against what already covers it. Two numbers:

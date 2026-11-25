@@ -41,9 +41,10 @@ const SK_STYLES = `
            env() pad doubled it: 47pt of empty band under the toolbar, and the
            bar's title half-faded over the page's own. */
         --sk-barh: calc(56px + var(--sk-inset, 0px));
+        /* The card takes whatever width the view gives it, so it can measure
+           a desktop; the PHONE column is still capped at 560 and centred —
+           on .sk now, not here, which on a phone is the same box. */
         display: block;
-        max-width: 560px;
-        margin: 0 auto;
         padding: 0;
         min-height: 100dvh;
         color: var(--ps-text);
@@ -111,7 +112,8 @@ const SK_STYLES = `
       .ps-ground, .ps-ground[class] { background: var(--sk-bg) !important; }
       .ps-ground::before { display: none; }
 
-      .sk { position: relative; min-height: 100dvh; display: flex; flex-direction: column; }
+      .sk { position: relative; min-height: 100dvh; display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; }
+      .sk-brand:empty { display: none; }
       .sk-view { display: none; padding: 0 14px 18px; }
       .sk-view.on { display: block; flex: 1; }
       .sk-view[data-v="home"] { padding: 0 0 18px; }
@@ -717,6 +719,187 @@ const SK_STYLES = `
       .sk-shares span { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 16px; background: var(--sk-card2); font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-muted); }
       .sk-shares small { color: var(--ps-dim); font-weight: 500; }
       .sk-shellpage .ps-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+
+      /* ================= one page, any width =================
+         Every rule below is gated on a tier token that _skSize writes from the
+         card's OWN width, so below 700px not one of them applies and the
+         phone is exactly what it was.
+           tab    700  the dock stands up into a rail, sheets become a drawer,
+                       the mini player floats bottom-right, the pills go
+           split  940  the detail tabs go two-pane
+           desk  1100  a labelled sidebar with each tab's roll-up, Home as a
+                       grid, the week up in the sky, Watch and Listen together
+           wide  1500  three columns, content caps at 1320 and centres */
+      .sk-dv, .sk-bt { display: none; }
+      .sk-orb { position: relative; display: block; width: 44px; height: 44px; border-radius: 15px; overflow: hidden;
+                background: linear-gradient(180deg, var(--s1, #94C3F0), var(--s2, #DDEBFA)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
+      .sk-orb i { position: absolute; left: 50%; top: 56%; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%;
+                  background: #FFB347; box-shadow: 0 0 0 7px rgba(255,216,168,.35); }
+      .sk-orb.sky-dawn  { --s1: #B9CDE8; --s2: #F7D9C6; }
+      .sk-orb.sky-day   { --s1: #94C3F0; --s2: #DDEBFA; }
+      .sk-orb.sky-dusk  { --s1: #ADA3DF; --s2: #F4C6A8; }
+      .sk-orb.sky-night { --s1: #222D52; --s2: #5D6896; }
+      :host([data-sk-theme="dark"]) .sk-orb.sky-dawn  { --s1: #17213B; --s2: #5A3F56; }
+      :host([data-sk-theme="dark"]) .sk-orb.sky-day   { --s1: #15304F; --s2: #2A5079; }
+      :host([data-sk-theme="dark"]) .sk-orb.sky-dusk  { --s1: #211943; --s2: #5C334E; }
+      :host([data-sk-theme="dark"]) .sk-orb.sky-night { --s1: #04070F; --s2: #111933; }
+      .sk-orb.sky-night i, .sk-orb.sky-dusk i { top: 28%; left: 66%; width: 11px; height: 11px; background: #E7ECFF; box-shadow: 0 0 0 6px rgba(231,236,255,.14); }
+
+      :host([data-sk-w~="tab"]) { --sk-railw: 88px; --sk-gut: 28px; --sk-maxw: 1320px; --sk-dbh: 62px;
+        --sk-padx: max(var(--sk-gut), calc((100% - var(--sk-maxw)) / 2)); }
+      :host([data-sk-w~="desk"]) { --sk-railw: 248px; --sk-gut: 32px; --sk-dbh: 50px; }
+      :host([data-sk-w~="wide"]) { --sk-gut: 40px; }
+
+      /* The frame: rail | page. The foot (brand, mini player, dock) becomes the
+         rail, sticky for a whole screen beside a page that scrolls. */
+      :host([data-sk-w~="tab"]) .sk { max-width: none; margin: 0; display: grid;
+        grid-template-columns: var(--sk-railw) minmax(0, 1fr); grid-template-rows: auto auto 1fr; }
+      :host([data-sk-w~="tab"]) .sk > * { grid-column: 2; }
+      :host([data-sk-w~="tab"]) .sk-safepad { grid-row: 1; }
+      :host([data-sk-w~="tab"]) .sk-bar { grid-row: 2; }
+      :host([data-sk-w~="tab"]) .sk-view { grid-row: 3; padding: 0 var(--sk-gut) 120px; }
+      :host([data-sk-w~="tab"]) .sk-view[data-v="home"] { padding: 0 0 120px; }
+      :host([data-sk-w~="tab"]) .sk-view:not([data-v="home"]) > .sk-stack { max-width: var(--sk-maxw); margin: 0 auto; gap: 16px; }
+      :host([data-sk-w~="tab"]) .sk-barrow { padding: 0 var(--sk-padx); }
+      :host([data-sk-w~="tab"]) .sk-pills { display: none; }
+      :host([data-sk-w~="tab"]) .sk-bar.pilled .sk-barbg { bottom: 0; }
+      :host([data-sk-w~="tab"]) .sk-ttl h1 { font-size: var(--pc-fs-3xl); }
+
+      :host([data-sk-w~="tab"]) .sk-foot { grid-column: 1; grid-row: 1 / 4; align-self: start; position: sticky; top: 0; bottom: auto;
+        height: 100vh; height: 100dvh; padding: 12px; gap: 0; z-index: 22; }
+      :host([data-sk-w~="tab"]) .sk-foot::before { inset: 12px; border-radius: 30px; background: var(--sk-dock); border: 1px solid var(--sk-edge);
+        box-shadow: 0 16px 36px -18px rgba(0,0,0,.3); }
+      :host([data-sk-w~="tab"]) .sk-brand { display: grid; place-items: center; height: 74px; padding: 14px 0 8px; }
+      :host([data-sk-w~="tab"]) .sk-brandb { display: grid; place-items: center; color: var(--ps-text); }
+      :host([data-sk-w~="tab"]) .sk-dock { display: grid; grid-auto-flow: row; grid-template-columns: minmax(0, 1fr); grid-auto-rows: var(--sk-dbh);
+        height: auto; padding: 5px; background: none; border: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; border-radius: 0; }
+      :host([data-sk-w~="tab"]) .sk-lens { top: 5px; left: 5px; right: 5px; bottom: auto; width: auto; height: var(--sk-dbh); border-radius: 22px;
+        transform: translateY(calc(var(--i) * var(--sk-dbh))); }
+      :host([data-sk-w~="tab"]) .sk-db { border-radius: 22px; }
+
+      /* The mini player floats bottom-right of the page, and stays put: there
+         is no thumb to step aside from. */
+      :host([data-sk-w~="tab"]) .sk-mini { position: fixed; right: 24px; bottom: 20px; width: 340px; z-index: 30; }
+      :host([data-sk-w~="tab"]) .sk-mini.slim { transform: none; opacity: 1; pointer-events: auto; }
+      :host([data-sk-w~="tab"]) .sk-mini.np { transform: translateY(20px); opacity: 0; pointer-events: none; }
+
+      /* Sheets become a drawer from the right, the full height of the window. */
+      :host([data-sk-w~="tab"]) .ps-sheet, :host([data-sk-w~="tab"]) .ps-sheet.tall {
+        left: auto; right: 16px; top: 16px; bottom: 16px; width: min(440px, calc(100vw - 32px)); max-height: none; border-radius: 28px; }
+
+      /* Home: the sky across the page, the cards in a grid under it. */
+      :host([data-sk-w~="tab"]) .sk-hero { min-height: 400px; }
+      :host([data-sk-w~="tab"]) .sk-heroin { padding-left: var(--sk-padx); padding-right: var(--sk-padx); }
+      :host([data-sk-w~="tab"]) .sk-arc { bottom: 64px; }
+      :host([data-sk-w~="tab"]) .sk-st.l { left: var(--sk-padx); } :host([data-sk-w~="tab"]) .sk-st.r { right: var(--sk-padx); }
+      :host([data-sk-w~="tab"]) .sk-homecards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; grid-auto-flow: row dense;
+        max-width: calc(var(--sk-maxw) + 2 * var(--sk-gut)); margin: -40px auto 0; padding: 0 var(--sk-gut); }
+      :host([data-sk-w~="tab"]) .sk-homecards > * { grid-column: 1 / -1; }
+      :host([data-sk-w~="split"]) .sk-homecards > #sk-c-clim, :host([data-sk-w~="split"]) .sk-homecards > #sk-c-now { grid-column: span 3; }
+      :host([data-sk-w~="split"]) .sk-homecards > .sk-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      :host([data-sk-w~="split"]) .sk-tile.wide { grid-column: 1 / -1; }
+
+      /* Two and three panes: independent stacks, so one tall card never
+         stretches a row of the other. */
+      .sk-cols { display: grid; gap: 16px 24px; align-items: start; }
+      .sk-cols.n2 { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); }
+      .sk-cols.n3 { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr) minmax(0, .95fr); }
+      .sk-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+      .sk-pin.stuck { position: sticky; top: calc(var(--sk-barh) + 6px); z-index: 5; }
+      .sk-pin { display: flex; flex-direction: column; gap: 16px; }
+      .sk-climcols.n2 { grid-template-columns: minmax(320px, .85fr) minmax(0, 1.15fr); }
+      .sk-mediacols.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
+      .sk-facehd { margin: 0; padding: 4px 4px 0; display: flex; align-items: center; gap: 8px; font-size: var(--pc-fs-xl); font-weight: 650; letter-spacing: -.02em; color: var(--ps-text); }
+      .sk-sysbody { display: grid; gap: 16px; align-items: start; }
+      .sk-sysbody.pg-docker { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+      .sk-sysbody.pg-docker > .sk-dsum { grid-column: 1 / -1; }
+      .sk-sysbody.pg-storage, .sk-sysbody.pg-overview { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+      :host([data-sk-w~="tab"]) .sk-subtabs { margin: 0; padding: 6px 0 10px; }
+      :host([data-sk-w~="tab"]) .sk-subtabs .sk-seg { max-width: 560px; }
+      :host([data-sk-w~="tab"]) .sk-view:not([data-v="home"]) > .sk-stack > .sk-seg { max-width: 560px; width: 100%; }
+
+      /* Listen beside its cover wherever its column can hold the transport
+         next to it: a lone Listen face on a tablet, or the right half of a
+         wide screen. */
+      :host([data-sk-w~="tab"]:not([data-sk-w~="desk"])) .sk-player, :host([data-sk-w~="wide"]) .sk-player {
+        display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); column-gap: 28px; row-gap: 14px; align-items: center; }
+      :host([data-sk-w~="tab"]:not([data-sk-w~="desk"])) .sk-player > *, :host([data-sk-w~="wide"]) .sk-player > * { grid-column: 2; }
+      :host([data-sk-w~="tab"]:not([data-sk-w~="desk"])) .sk-player > .sk-art.big, :host([data-sk-w~="wide"]) .sk-player > .sk-art.big { grid-column: 1; grid-row: 1 / span 4; align-self: start; }
+      :host([data-sk-w~="tab"]:not([data-sk-w~="desk"])) .sk-player > .ps-qbar, :host([data-sk-w~="wide"]) .sk-player > .ps-qbar,
+      :host([data-sk-w~="tab"]:not([data-sk-w~="desk"])) .sk-player > .ps-toast, :host([data-sk-w~="wide"]) .sk-player > .ps-toast { grid-column: 1 / -1; }
+      :host([data-sk-w~="tab"]:not([data-sk-w~="desk"])) .sk-transport, :host([data-sk-w~="wide"]) .sk-transport { justify-content: flex-start; }
+      :host([data-sk-w~="tab"]) .sk-art.big { box-shadow: 0 24px 50px -30px rgba(0,0,0,.45); }
+      :host([data-sk-w~="desk"]:not([data-sk-w~="wide"])) .sk-art.big { width: min(100%, 360px); margin-inline: auto; }
+      :host([data-sk-w~="desk"]:not([data-sk-w~="wide"])) .sk-trk { text-align: center; }
+      :host([data-sk-w~="desk"]:not([data-sk-w~="wide"])) .sk-trk > div { align-items: center; }
+
+      /* desk: the labelled sidebar */
+      :host([data-sk-w~="desk"]) .sk-foot { padding: 12px 12px 12px; display: flex; flex-direction: column; }
+      :host([data-sk-w~="desk"]) .sk-brand { height: auto; padding: 16px 14px 10px; place-items: stretch; }
+      :host([data-sk-w~="desk"]) .sk-brandb { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; column-gap: 12px; text-align: left; padding: 0 6px; }
+      :host([data-sk-w~="desk"]) .sk-bt { display: flex; flex-direction: column; min-width: 0; }
+      :host([data-sk-w~="desk"]) .sk-bt b { font-size: var(--pc-fs-lg); font-weight: 680; letter-spacing: -.015em; }
+      :host([data-sk-w~="desk"]) .sk-bt small { font-size: var(--pc-fs-sm); color: var(--ps-dim); font-weight: 550; }
+      :host([data-sk-w~="desk"]) .sk-dock { padding: 6px 11px; }
+      :host([data-sk-w~="desk"]) .sk-lens { left: 11px; right: 11px; top: 6px; border-radius: 16px; }
+      :host([data-sk-w~="desk"]) .sk-db { flex-direction: row; justify-content: flex-start; gap: 14px; padding: 0 14px; font-size: var(--pc-fs-md); border-radius: 16px; }
+      :host([data-sk-w~="desk"]) .sk-db ha-icon { --mdc-icon-size: 20px; }
+      :host([data-sk-w~="desk"]) .sk-dv { display: block; margin-left: auto; min-width: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-dim); font-variant-numeric: tabular-nums; }
+      :host([data-sk-w~="desk"]) .sk-db.on .sk-dv { color: var(--ps-deep); }
+      :host([data-sk-w~="desk"]) .sk-mini { position: relative; right: auto; bottom: auto; width: auto; order: 3; margin: auto 11px 11px; z-index: 1; }
+      :host([data-sk-w~="desk"]) .sk-mini .ps-mini { background: var(--sk-card); }
+
+      /* desk: Home, with the week up in the sky */
+      :host([data-sk-w~="desk"]) .sk-hero { min-height: 440px; }
+      :host([data-sk-w~="desk"]) .sk-heroin { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(340px, 1.15fr); column-gap: 48px; row-gap: 2px; align-content: start; }
+      :host([data-sk-w~="desk"]) .sk-heroin > * { grid-column: 1; }
+      :host([data-sk-w~="desk"]) .sk-heroin > .sk-htop { grid-column: 1 / -1; }
+      :host([data-sk-w~="desk"]) .sk-heroin > .sk-hweek { grid-column: 2; grid-row: 2 / span 5; align-self: start; justify-self: end; }
+      .sk-hweek { width: 100%; max-width: 460px; padding: 12px 18px 4px; border-radius: 28px; color: var(--ps-text); cursor: pointer;
+        background: color-mix(in srgb, var(--sk-card) 74%, transparent); border: 1px solid color-mix(in srgb, var(--sk-card) 50%, transparent);
+        -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4); box-shadow: 0 20px 50px -30px rgba(0,0,0,.35); }
+      .sk-hweek .sk-week { margin-top: 2px; }
+      :host([data-sk-w~="desk"]) .sk-homecards { grid-template-columns: repeat(12, minmax(0, 1fr)); margin-top: -48px; }
+      :host([data-sk-w~="desk"]) .sk-homecards > #sk-c-joel  { grid-column: span 7; order: 1; display: flex; flex-direction: column; }
+      :host([data-sk-w~="desk"]) .sk-homecards > #sk-c-clim  { grid-column: span 5; order: 2; display: flex; flex-direction: column; }
+      :host([data-sk-w~="desk"]) .sk-homecards > #sk-c-now   { grid-column: span 5; order: 3; }
+      :host([data-sk-w~="desk"]) .sk-homecards > .sk-tiles   { grid-column: span 7; order: 4; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      :host([data-sk-w~="desk"]) .sk-homecards > #sk-c-needs { order: 5; }
+      :host([data-sk-w~="desk"]) .sk-homecards > #sk-c-truck { order: 6; }
+      :host([data-sk-w~="desk"]) #sk-c-joel .sk-st3 { margin-top: auto; padding-top: 14px; }
+      :host([data-sk-w~="desk"]) #sk-c-clim .sk-rooms { margin-top: auto; padding-top: 8px; }
+      :host([data-sk-w~="desk"]) #sk-c-clim .sk-dialsm { width: 156px; height: 156px; }
+      :host([data-sk-w~="desk"]) .sk-tiles .sk-tile { min-height: 0; }
+      :host([data-sk-w~="desk"]) .sk-vgrid { gap: 20px; }
+      :host([data-sk-w~="desk"]) .sk-vcol { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto 1fr; column-gap: 16px; row-gap: 4px; align-items: start; }
+      :host([data-sk-w~="desk"]) .sk-vcol > .sk-vart { grid-column: 1; grid-row: 1 / span 3; }
+      :host([data-sk-w~="desk"]) .sk-vcol > :not(.sk-vart) { grid-column: 2; }
+      :host([data-sk-w~="desk"]) .sk-vcol > .sk-vfuel { align-self: end; }
+      :host([data-sk-w~="desk"]) .sk-vbody { grid-template-columns: auto minmax(0, 360px); justify-content: space-between; }
+      .sk-jwk { display: grid; gap: 7px; margin-top: 14px; }
+      .sk-jr { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; column-gap: 10px; opacity: .72; }
+      .sk-jr b { font-size: var(--pc-fs-xs); font-weight: 650; color: var(--ps-dim); }
+
+      /* wide */
+      :host([data-sk-w~="wide"]) .sk-homecards > #sk-c-joel { grid-column: span 5; }
+      :host([data-sk-w~="wide"]) .sk-homecards > #sk-c-clim { grid-column: span 4; }
+      :host([data-sk-w~="wide"]) .sk-homecards > #sk-c-now  { grid-column: span 3; }
+      :host([data-sk-w~="wide"]) .sk-homecards > .sk-tiles  { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+      /* A pointer can hover, a thumb cannot: hover states only where they mean something. */
+      @media (hover: hover) {
+        :host([data-sk-w~="tab"]) .sk-db:hover:not(.on) { color: var(--ps-text); }
+        :host([data-sk-w~="tab"]) .sk-tile, :host([data-sk-w~="tab"]) .sk-card.sk-tap, :host([data-sk-w~="tab"]) .sk-rowcard,
+        :host([data-sk-w~="tab"]) .sk-rm { transition: box-shadow .2s; }
+        :host([data-sk-w~="tab"]) .sk-tile:hover, :host([data-sk-w~="tab"]) .sk-card.sk-tap:hover, :host([data-sk-w~="tab"]) .sk-rowcard:hover,
+        :host([data-sk-w~="tab"]) .sk-rm:hover { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--ps-deep) 30%, transparent), var(--sk-shadow); }
+        :host([data-sk-w~="tab"]) .sk-wkrow:hover:not(.sel), :host([data-sk-w~="tab"]) .sk-room:hover:not(.on), :host([data-sk-w~="tab"]) .sk-ev:hover { background: var(--sk-card2); }
+        :host([data-sk-w~="tab"]) .sk-ev { border-radius: 16px; }
+        :host([data-sk-w~="tab"]) .sk-hweek:hover { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--ps-deep) 30%, transparent), 0 20px 50px -30px rgba(0,0,0,.35); }
+      }
+      :host([data-sk-w~="tab"]) .sk-db:focus-visible, :host([data-sk-w~="tab"]) .sk-tile:focus-visible, :host([data-sk-w~="tab"]) .sk-card:focus-visible {
+        outline: 2px solid var(--ps-deep); outline-offset: 2px; }
 
       @media (prefers-reduced-motion: reduce) {
         .sk-eq i, .sk-rm .s i.play { animation: none !important; }

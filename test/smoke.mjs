@@ -11408,6 +11408,72 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   check('the Joel page is the Skylight design: today with predictions, naps raster, hatch', /id="sk-c-jtoday"/.test(joel) && /id="sk-c-naps"/.test(joel) && /_nurseryDayRail\(/.test(fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8')));
   check('a page header carries no expand door', !/data-open=/.test(joel) && !/data-sktab="joel"/.test(joel));
 
+  /* ---- one page, any width (v1.101.0) ----------------------------------- */
+  check('widths: tiers are tokens, cumulative, and empty on a phone', () => {
+    const a = new SK(); a.setConfig(skCfg()); a._hass = d2Hass();
+    const at = (w) => { a._skSize(w); return a._skW; };
+    return at(390) === '' && at(800) === 'tab' && at(1000) === 'tab split' && at(1200) === 'tab split desk' &&
+      at(1600) === 'tab split desk wide' && a._skHas('split') && !a._skHas('spl');
+  });
+  check('widths: coming down through a line takes 12px more than going up', () => {
+    const a = new SK(); a.setConfig(skCfg()); a._hass = d2Hass();
+    a._skSize(1100); const up = a._skW;
+    a._skSize(1092); const held = a._skW;
+    a._skSize(1086); const down = a._skW;
+    a._skSize(1095);
+    return up === 'tab split desk' && held === 'tab split desk' && down === 'tab split' && a._skW === 'tab split';
+  });
+  check('widths: the phone draws its pages exactly as before — no columns, no sidebar values, no sky week', () => {
+    const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass(); p._testNow = sk._testNow;
+    const html = [p._skJoel(), p._skClimate(), p._skHouse(), p._skMedia(), p._skDock('home'), p._skHome([]).html].join('');
+    return !/sk-cols|sk-dv|sk-hweek|sk-jwk|sk-facehd|sk-sysbody|aria-keyshortcuts/.test(html);
+  });
+  check('widths: two panes from 940, three from 1500, Watch beside Listen from 1100', () => {
+    const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass(); p._testNow = sk._testNow;
+    p._skSize(1000);
+    const two = /sk-cols n2 sk-joelcols/.test(p._skJoel()) && /sk-cols n2 sk-housecols/.test(p._skHouse()) && !/sk-mediacols/.test(p._skMedia());
+    p._skSize(1200);
+    const media = /sk-cols n2 sk-mediacols/.test(p._skMedia()) && /sk-dv/.test(p._skDock('home'));
+    p._skSize(1600);
+    return two && media && /sk-cols n3 sk-joelcols/.test(p._skJoel()) && /sk-cols n3 sk-housecols/.test(p._skHouse());
+  });
+  check('widths: the split pages lose nothing the phone page had', () => {
+    const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass(); p._testNow = sk._testNow;
+    /* Stable ids only: an SVG gradient's id carries a counter that moves on every render. */
+    const ids = (h) => (h.match(/id="[^"]+"/g) || []).filter((x) => !/id="sk[a-z]{1,2}\d+"/.test(x)).sort().join();
+    const phone = [p._skJoel(), p._skClimate(), p._skHouse()].map(ids);
+    p._skSize(1600);
+    const wide = [p._skJoel(), p._skClimate(), p._skHouse()].map(ids);
+    return phone.every((x, i) => x === wide[i]) && phone[0].length > 20;
+  });
+  check('widths: keys do nothing on a phone, and never while typing', () => {
+    const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass();
+    let went = null; p._skGo = (t) => { went = t; };
+    const ev = (key, tag) => ({ key, composedPath: () => [{ tagName: tag || 'BODY' }], preventDefault() {} });
+    p.isConnected = true;
+    p._skKey(ev('2'));
+    const phone = went;
+    p._skSize(1200);
+    p._skKey(ev('2', 'INPUT'));
+    const typing = went;
+    p._skKey(ev('2'));
+    return phone === null && typing === null && went === 'joel';
+  });
+  check('widths: the sheets do not measure the rail as a dock', () => /if \(this\._skHas\("tab"\)\) \{ this\._dockH = null; return; \}/.test(skSrc));
+  check('widths: the ResizeObserver is disconnected with the card', /this\._skRO\.disconnect\(\)/.test(skSrc) && /new ResizeObserver/.test(skSrc));
+  check('widths: every desktop rule is gated on a tier token', () => {
+    const css = fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8');
+    const block = css.slice(css.indexOf('one page, any width'), css.indexOf('@media (prefers-reduced-motion'));
+    /* Ungated rules may only style elements that exist ONLY at a tier. */
+    const loose = block.split('\n').filter((l) => /^\s+\.[a-z]/.test(l)).map((l) => l.trim().split(/[ ,{:]/)[0]);
+    const tierOnly = ['.sk-dv', '.sk-orb', '.sk-cols', '.sk-col', '.sk-pin', '.sk-pin.stuck', '.sk-climcols.n2', '.sk-mediacols.n2', '.sk-facehd',
+      '.sk-sysbody', '.sk-sysbody.pg-docker', '.sk-sysbody.pg-storage', '.sk-hweek', '.sk-jwk', '.sk-jr', '.sk-cols.n2', '.sk-cols.n3',
+      '.sk-orb.sky-dawn', '.sk-orb.sky-day', '.sk-orb.sky-dusk', '.sk-orb.sky-night', '.sk-orb.sky-night i'];
+    const bad = loose.filter((x) => tierOnly.indexOf(x) < 0);
+    if (bad.length) console.log('    ungated: ' + bad.join(' '));
+    return loose.length > 10 && !bad.length;
+  });
+
   /* Every destination the phone dock had is still reachable (orphan rule). */
   const house = sk._skHouse();
   check('House carries the lights and the crew', /id="sk-c-lights"/.test(house) && /id="sk-c-crew"/.test(house));
