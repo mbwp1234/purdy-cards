@@ -7098,6 +7098,57 @@ check('the log sheet offers both ways in and the away days', (() => {
     && /ps-jladd/.test(html) && /data-away="/.test(html);
 })());
 
+/* ---- v1.105.0: a night logged live, and wake-ups remembered ---- */
+check('the hand-log token carries live wake-ups and a remembered count, and old tokens read as before', () => {
+  const P = SH.helpers.parseManual, W = SH.helpers.writeManual;
+  const live = P('29927600~a~n~w142+11.264+');
+  const count = P('29927000~600~n~c3+');
+  const old = P('29924415~53~p');
+  return JSON.stringify(live[0].wakes) === '[[142,11],[264,null]]' && live[0].kind === 'n'
+    && count[0].count.n === 3 && count[0].count.plus === true
+    && old[0].kind === 'p' && old[0].wakes === null && old[0].count === null
+    && W(live) === '29927600~a~n~w142+11.264+' && W(count) === '29927000~600~n~c3+' && W(old) === '29924415~53~p';
+});
+check('logged wake-ups are counted and come off the night; nothing logged stays unknown, never 0', () => {
+  const P = SH.helpers.parseManual, S = SH.helpers.manualSessions;
+  const t0 = 29927600;
+  const [live] = S(P(`${t0}~a~n~w142+11.264+`), { now: (t0 + 300) * 60000 });
+  const [plain] = S(P(`${t0}~600~n`), { now: (t0 + 900) * 60000 });
+  const [three] = S(P(`${t0}~600~n~c3+`), { now: (t0 + 900) * 60000 });
+  return live.interventions === 2 && live.asleepMinutes === 300 - 11 - 36 && live.awakeNow === true
+    && plain.interventions === null && plain.longestStretch === null
+    && three.interventions === 3 && three.wakesPlus === true;
+});
+check('the night logger: He woke, Back asleep, Up for day write the running night', () => {
+  const s = travelCard();
+  s._manualStart('n');
+  const put = (c) => { s._hass.states['input_text.joellog'].state = c[2].value; };
+  put(s._calls[0]);
+  s._testNow = NT(17, 0); s._manualWoke(); put(s._calls[1]);
+  s._testNow = NT(17, 12); s._manualBack(); put(s._calls[2]);
+  s._testNow = NT(17, 40); s._manualWoke(); put(s._calls[3]);
+  const open = s._calls[3][2].value;
+  s._testNow = NT(17, 45); s._manualUp();
+  const done = s._calls[4][2].value;
+  /* Up while awake: that wake-up WAS the get-up, so the night ends there. */
+  return /~a~n$/.test(s._calls[0][2].value) && /~a~n~w120\+12\.160\+$/.test(open) && /~160~n~w120\+12$/.test(done);
+});
+check('Undo withdraws an open wake-up, then reopens a closed one', () => {
+  const t = Math.round(NT(13, 0) / 60000);
+  const s = travelCard({ log: `${t}~a~n~w30+5.60+` });
+  s._manualUndo();
+  const a = s._calls[0][2].value;
+  s._hass.states['input_text.joellog'].state = `${t}~a~n~w30+5`;
+  s._manualUndo();
+  return /~w30\+5$/.test(a) && /~w30\+$/.test(s._calls[1][2].value);
+});
+check('moving a hand-logged night keeps its wake-ups at the clock times they happened', () => {
+  const t = Math.round(NT(13, 0) / 60000);
+  const s = travelCard({ log: `${t}~120~n~w30+5` });
+  s._manualSet(t * 60000, (t - 10) * 60000, (t + 120) * 60000, 'n');
+  return new RegExp(`^${t - 10}~130~n~w40\\+5$`).test(s._calls[0][2].value);
+});
+
 check('the sheet shows Stop, not Start, while a log is running', (() => {
   const s = travelCard({ log: `${Math.round(NT(14, 0) / 60000)}~a` });
   s._openNurseryLog();
@@ -11405,7 +11456,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
 
   /* A page names the section in its title, so the section header keeps only its chip. */
   const joel = sk._skJoel();
-  check('the Joel page is the Skylight design: today with predictions, naps raster, hatch', /id="sk-c-jtoday"/.test(joel) && /id="sk-c-naps"/.test(joel) && /_nurseryDayRail\(/.test(fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8')));
+  check('the Joel page is the four-screen design: today, last night, naps by time of day, the week', /id="sk-c-jtoday"/.test(joel) && /id="sk-c-naps"/.test(joel) && /data-skjp="timeline"/.test(joel) && /class="sk-jrib tall"/.test(joel));
   check('a page header carries no expand door', !/data-open=/.test(joel) && !/data-sktab="joel"/.test(joel));
 
   /* ---- one page, any width (v1.101.0) ----------------------------------- */
@@ -11671,8 +11722,8 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return own.length > 5000 && (own.match(/font-size: *[0-9.]+px/g) || []).length === 0;
   });
   check('the night light is a two-tap arm while the Hatch plays, a plain toggle otherwise', () => {
-    const asleep = sk._skNightLightTile({ light: 'light.nl' }, { playing: true }, true, 5, '255,160,70');
-    const awake = sk._skNightLightTile({ light: 'light.nl' }, { playing: false }, true, 5, '255,160,70');
+    const asleep = sk._skJLightBtn({ light: 'light.nl' }, { playing: true });
+    const awake = sk._skJLightBtn({ light: 'light.nl' }, { playing: false });
     return /data-skarm="nl"/.test(asleep) && /data-sktog="light\.nl"/.test(asleep) && !/data-sktoggle=/.test(asleep) &&
       /data-sktoggle="light\.nl"/.test(awake) && !/data-skarm=/.test(awake);
   });
@@ -11682,14 +11733,41 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const q = sk._skPlayingChip([{ st: { state: 'playing' } }, { st: { state: 'paused' } }]);
     return /2 paused/.test(p) && !/playing/.test(p) && /1 playing/.test(q);
   });
-  check('a night still running has not "slept through" yet', () => {
-    const t = Date.now();
-    const past = [0, 1].map((k) => ({ from: t - (k + 2) * 864e5, settleMinutes: 20, events: [], asleepMinutes: 600 }));
-    const live = sk._skVsUsual({ from: t - 3600000, settleMinutes: 20, events: [], active: true }, past);
-    const done = sk._skVsUsual({ from: t - 864e5 / 2, settleMinutes: 20, events: [], active: false }, past);
-    return /none yet/.test(live) && !/slept through/.test(live) && /slept through/.test(done);
+  /* ---- the Joel pages (v1.105.0) ---- */
+  const jSrc = fs.readFileSync(new URL('../src/88e-sky-joel.js', import.meta.url), 'utf8');
+  check('a hand-logged night walks as one unwatched stretch: wake-ups "?", never slept through', () => {
+    const t = Date.now() - 864e5;
+    const [n] = SH.helpers.manualSessions(SH.helpers.parseManual(`${Math.round(t / 60000)}~645~n`), { now: Date.now() });
+    const html = sk._skJEvents(n, {});
+    return /Not watched/.test(html) && /wake-ups \?/.test(html) && !/slept through/.test(html) && !/null/.test(html);
   });
-  check('tonight\'s row in the week carries no slept-through tick', /s\.active \? "" : `<ha-icon icon="mdi:check">/.test(pgSrc));
+  check('a door night walks with the sleep between trips as rows, the longest tagged', () => {
+    const t = Date.now() - 864e5, H = 3600000;
+    const n = { from: t, to: t + 12 * H, wokeAt: t + 12 * H, settledAt: t + 0.3 * H, settleMinutes: 18, asleepMinutes: 700,
+      events: [t + 2 * H, t + 7 * H], doorAt: [t + 2 * H, t + 2.2 * H, t + 7 * H], interventions: 2, night: true };
+    const html = sk._skJEvents(n, {});
+    return (html.match(/class="sk-ev st/g) || []).length === 3 && /12m in the room/.test(html)
+      && (html.match(/sk-best/g) || []).length === 1 && /data-a="/.test(html);
+  });
+  check('a night with no trips reads slept through, with no longest tag', () => {
+    const t = Date.now() - 864e5, H = 3600000;
+    const n = { from: t, to: t + 11 * H, settledAt: t, settleMinutes: 0, asleepMinutes: 660, events: [], doorAt: [], interventions: 0, night: true };
+    const html = sk._skJEvents(n, {});
+    return /slept through/.test(html) && !/sk-best/.test(html);
+  });
+  check('wake-ups print "?" for unknown and a floor for an outage or 3+, never "null"', () => {
+    const w = (o) => SH.helpers.joelWakes(o);
+    return w({ interventions: null }) === '?' && w({ interventions: 2, blindMin: 40 }) === '2+' && w({ interventions: 3, wakesPlus: true }) === '3+' && w({ interventions: 0 }) === '0';
+  });
+  check('the night logger takes the tab over in ember while a night is logged away', () => {
+    const t0 = Date.now() - 3 * 3600000;
+    const [live] = SH.helpers.manualSessions(SH.helpers.parseManual(`${Math.round(t0 / 60000)}~a~n~w60+`), { now: Date.now() });
+    const html = sk._skJoelLogger({ sec: {}, m: {} }, live);
+    return /data-jback="1"/.test(html) && /Back asleep/.test(html) && /data-jarm="jup"/.test(html) && !/data-jwoke/.test(html)
+      && /:host\(\[data-sk-ember\]\)/.test(SK.styles) && /toggleAttribute\("data-sk-ember"/.test(skSrc);
+  });
+  check('the correction drag binds its release to the window, never pointer capture', /window\.addEventListener\("pointerup", up\)/.test(jSrc) && !/setPointerCapture/.test(jSrc));
+  check('every Joel page is dispatched and every page title is named', ['timeline', 'walk', 'weeks'].every((p) => new RegExp(`_skJPage === "${p}"`).test(jSrc) && SH.helpers.joelPages[p]));
   check('a player that reports no volume is a dash, never 0', /volume_level : null;/.test(pgSrc) && !/volume_level : 0;/.test(pgSrc) && /pv == null \? "—"/.test(pgSrc));
   check('a thermostat with no current_temperature is missing, not 0°', /ct == null \|\| ct === "" \? null : Number\(ct\)/.test(pgSrc));
   check('the litter and washer tiles land on their own House cards', () => {

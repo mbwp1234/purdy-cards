@@ -240,6 +240,11 @@ function buildHass(states) {
          palette follows HA's dark mode, which the harness does not set, so
          `theme=` pins it the way `sky=` pins the hour. */
       if (P.get("tab")) { el._skTab = P.get("tab"); touched = true; }
+      /* The Joel tab's pages (v1.105.0): jpage=timeline|walk|weeks, and the
+         page's own switches, jtl=naps|day and jwk=night|naps|times|wakes|bed. */
+      if (P.get("jpage")) { el._skJPage = P.get("jpage"); touched = true; }
+      if (P.get("jtl")) { el._skJTl = P.get("jtl"); touched = true; }
+      if (P.get("jwk")) { el._skJWk = P.get("jwk"); touched = true; }
       if (P.get("face")) { el._skFace = P.get("face"); touched = true; }
       /* The vacuum's multi-room pick lives on the card, not in a helper, so it
          is unphotographable without writing it: vacpick=1F - Kitchen|1F - Bathroom */
