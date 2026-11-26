@@ -326,6 +326,9 @@ class PurdySkyCard extends PurdyShellCard {
     this._sheet = null;
     this._mediaPick = null;
     this._napEdit = null;
+    /* The Joel tab always opens on Today: its pages are reached from there,
+       and the dock is the way home from any of them. */
+    if (tab === "joel") this._skJPage = null;
     if (o.mode) {
       this._mode = o.mode;
       this._expandWatched();
@@ -363,11 +366,15 @@ class PurdySkyCard extends PurdyShellCard {
     if (!pre) return;
     const { now, faults } = pre;
     if (this._mode === "health") this._mode = null;
-    const dark = this._skDark();
+    const view = this._skView();
+    /* A night being logged away takes the Joel tab to ember — dark, and warm
+       enough that a phone at 2 AM does not light the room. */
+    const ember = !!(this._skJoelEmber && this._skJoelEmber(view));
+    const dark = this._skDark() || ember;
     if (this.getAttribute && this.getAttribute("data-sk-theme") !== (dark ? "dark" : "light")) {
       this.setAttribute("data-sk-theme", dark ? "dark" : "light");
     }
-    const view = this._skView();
+    if (this.toggleAttribute && this.hasAttribute && this.hasAttribute("data-sk-ember") !== ember) this.toggleAttribute("data-sk-ember", ember);
     const root = this.shadowRoot;
     root.querySelectorAll(".sk-view").forEach((v) => {
       const on = v.dataset.v === view;
@@ -442,6 +449,9 @@ class PurdySkyCard extends PurdyShellCard {
     if (view === "sys") {
       const s = this._sysCfg();
       return `<span>${psEsc((s && s.name) || "Server")}</span><small>${psEsc((this._sysPage() || {}).name || "")}</small>`;
+    }
+    if (view === "joel" && this._skJPage && SKJ_PAGES[this._skJPage]) {
+      return `<span>${psEsc(SKJ_PAGES[this._skJPage])}</span><small>${psEsc(this._skTabName("joel"))}</small>`;
     }
     return `<span>${psEsc(this._skTabName(view))}</span>`;
   }
@@ -1137,6 +1147,7 @@ class PurdySkyCard extends PurdyShellCard {
   /* ---------------------------------------------------------------- binding --- */
 
   _skBind() {
+    this._skJoelBind();
     /* A card that is another app's front door (the Garage panel). */
     this._each("[data-sknav]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1176,19 +1187,6 @@ class PurdySkyCard extends PurdyShellCard {
       if (!card || !sc || !card.getBoundingClientRect) return;
       const off = card.getBoundingClientRect().top - this._skCover() - 10;
       if (sc.scrollTo) sc.scrollTo({ top: sc.scrollTop + off, behavior: "smooth" }); else sc.scrollTop += off;
-    }));
-    /* Joel: tap a night in the week to read it above. */
-    this._each("[data-sknight]", (el) => el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this._skNight = Number(el.dataset.sknight);
-      this._render();
-      const w = this.shadowRoot.getElementById("sk-nightwrap");
-      const sc = this._skScroller();
-      const bar = this.shadowRoot.getElementById("sk-bar");
-      if (w && sc && w.getBoundingClientRect) {
-        const off = w.getBoundingClientRect().top - (bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 60) - 8;
-        if (sc.scrollTo) sc.scrollTo({ top: sc.scrollTop + off, behavior: "smooth" }); else sc.scrollTop += off;
-      }
     }));
     /* An event row scrolls itself under the pinned night, which moves the cursor. */
     this._each("[data-skev]", (el) => el.addEventListener("click", (e) => {
@@ -1399,21 +1397,8 @@ class PurdySkyCard extends PurdyShellCard {
       title = tr ? skClamp((barR.bottom - tr.bottom - 4) / 30) : 1;
       if (bar.classList.contains("pilled")) bar.classList.remove("pilled");
     }
-    /* Joel: the cursor on the pinned night follows the event row under it. */
-    if (view === "joel") {
-      const box = root.getElementById("sk-bigrail"), cur = root.getElementById("sk-cursor"), hero = root.getElementById("sk-c-night");
-      const rows = Array.from(root.querySelectorAll(".sk-ev"));
-      if (box && cur && hero && rows.length) {
-        const line = hero.getBoundingClientRect().bottom + 40;
-        let act = 0;
-        rows.forEach((r, i) => { if (r.getBoundingClientRect().top <= line) act = i; });
-        rows.forEach((r, i) => { if (r.classList.contains("on") !== (i === act)) r.classList.toggle("on", i === act); });
-        const t = Number(rows[act].dataset.t), T0 = Number(box.dataset.t0), T1 = Number(box.dataset.t1);
-        cur.style.left = (skClamp((t - T0) / (T1 - T0)) * 100).toFixed(2) + "%";
-        const b = cur.querySelector("b");
-        if (b) b.textContent = new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      }
-    }
+    /* Joel: the cursor on the pinned night follows the row under it. */
+    if (view === "joel") this._skJoelFrame(root);
     /* Climate: the room row under the pinned chart lights its line. */
     if (view === "climate") {
       const chart = root.getElementById("sk-chart"), card = root.getElementById("sk-c-chart");
@@ -1545,6 +1530,6 @@ class PurdySkyCard extends PurdyShellCard {
   static get styles() {
     /* The shell's sheet speaks white-alpha; rewritten once so the same rules
        read on paper. */
-    return PurdyShellCard.styles.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg),") + SK_STYLES + SK_SKY_STYLES;
+    return PurdyShellCard.styles.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg),") + SK_STYLES + SK_SKY_STYLES + SK_JOEL_STYLES;
   }
 }

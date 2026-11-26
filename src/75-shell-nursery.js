@@ -725,8 +725,29 @@ function psParseManual(raw) {
        reached by the time somebody looks. */
     const dur = p[1] === "a" ? null : parseInt(p[1], 10);
     if (dur != null && (!Number.isFinite(dur) || dur < 0)) return null;
-    const kind = p[2] === "n" || p[2] === "p" ? p[2] : null;
-    return { start: start * 60000, dur, kind };
+    /* Fields past the duration are read by their PREFIX, not their place, so a
+       token written before wake-ups existed parses exactly as it always did and
+       one written after can carry any of them:
+         n | p           the kind, when the hour would guess it wrong
+         w142+11.264+    wake-ups logged live: minutes from the start, then how
+                         long he was up — blank while he still is
+         c2 | c3+        wake-ups remembered afterwards, as a count */
+    let kind = null, wakes = null, count = null;
+    p.slice(2).forEach((f) => {
+      if (f === "n" || f === "p") kind = f;
+      else if (/^w/.test(f)) {
+        wakes = f.slice(1).split(".").filter(Boolean).map((x) => {
+          const q = x.split("+");
+          const off = parseInt(q[0], 10);
+          const aw = q[1] == null || q[1] === "" ? null : parseInt(q[1], 10);
+          return Number.isFinite(off) && off >= 0 ? [off, Number.isFinite(aw) && aw >= 0 ? aw : null] : null;
+        }).filter(Boolean);
+      } else {
+        const c = /^c(\d+)(\+?)$/.exec(f);
+        if (c) count = { n: parseInt(c[1], 10), plus: !!c[2] };
+      }
+    });
+    return { start: start * 60000, dur, kind, wakes, count };
   }).filter(Boolean);
 }
 
@@ -734,7 +755,9 @@ function psWriteManual(list) {
   let parts = (list || []).slice()
     .sort((a, b) => a.start - b.start)
     .map((e) => `${Math.round(e.start / 60000)}~${e.dur == null ? "a" : Math.round(e.dur)}${
-      e.kind ? `~${e.kind}` : ""}`);
+      e.kind ? `~${e.kind}` : ""}${
+      e.wakes && e.wakes.length ? `~w${e.wakes.map((w) => `${Math.round(w[0])}+${w[1] == null ? "" : Math.round(w[1])}`).join(".")}` : ""}${
+      e.count ? `~c${e.count.n}${e.count.plus ? "+" : ""}` : ""}`);
   while (parts.length && parts.join("|").length > 255) parts.shift();
   return parts.join("|");
 }
@@ -769,19 +792,44 @@ function psManualSessions(entries, opts) {
     if (night && hr < morning) anchor.setDate(anchor.getDate() - 1);
     const mins = Math.max(0, Math.round((to - from) / 60000));
 
+    /* Wake-ups LOGGED LIVE are a fact the person at the cot recorded, so they
+       count exactly as a door trip would — and the minutes he was up come off
+       the night. A COUNT remembered the next morning is a number with no times
+       to it: it answers "how many" and nothing else, so it fills
+       `interventions` and leaves `longestStretch` unknown. Neither present is
+       still null: nobody said. */
+    const wakeLog = (e.wakes || []).filter((w) => w[0] * 60000 <= to - from).map((w) => {
+      const at = from + w[0] * 60000;
+      const back = w[1] == null ? (active ? null : to) : Math.min(to, at + w[1] * 60000);
+      return { at, back };
+    });
+    const awakeMin = wakeLog.reduce((a, w) => a + Math.max(0, Math.round(((w.back == null ? now : w.back) - w.at) / 60000)), 0);
+    let longest = null;
+    if (wakeLog.length && !active) {
+      let prev = from;
+      longest = 0;
+      wakeLog.forEach((w) => { longest = Math.max(longest, Math.round((w.at - prev) / 60000)); prev = w.back; });
+      longest = Math.max(longest, Math.round((to - prev) / 60000));
+    }
+    const interventions = wakeLog.length || e.wakes ? wakeLog.length
+      : e.count ? e.count.n : null;
+
     return {
       from, to, active, splits: 1, minutes: mins,
       night, day: psDayKey(anchor),
       /* Not zero. See above. */
-      interventions: null,
-      events: [], doorAt: [],
+      interventions,
+      wakesPlus: !!(e.count && e.count.plus),
+      wakeLog,
+      awakeNow: !!(active && wakeLog.length && wakeLog[wakeLog.length - 1].back == null),
+      events: wakeLog.map((w) => w.at), doorAt: [],
       /* Logged asleep-to-awake, so there is no settling to report and none is
          claimed: `settledAt` is the start, and `settleMinutes` is a real zero
          because the window being recorded IS the sleep. */
       settledAt: from, wokeAt: to,
-      settleMinutes: 0, asleepMinutes: mins,
+      settleMinutes: 0, asleepMinutes: Math.max(0, mins - awakeMin),
       hadExit: true,
-      longestStretch: null,
+      longestStretch: longest,
       manual: true,
       kind: e.kind || null,
     };
@@ -1202,7 +1250,7 @@ Object.assign(PurdyShellCard.prototype, {
     return this._manualEntries(sec).find((e) => e.dur == null) || null;
   },
 
-  _manualStart() {
+  _manualStart(kind) {
     const sec = this._nurserySection();
     if (!sec || !this._manualStore(sec) || this._manualLive(sec)) return;
     pcHaptic("medium");
@@ -1210,7 +1258,7 @@ Object.assign(PurdyShellCard.prototype, {
        than at the write is what keeps the elapsed figure on screen agreeing
        with the one that lands in the helper. */
     const start = Math.round(this._nowMs() / 60000) * 60000;
-    this._manualWrite(sec, this._manualEntries(sec).concat([{ start, dur: null, kind: null }]));
+    this._manualWrite(sec, this._manualEntries(sec).concat([{ start, dur: null, kind: kind === "n" || kind === "p" ? kind : null }]));
   },
 
   /* Stopping is what records the session, so it is a completion rather than a
@@ -1223,7 +1271,73 @@ Object.assign(PurdyShellCard.prototype, {
     pcHaptic("success");
     const dur = Math.max(0, Math.round((this._nowMs() - live.start) / 60000));
     this._manualWrite(sec, this._manualEntries(sec)
-      .map((e) => (e.start === live.start ? { start: e.start, dur, kind: e.kind } : e)));
+      .map((e) => (e.start === live.start ? Object.assign({}, e, { dur }) : e)));
+  },
+
+  /* --- a night logged live, away from home ---------------------------------
+   *
+   * The night logger's three buttons, written straight into the running
+   * session's token: He woke stamps a wake-up and leaves it open, Back asleep
+   * closes it with the minutes he was up, and Up for day ends the night. A
+   * wake still OPEN when the night ends was the get-up itself — the night ends
+   * there, rather than counting the morning as a wake-up. */
+  _manualLiveEdit(fn) {
+    const sec = this._nurserySection();
+    const live = sec && this._manualLive(sec);
+    if (!live) return;
+    const next = fn(Object.assign({}, live, { wakes: (live.wakes || []).map((w) => w.slice()) }));
+    if (!next) return;
+    this._manualWrite(sec, this._manualEntries(sec).map((e) => (e.start === live.start ? next : e)));
+  },
+
+  _manualWoke() {
+    pcHaptic("medium");
+    const now = this._nowMs();
+    this._manualLiveEdit((e) => {
+      const last = e.wakes[e.wakes.length - 1];
+      if (last && last[1] == null) return null;
+      e.wakes.push([Math.max(0, Math.round((now - e.start) / 60000)), null]);
+      return e;
+    });
+  },
+
+  _manualBack() {
+    pcHaptic("light");
+    const now = this._nowMs();
+    this._manualLiveEdit((e) => {
+      const last = e.wakes[e.wakes.length - 1];
+      if (!last || last[1] != null) return null;
+      last[1] = Math.max(0, Math.round((now - e.start) / 60000) - last[0]);
+      return e;
+    });
+  },
+
+  /* One step back: an open wake-up is withdrawn, a closed one reopened. With
+     nothing logged yet it withdraws the bedtime itself — the button pressed by
+     mistake — which the logger guards with an arm. */
+  _manualUndo() {
+    pcHaptic("light");
+    const sec = this._nurserySection();
+    const live = sec && this._manualLive(sec);
+    if (!live) return;
+    if (!(live.wakes || []).length) { this._manualDrop(live.start); return; }
+    this._manualLiveEdit((e) => {
+      const last = e.wakes[e.wakes.length - 1];
+      if (last[1] == null) e.wakes.pop(); else last[1] = null;
+      return e;
+    });
+  },
+
+  _manualUp() {
+    pcHaptic("success");
+    const now = this._nowMs();
+    this._manualLiveEdit((e) => {
+      const last = e.wakes[e.wakes.length - 1];
+      if (last && last[1] == null) { e.wakes.pop(); e.dur = last[0]; }
+      else e.dur = Math.max(0, Math.round((now - e.start) / 60000));
+      if (!e.wakes.length) e.wakes = [];
+      return e;
+    });
   },
 
   _manualAdd(from, to, kind) {
@@ -1246,13 +1360,24 @@ Object.assign(PurdyShellCard.prototype, {
       .filter((e) => Math.abs(e.start - start) > 60000));
   },
 
-  _manualSet(oldStart, from, to, kind) {
+  /* Moving a session keeps what was logged inside it. Wake-ups are stored as
+     minutes from the start, so a start pulled earlier pushes every offset out
+     by the same amount — the wake-ups stay at the clock times they happened —
+     and one the new window no longer covers is dropped with it. `extra`
+     carries a remembered count, set from the correction sheet. */
+  _manualSet(oldStart, from, to, kind, extra) {
     const sec = this._nurserySection();
     if (!sec || !this._manualStore(sec)) return;
     const start = Math.round(from / 60000) * 60000;
+    const dur = Math.max(0, Math.round((to - from) / 60000));
+    const old = this._manualEntries(sec).find((e) => Math.abs(e.start - oldStart) <= 60000) || {};
+    const shift = Math.round(((old.start == null ? start : old.start) - start) / 60000);
+    const wakes = (old.wakes || []).map((w) => [w[0] + shift, w[1]]).filter((w) => w[0] >= 0 && w[0] <= dur);
+    const x = extra || {};
+    const count = "count" in x ? x.count : old.count || null;
     this._manualWrite(sec, this._manualEntries(sec)
       .filter((e) => Math.abs(e.start - oldStart) > 60000 && Math.abs(e.start - start) > 60000)
-      .concat([{ start, dur: Math.max(0, Math.round((to - from) / 60000)), kind: kind || null }]));
+      .concat([{ start, dur, kind: kind || null, wakes: wakes.length ? wakes : null, count: wakes.length ? null : count }]));
   },
 
   _awayToggle(dayKey) {
@@ -1573,7 +1698,8 @@ Object.assign(PurdyShellCard.prototype, {
        session that has no derivation to override in the first place. */
     const s = this._napEditSpan();
     if (s && s.manual) {
-      this._manualSet(s.from, s.from + e.from * 60000, s.from + e.to * 60000, s.kind);
+      this._manualSet(s.from, s.from + e.from * 60000, s.from + e.to * 60000, s.kind,
+        "count" in e ? { count: e.count } : undefined);
       this._sheet = null;
       this._napEdit = null;
       this._armed = null;

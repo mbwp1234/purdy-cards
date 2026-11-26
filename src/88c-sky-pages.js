@@ -80,7 +80,7 @@ Object.assign(PurdySkyCard.prototype, {
     const x = (t) => skClamp((t - T0) / (T1 - T0)) * W;
     const end = s.active ? Math.min(this._nowMs(), T1) : (s.wokeAt || s.to);
     let out = `<svg class="sk-rail${big ? " big" : ""}" viewBox="0 0 ${W} ${H}" role="img"
-        aria-label="${psEsc(skDayName(s.from, true))} night: settled ${psEsc(skClk(s.settledAt))}, ${s.interventions} wake-ups">
+        aria-label="${psEsc(skDayName(s.from, true))} night: settled ${psEsc(skClk(s.settledAt))}, ${skjWakes(s)} wake-ups">
       <defs><linearGradient id="${id}" x1="0" x2="1"><stop offset="0" stop-color="var(--sk-j2)"/><stop offset="1" stop-color="var(--ps-deep)"/></linearGradient></defs>
       <rect x="0" y="${y}" width="${W}" height="${th}" rx="${th / 2}" class="trk"/>`;
     const xs = x(s.from), xa = x(s.settledAt), xe = x(end);
@@ -137,7 +137,9 @@ Object.assign(PurdySkyCard.prototype, {
     const longest = n.interventions > 0 && !n.blindMin && n.longestStretch != null && n.longestStretch !== n.asleepMinutes;
     const tiles = [
       n.active || !longest ? `<div class="st3"><b>${skClkHtml(n.from)}</b><span>Put down</span></div>` : "",
-      `<div class="st3"><b>${skClkHtml(n.settledAt)}</b><span>Settled</span></div>`,
+      /* A hand-logged night has no settling to report: its start is when he
+         went down, and calling that "Settled" claims a door nobody watched. */
+      n.manual ? "" : `<div class="st3"><b>${skClkHtml(n.settledAt)}</b><span>Settled</span></div>`,
       longest ? `<div class="st3"><b>${psHM(n.longestStretch)}</b><span>Longest sleep</span></div>` : "",
       n.active ? "" : `<div class="st3"><b>${skClkHtml(n.wokeAt || n.to)}</b><span>Up</span></div>`,
     ].filter(Boolean);
@@ -147,7 +149,7 @@ Object.assign(PurdySkyCard.prototype, {
     const line = (m.statusL || m.statusR) && !(m.live && m.live.from === n.from);
     return `${head}
       <div class="sk-big"><span class="sk-num">${skHMHtml(n.asleepMinutes)}</span>
-        <span class="sk-wk"><ha-icon icon="mdi:door-open"></ha-icon>${n.blindMin ? `${n.interventions}+` : n.interventions}</span>
+        <span class="sk-wk ${n.interventions == null ? "q" : ""}"><ha-icon icon="mdi:door-open"></ha-icon>${skjWakes(n)}</span>
         <span class="sk-cap2">${n.active ? "tonight" : "last night"}</span></div>
       <div class="sk-railbox">${rail.svg}</div>
       ${this._skHas("desk") ? this._skJoelWeekStrip(n, past) : ""}
@@ -171,187 +173,6 @@ Object.assign(PurdySkyCard.prototype, {
   _skCols(cols, cls) {
     const live = cols.map((c) => c.filter(Boolean).join("")).filter(Boolean);
     return `<div class="sk-cols n${live.length} ${cls || ""}">${live.map((c, i) => `<div class="sk-col c${i}">${c}</div>`).join("")}</div>`;
-  },
-
-  _skJoel() {
-    const N = this._skNurse();
-    const name = this._skTabName("joel");
-    if (!N) return this._skTitle(name) + `<div class="sk-card sk-pad"><div class="sk-empty">No nursery section is configured.</div></div>`;
-    const { sec, m, nights, past } = N;
-    const pick = nights.find((s) => s.from === this._skNight) || m.nightSession || nights[nights.length - 1];
-    const status = m.chipTxt ? `<span class="sk-status big ${m.chipCls || ""}">${psEsc(m.chipTxt)}</span>` : "";
-    const parts = [this._skTitle(name, status)];
-    const P = {};
-
-    /* TODAY first: the predictions are the question asked of this tab at
-       eleven in the morning. The shell's day rail is the drawing that answers
-       it, with the nap window and the bedtime guess on it. */
-    const norms = psNurseryNorms(m.sessions, { days: sec.days || 7 });
-    const dayRail = m.loaded && (m.sessions.length || m.stats.bedMean != null)
-      ? this._nurseryDayRail(m.sessions, m.todayKey, m.stats.bedMean, norms) : "";
-    const playing = m.playing;
-    const lineDup = !!(pick && m.live && m.live.from === pick.from);
-    P.today = (`<div class="sk-card sk-pad" id="sk-c-jtoday">
-        <div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-j2)"><ha-icon icon="mdi:white-balance-sunny"></ha-icon></span><span class="sk-hn">Today</span>
-          ${m.todayNaps.length ? `<span class="ps-chip lt">${m.todayNaps.length} nap${m.todayNaps.length > 1 ? "s" : ""} · ${psHM(m.napMins)}</span>` : ""}</div>
-        ${dayRail ? `<div class="sk-dayrail">${dayRail}</div>` : ""}
-        ${(m.statusL || m.statusR) && !lineDup ? `<div class="sk-line"><span>${psEsc(m.statusL || "")}</span><span>${psEsc(m.statusR || "")}</span></div>` : ""}
-        <div class="sk-btnrow">
-          ${sec.hatch ? `<button class="sk-bigbtn ${playing ? "" : "pri"} ${this._armed === "hatch" ? "armed" : ""}" type="button"
-              data-arm="${playing ? "hatch" : ""}" data-hatch="${playing ? "" : "start"}">
-              <ha-icon icon="${playing ? "mdi:stop" : "mdi:play"}"></ha-icon>${this._armed === "hatch" ? "Stop the Hatch?" : playing ? "Stop Hatch" : "Start Hatch"}</button>` : ""}
-          ${this._manualStore(sec) ? `<button class="sk-bigbtn" type="button" data-jlog="1"><ha-icon icon="mdi:clock-plus-outline"></ha-icon>Log by hand</button>` : ""}
-        </div>
-      </div>`);
-    parts.push(P.today);
-
-    if (pick) {
-      const rail = this._skRail(pick, true);
-      const isLast = m.nightSession && pick.from === m.nightSession.from;
-      const label = pick.active ? "Tonight" : isLast ? "Last night" : `${skDayName(pick.from, true)} night`;
-      const canFix = pick.manual ? !!this._manualStore(sec) : !!this._napEditStore(sec);
-      P.night = (`<div class="sk-nightwrap" id="sk-nightwrap">
-        <div class="sk-card sk-pad sk-nighthero" id="sk-c-night">
-          <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:weather-night"></ha-icon></span>
-            <span class="sk-hn">${psEsc(label)}</span>${pick.edited ? `<span class="ps-chip">corrected</span>` : pick.manual ? `<span class="ps-chip">logged by hand</span>` : ""}${this._skNightDelta(pick, past)}</div>
-          <div class="sk-big"><span class="sk-num">${skHMHtml(pick.asleepMinutes)}</span>
-            <span class="sk-wk"><ha-icon icon="mdi:door-open"></ha-icon>${pick.blindMin ? `${pick.interventions}+` : pick.interventions}</span></div>
-          <div class="sk-railbox" id="sk-bigrail" data-t0="${rail.T0}" data-t1="${rail.T1}">${rail.svg}<span class="sk-cursor" id="sk-cursor"><b></b></span></div>
-        </div>
-        <div class="sk-evs" id="sk-evs">${this._skEvents(pick)}</div>
-        ${canFix ? `<button class="sk-bigbtn wide" type="button" data-napopen="${pick.from}" data-entity="${psEsc(sec.hatch || "")}">
-            <ha-icon icon="mdi:pencil-outline"></ha-icon>Fix this night's times</button>` : ""}
-      </div>`);
-      P.vs = this._skVsUsual(pick, past);
-      parts.push(P.night, P.vs);
-    } else {
-      P.night = `<div class="sk-card sk-pad"><div class="sk-empty">${m.loaded ? "No night recorded yet" : "Loading the nights…"}</div></div>`;
-      parts.push(P.night);
-    }
-
-    /* The week, one rail a night, with the wake-ups beside each. Tap a night
-       to read it above. */
-    const week = nights.slice(-7);
-    if (week.length) {
-      const avgLen = skAvg(past.slice(-7).map((s) => s.asleepMinutes));
-      const avgW = skAvg(past.slice(-7).filter((s) => !s.blindMin).map((s) => s.interventions));
-      P.week = (`<div class="sk-card sk-pad" id="sk-c-week">
-          <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:calendar-week"></ha-icon></span><span class="sk-hn">Nights</span>
-            ${avgLen == null ? "" : `<span class="ps-chip">avg ${psHM(Math.round(avgLen))}${avgW == null ? "" : ` · ${avgW.toFixed(1)} wake-ups`}</span>`}</div>
-          <div class="sk-wks">${week.map((s) => `<button class="sk-wkrow ${pick && s.from === pick.from ? "sel" : ""}" type="button" data-sknight="${s.from}" aria-pressed="${!!(pick && s.from === pick.from)}">
-              <span class="d">${psEsc(skDayName(s.from, true))}</span>${this._skRail(s, false).svg}
-              <span class="w ${s.interventions ? "" : "z"}">${s.interventions ? `<ha-icon icon="mdi:door-open"></ha-icon>${s.blindMin ? s.interventions + "+" : s.interventions}` : s.active ? "" : `<ha-icon icon="mdi:check"></ha-icon>`}</span>
-              <span class="l">${s.active ? "now" : psHM(s.asleepMinutes)}</span></button>`).join("")}</div>
-        </div>`);
-      parts.push(P.week);
-    }
-    P.naps = this._skNaps(sec, m);
-    P.hatch = this._skHatchCard(sec, m);
-    parts.push(P.naps, P.hatch);
-    /* Two panes: the night and its events on the left (the cursor still
-       follows the row under the pinned rail), everything else on the right.
-       Three: the week's two rasters get a column of their own. */
-    if (this._skHas("wide")) return parts[0] + this._skCols([[P.night, P.vs], [P.week, P.naps], [P.today, P.hatch]], "sk-joelcols");
-    if (this._skHas("split")) return parts[0] + this._skCols([[P.night, P.vs], [P.today, P.week, P.naps, P.hatch]], "sk-joelcols");
-    return parts.join("");
-  },
-
-  /* Every event of the night as a row; the cursor on the rail above follows
-     whichever row is under it. */
-  _skEvents(s) {
-    const ev = [{ t: s.from, w: "Down", c: "sk-j2" }];
-    if (s.settledAt > s.from) ev.push({ t: s.settledAt, w: "Settled", sub: s.settleMinutes ? `${s.settleMinutes}m to settle` : "", c: "deep" });
-    (s.events || []).forEach((t, i) => ev.push({ t, w: "Went in", sub: i === 0 ? "first wake" : "", c: "visit" }));
-    if (s.active) ev.push({ t: this._nowMs(), w: "Asleep now", c: "deep" });
-    else ev.push({ t: s.wokeAt || s.to, w: "Up", sub: psHM(s.asleepMinutes) + " asleep", c: "deep" });
-    return ev.map((e, i) => `<button class="sk-ev ${e.c}" type="button" data-skev="${i}" data-t="${e.t}">
-        <span class="dot"></span><span class="tm">${skClkHtml(e.t)}</span><span class="w">${psEsc(e.w)}${e.sub ? `<small>${psEsc(e.sub)}</small>` : ""}</span></button>`).join("");
-  },
-
-  _skVsUsual(n, past) {
-    const others = past.filter((s) => s.from !== n.from && !s.manual).slice(-7);
-    if (others.length < 2) return "";
-    const put = skAvg(others.map((s) => skMinOfNight(s.from)));
-    const set = skAvg(others.map((s) => s.settleMinutes));
-    const fw = skAvg(others.filter((s) => (s.events || []).length).map((s) => skMinOfNight(s.events[0])));
-    const row = (k, v, u) => `<div class="sk-vs"><span>${k}</span><b>${v}</b><small>usual ${u}</small></div>`;
-    return `<div class="sk-card sk-pad">
-        <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:compare-horizontal"></ha-icon></span><span class="sk-hn">Against his usual</span></div>
-        ${row("Put down", psEsc(skClk(n.from)), psEsc(skMinText(put)))}
-        ${row("Settled in", `${n.settleMinutes}m`, `${Math.round(set)}m`)}
-        ${row("First wake", (n.events || []).length ? psEsc(skClk(n.events[0])) : n.active ? "none yet" : "slept through", fw == null ? "—" : psEsc(skMinText(fw)))}
-      </div>`;
-  },
-
-  /* Naps, 7 AM to 7 PM, one row a day. A past day with nothing on the Hatch
-     is hatched — nothing recorded is not the same as no nap. */
-  _skNaps(sec, m) {
-    const T0h = 7, T1h = 19;
-    const now = this._nowMs();
-    const rows = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(now); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
-      const key = psDayKey(d);
-      const naps = m.sessions.filter((s) => !s.night && s.day === key);
-      const today = i === 0;
-      const away = this._isAwayDay && this._isAwayDay(sec, key);
-      const pos = (t) => { const h = (t - d.getTime()) / 3600000; return skClamp((h - T0h) / (T1h - T0h)) * 100; };
-      let inner;
-      if (!naps.length && !today) {
-        inner = `<span class="sk-napbar hatch" role="img" aria-label="${psEsc(d.toLocaleDateString([], { weekday: "long" }))}: ${away ? "away" : "nothing recorded"}">${away ? `<em>away</em>` : ""}</span>`;
-      } else {
-        const segs = naps.map((s) => {
-          const a = pos(s.from), b = pos(s.active ? now : s.to), st = pos(s.settledAt);
-          const can = s.manual ? !!this._manualStore(sec) : !!this._napEditStore(sec);
-          return `<i class="seg${s.active ? " live" : ""}" style="left:${a.toFixed(1)}%;width:${Math.max(1.5, b - a).toFixed(1)}%;--set:${Math.max(0, st - a).toFixed(1)}%"${
-            can ? ` data-napopen="${s.from}" data-entity="${psEsc(sec.hatch || "")}" role="button" tabindex="0"` : ""} title="${psEsc(skClk(s.from))} · ${psHM(s.asleepMinutes)}"></i>`;
-        }).join("");
-        const nowM = today ? `<i class="now" style="left:${pos(now).toFixed(1)}%"></i><i class="fut" style="left:${pos(now).toFixed(1)}%"></i>` : "";
-        inner = `<span class="sk-napbar">${segs}${nowM}</span>`;
-      }
-      rows.push(`<div class="sk-nap"><span class="${today ? "td" : ""}">${today ? "Today" : psEsc(d.toLocaleDateString([], { weekday: "short" }))}</span>${inner}</div>`);
-    }
-    return `<div class="sk-card sk-pad" id="sk-c-naps">
-        <div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-j2)"><ha-icon icon="mdi:sleep"></ha-icon></span><span class="sk-hn">Naps</span>
-          ${this._napEditStore(sec) ? `<span class="sk-hint">tap a nap to correct it</span>` : ""}</div>
-        <div class="sk-naps">${rows.join("")}
-          <div class="sk-nap ax"><span></span><span class="sk-napax"><span>7a</span><span>10a</span><span>1p</span><span>4p</span><span>7p</span></span></div></div>
-      </div>`;
-  },
-
-  _skHatchCard(sec, m) {
-    const h = this._hass;
-    const lt = sec.light && h.states[sec.light];
-    const on = lt && lt.state === "on";
-    const bri = on && lt.attributes.brightness != null ? Math.round(lt.attributes.brightness / 2.55) : null;
-    const k = lt && lt.attributes.color_temp_kelvin;
-    const rgb = skKelvin(k || 2200);
-    if (!sec.hatch && !sec.light) return "";
-    return `<div class="sk-card sk-pad">
-        <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:speaker"></ha-icon></span><span class="sk-hn">Hatch</span>
-          ${m.wifiOk ? "" : `<span class="ps-chip bad"><span class="ps-dot"></span>Offline</span>`}</div>
-        <div class="sk-hatch">
-          ${sec.hatch ? `<button class="sk-htile ${m.playing ? "on" : ""} ${this._armed === "hatch" ? "armed" : ""}" type="button"
-              data-arm="${m.playing ? "hatch" : ""}" data-hatch="${m.playing ? "" : "start"}">
-              <span class="sk-hplay"><ha-icon icon="${m.playing ? "mdi:pause" : "mdi:play"}"></ha-icon></span>
-              <span class="n">${this._armed === "hatch" ? "Stop?" : m.playing ? "Playing" : "Sound"}</span></button>` : ""}
-          ${sec.light ? this._skNightLightTile(sec, m, on, bri, rgb) : ""}
-        </div></div>`;
-  },
-
-  /* The night light is guarded while he is asleep — the Lights section's
-     `protect:` rule, gated on the same session (the Hatch playing). One tap
-     here used to toggle it outright, the only place in the card the guard
-     did not reach. Asleep, it is a two-tap arm that says what it will do. */
-  _skNightLightTile(sec, m, on, bri, rgb) {
-    const guard = !!m.playing;
-    const armed = guard && this._skArmed === "nl";
-    const act = guard ? `data-skarm="nl" data-sktog="${psEsc(sec.light)}"` : `data-sktoggle="${psEsc(sec.light)}"`;
-    return `<button class="sk-htile lt ${on ? "on" : ""} ${armed ? "armed" : ""}" type="button" ${act}
-        aria-label="Night light${guard ? ", Joel is asleep" : ""}" style="${on ? `--g:rgb(${rgb});--b:${bri || 30}` : ""}">
-        <span class="sk-tglow"></span>
-        <span class="sk-hb"><ha-icon icon="mdi:lightbulb-night-outline"></ha-icon>${bri == null ? "" : `<b>${bri}%</b>`}</span>
-        <span class="n">${armed ? (on ? "Turn it off?" : "Turn it on?") : "Night light"}</span></button>`;
   },
 
   /* ============================================================ CLIMATE === */
