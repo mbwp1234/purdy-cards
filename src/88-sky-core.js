@@ -452,6 +452,7 @@ class PurdySkyCard extends PurdyShellCard {
      nobody reads, so info rows do not count. */
   _sheetHtml(faults) {
     if (this._sheet === "skpart") return this._skPartSheet();
+    if (this._sheet === "lake") return this._skLakeSheet();
     return super._sheetHtml(faults);
   }
 
@@ -820,6 +821,8 @@ class PurdySkyCard extends PurdyShellCard {
     if (ids.indexOf("sun.sun") < 0) ids.push("sun.sun");
     const sit = this._config.sitter || {};
     [sit.mode, sit.log, sit.opens, sit.arrived].forEach((x) => { if (x && ids.indexOf(x) < 0) ids.push(x); });
+    const lake = this._config.lake || {};
+    [lake.entity].concat((Array.isArray(lake.also) ? lake.also : []).map((a) => a && a.entity)).forEach((x) => { if (x && ids.indexOf(x) < 0) ids.push(x); });
     return ids;
   }
 
@@ -1074,6 +1077,8 @@ class PurdySkyCard extends PurdyShellCard {
           <span class="sk-tv">${arr && arr.v != null ? `<b>${Math.round(arr.v)}</b><small>%</small>` : `<b class="ps-nodata">—</b>`}</span>
           <span class="sk-tl">${psEsc(s.name || "Server")} · ${online ? psEsc(pcState(h, (s.docker || {}).running) || "online") : r.ok ? psEsc(String(r.st.state)) : "no data"}</span></button>`);
     }
+    const lake = this._skLakeTile();
+    if (lake) tiles.push(lake);
     const w = crew && crew.washer;
     if (w && w.entity) {
       const ws = String(pcState(h, w.entity) || "").toLowerCase();
@@ -1190,6 +1195,7 @@ class PurdySkyCard extends PurdyShellCard {
 
   _skBind() {
     this._skJoelBind();
+    this._skLakeBind();
     /* A card that is another app's front door (the Garage panel). */
     this._each("[data-sknav]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
