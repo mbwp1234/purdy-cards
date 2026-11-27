@@ -237,7 +237,7 @@ Object.assign(PurdySkyCard.prototype, {
       <div class="ps-sheet">
         <div class="ps-sheeth"><span class="ps-lbl">${psEsc(c.name || "Lake")}</span>${close}</div>
         <div class="sk-lake">
-          <div class="sk-lktop"><div class="sk-tv">${v == null ? `<b class="ps-nodata">—</b>` : `<b>${v.toFixed(2)}</b><small>ft</small>`}</div>${chip}</div>
+          <div class="sk-lktop" data-readout="lake"><div class="sk-tv">${v == null ? `<b class="ps-nodata">—</b>` : `<b>${v.toFixed(2)}</b><small>ft</small>`}</div>${chip}</div>
           ${seg}
           ${this._skLakeChart(rk, c)}
           <div class="sk-st3 sk-lkst3" style="--n:${Math.min(3, tiles.length)}">${tiles.join("")}</div>
@@ -245,14 +245,14 @@ Object.assign(PurdySkyCard.prototype, {
       </div>`;
   },
 
-  /* THE CHART SCROLLS. Every view past a week is drawn wider than the sheet
-     at a finer grain — Y a day per point over four screens, 5Y a day per
-     point over five, All a week per point at about two years a screen — and
-     opens at its right-hand end, today. It is a plain overflow-x strip with
-     NO touch-action, the hourly weather strip's rule: the browser decides
-     the axis and a vertical swipe stays the sheet's. The reference labels
-     sit in an overlay outside the strip so FULL 795 is readable wherever
-     the line has been scrolled to. */
+  /* THE CHART READS BACK. It fits the sheet, and the shell's own scrub
+     (`data-scrub="lake"`) reads it: hover with a mouse; on touch, hold and
+     slide. The readout is the sheet's big number — the value under the
+     finger replaces today's, with its date in the chip — because a tooltip
+     at the touch point is under the thumb by definition. The scrub reads the
+     FULL series stashed here, not the thinned line, so All answers for a
+     week rather than for a two-month bucket. (v1.112.0 tried a sideways
+     scrolling strip instead; it was not what was asked for.) */
   _skLakeChart(rk, c) {
     const S = this._skLk;
     if (SK_LAKE_LONG[rk]) this._skLakeLoadLong(rk);
@@ -262,9 +262,7 @@ Object.assign(PurdySkyCard.prototype, {
     const ser = this._skLakeSeries(rk);
     if (!ser) return `<div class="sk-lkchart wait" role="img" aria-label="Loading"></div>`;
     const SW = 326, H = 150, P = 22, VH = H + 26;
-    const years = (ser.t1 - ser.t0) / (365.25 * 864e5);
-    const screens = { w: 1, m: 3, y: 4, y5: 5, all: Math.max(2, Math.round(years / 2)) }[rk] || 1;
-    const W = SW * screens;
+    const W = SW;
     const full = Number(c.full == null ? 795 : c.full);
     const normal = c.normal == null ? null : Number(c.normal);
     const floats = c.floats == null ? null : Number(c.floats);
@@ -291,7 +289,8 @@ Object.assign(PurdySkyCard.prototype, {
     let lo = Math.floor((mn - 0.5) * 2) / 2;
     let hi = Math.max(full + 0.5, mx + 0.3);
     if (floats != null && mx >= full) hi = Math.max(hi, floats + 0.3);
-    const X = (t) => ((t - ser.t0) / (ser.t1 - ser.t0)) * (W - 6);
+    const X = (t) => ((t - ser.t0) / (ser.t1 - ser.t0)) * W;
+    this._lakeData = { rk, t0: ser.t0, t1: ser.t1, pts: ser.pts, est: this._skLakeEst(), band: !!SK_LAKE_LONG[rk] };
     const Y = (x) => P + (1 - (x - lo) / (hi - lo)) * (H - P);
     const pct = (y) => (((y + 4) / VH) * 100).toFixed(2);
     const refl = [];
@@ -311,27 +310,24 @@ Object.assign(PurdySkyCard.prototype, {
       const d = new Date(ser.t0);
       d.setHours(0, 0, 0, 0);
       if (rk === "m") d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); else if (rk === "y") { d.setDate(1); d.setMonth(d.getMonth() + 1); } else { d.setMonth(0, 1); d.setFullYear(d.getFullYear() + 1); }
+      let lastX = -99;
       for (let i = 0; i < 400 && d.getTime() < ser.t1; i++) {
         const x = X(d.getTime());
         const lbl = rk === "m" ? d.toLocaleDateString([], { month: "short", day: "numeric" }).toUpperCase()
           : rk === "y" ? d.toLocaleDateString([], { month: "short" }).toUpperCase() + (d.getMonth() === 0 ? ` ${d.getFullYear()}` : "")
           : String(d.getFullYear());
-        if (W - x > 44) ticks.push(`<line class="tk" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${P}" y2="${H}"/><text class="ax" x="${(x + 4).toFixed(1)}" y="${H + 18}">${psEsc(lbl)}</text>`);
+        if (W - x > 44 && x - lastX >= 46) lastX = x, ticks.push(`<line class="tk" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${P}" y2="${H}"/><text class="ax" x="${(x + 4).toFixed(1)}" y="${H + 18}">${psEsc(lbl)}</text>`);
         if (rk === "m") d.setDate(d.getDate() + 7); else if (rk === "y") d.setMonth(d.getMonth() + 1); else d.setFullYear(d.getFullYear() + 1);
       }
     }
     ticks.push(`<text class="ax" x="${W}" y="${H + 18}" text-anchor="end">NOW</text>`);
     const defs = `<defs><pattern id="sk-lkh" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0,0 V6"/></pattern></defs>`;
-    const wrap = (svg, label) => {
-      const scroll = W > SW;
-      return `<div class="sk-lkwrap">
-          <div class="sk-lkscroll${scroll ? " more" : ""}" data-sklkscroll="${rk}">
-            <svg class="sk-lkchart${scroll ? " wide" : ""}" viewBox="0 -4 ${W} ${VH}"${scroll ? ` width="${W}" height="${VH}"` : ""} role="img" aria-label="${psEsc(label)}">${defs}${svg}</svg></div>
+    const wrap = (svg, label, scrub) => `<div class="sk-lkwrap"${scrub ? ` data-scrub="lake"` : ""}>${scrub ? `<div class="ps-cross" hidden></div>` : ""}
+          <svg class="sk-lkchart" viewBox="0 -4 ${W} ${VH}" role="img" aria-label="${psEsc(label)}">${defs}${svg}</svg>
           <div class="sk-lkrefs" aria-hidden="true">${refl.join("")}</div></div>`;
-    };
     if (pts.length < 2) {
       const one = pts[0] ? `<circle class="dot" cx="${X(pts[0].t).toFixed(1)}" cy="${Y(pts[0].v).toFixed(1)}" r="5"/>` : "";
-      return wrap(`<rect class="hatch" x="0" y="${P}" width="${W}" height="${H - P}" rx="8"/>${refs}${one}${ticks.join("")}`, "No history yet");
+      return wrap(`<rect class="hatch" x="0" y="${P}" width="${W}" height="${H - P}" rx="8"/>${refs}${one}${ticks.join("")}`, "No history yet", false);
     }
     const xy = pts.map((p) => [X(p.t), Y(p.v)]);
     const path = (a) => a.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
@@ -353,30 +349,36 @@ Object.assign(PurdySkyCard.prototype, {
       : `${line} L${xy[xy.length - 1][0].toFixed(1)},${H} L${x0.toFixed(1)},${H} Z`;
     const last = xy[xy.length - 1];
     const since = String(new Date(ser.t0).getFullYear());
-    const words = `${c.name || "Lake"} level, ${{ w: "past week", m: "past month", y: "past year", y5: "past five years", all: "since " + since }[rk]}, ${mn.toFixed(1)} to ${mx.toFixed(1)} feet; full pond ${full}${cut > 0 ? "; earlier part estimated" : ""}${W > SW ? "; scrolls back in time" : ""}`;
+    const words = `${c.name || "Lake"} level, ${{ w: "past week", m: "past month", y: "past year", y5: "past five years", all: "since " + since }[rk]}, ${mn.toFixed(1)} to ${mx.toFixed(1)} feet; full pond ${full}${cut > 0 ? "; earlier part estimated" : ""}; hold and slide to read a value`;
     return wrap(`${gap}${ticks.slice(0, -1).join("")}${refs}
         <path class="ar${bp.length > 1 ? " band" : ""}" d="${area}"/>${lines}
         <line class="base" x1="0" x2="${W}" y1="${H}" y2="${H}"/>
-        <circle class="dot" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="5"/>${ticks[ticks.length - 1]}`, words);
+        <circle class="dot" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="5"/>${ticks[ticks.length - 1]}`, words, true);
+  },
+
+  /* The scrub's answer for a fraction across the plot: the nearest real
+     point, its value (≈ when it is from the estimated stretch) and when. */
+  _skLakeReadout(f) {
+    const d = this._lakeData;
+    if (!d || !d.pts || !d.pts.length) return null;
+    const t = d.t0 + f * (d.t1 - d.t0);
+    let best = d.pts[0];
+    for (const p of d.pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+    const est = d.est != null && best.t < d.est;
+    const when = new Date(best.t);
+    const lbl = d.rk === "w" || d.rk === "m"
+      ? `${when.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} · ${when.toLocaleTimeString([], { hour: "numeric" })}`
+      : when.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+    const span = d.band && Number.isFinite(best.lo) && Number.isFinite(best.hi) && best.hi - best.lo >= 0.05
+      ? `<small class="sk-lkspan">${best.lo.toFixed(1)}–${best.hi.toFixed(1)}</small>` : "";
+    return `<div class="sk-tv"><b>${est ? "≈" : ""}${best.v.toFixed(2)}</b><small>ft</small>${span}</div><span class="ps-chip sk-lkchip">${psEsc(lbl)}</span>`;
   },
 
   _skLakeBind() {
     this._each("[data-sklkr]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       this._skLkR = el.dataset.sklkr;
-      this._skLkPos = null;
       this._render();
     }));
-    /* A fresh strip opens at today. A strip rebuilt under the thumb (a new
-       reading lands, the history refreshes) keeps its distance from the
-       right-hand end, so a scrolled-back view stays where it was put. */
-    this._each(".sk-lkscroll", (el) => {
-      const rk = el.dataset.sklkscroll;
-      const back = this._skLkPos && this._skLkPos.rk === rk ? this._skLkPos.back : 0;
-      el.scrollLeft = Math.max(0, el.scrollWidth - el.clientWidth - back);
-      el.addEventListener("scroll", () => {
-        this._skLkPos = { rk, back: el.scrollWidth - el.clientWidth - el.scrollLeft };
-      }, { passive: true });
-    });
   },
 });

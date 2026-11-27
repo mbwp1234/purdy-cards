@@ -395,11 +395,11 @@ const SK_STYLES = `
       .sk-lkchip ha-icon { --mdc-icon-size: 14px; }
       .sk-lkseg { align-self: stretch; }
       .sk-lkchart { display: block; width: 100%; height: auto; overflow: visible; }
-      .sk-lkchart.wide { width: auto; max-width: none; }
       .sk-lkwrap { position: relative; }
-      .sk-lkscroll { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
-      .sk-lkscroll::-webkit-scrollbar { display: none; }
-      .sk-lkscroll.more { -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px); mask-image: linear-gradient(90deg, transparent, #000 28px); }
+      .sk-lkwrap .ps-cross { top: 10%; bottom: 13%; background: var(--ps-text); opacity: .5; }
+      .sk-lkwrap.scrubbing { -webkit-user-select: none; user-select: none; }
+      .sk-lktop.live .sk-lkchip { color: var(--ps-text); }
+      .sk-lkspan { margin-left: 8px; font-size: var(--pc-fs-sm); color: var(--ps-dim); font-weight: 500; }
       .sk-lkrefs { position: absolute; inset: 0; pointer-events: none; }
       .sk-lkrefs span { position: absolute; left: 0; transform: translateY(-100%); padding: 0 4px 0 0; border-radius: 4px;
                         background: color-mix(in srgb, var(--sk-card) 82%, transparent);
