@@ -399,6 +399,7 @@ const SK_STYLES = `
       .sk-lkchart rect.hatch { fill: url(#sk-lkh); }
       .sk-lkchart #sk-lkh path { stroke: var(--ps-track); stroke-width: 2; }
       .sk-lkchart .ln { fill: none; stroke: var(--ps-cool); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+      .sk-lkchart .ar.band { fill: color-mix(in srgb, var(--ps-cool) 22%, transparent); }
       .sk-lkchart .ln.est { stroke-dasharray: 2 5; opacity: .8; }
       .sk-lkchart .ar { fill: color-mix(in srgb, var(--ps-cool) 16%, transparent); }
       .sk-lkchart .dot { fill: var(--ps-cool); stroke: var(--sk-card); stroke-width: 2; }
