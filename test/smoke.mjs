@@ -11630,6 +11630,57 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       ids.forEach((id, i) => { if (saved[i]) st[id] = saved[i]; else delete st[id]; });
     }
   })());
+  check('lake: the Home tile is the gap to full pond on a depth post, and opens the lake sheet', (() => {
+    const cfg = sk._config, st = sk._hass.states;
+    const ids = ['sensor.t_lake', 'sensor.t_lee'];
+    const saved = ids.map((id) => st[id]);
+    const put = (id, state) => { st[id] = { entity_id: id, state: String(state), attributes: {}, last_changed: '', last_updated: '' }; };
+    const savedLk = sk._skLk;
+    const now = Date.now();
+    sk._config = { ...cfg, lake: { entity: ids[0], name: 'Smith Mountain', full: 795, normal: 794.2, floats: 797, also: [{ entity: ids[1], name: 'Leesville', full: 613 }] } };
+    try {
+      put(ids[0], '791.79'); put(ids[1], '603.57');
+      /* No history yet: a number, no arrow, no chip — never a level arrow. */
+      sk._skLk = { at: now, busy: false, hr: [], day: [], err: null };
+      const bare = sk._skLakeTile(), bareSheet = sk._skLakeSheet();
+      /* Rising 1.6 ft over two days, 0.06 ft in the last 6h. */
+      const hr = [];
+      for (let k = 72; k >= 1; k--) hr.push({ t: now - k * 36e5, v: k > 48 ? 790.19 : 790.19 + (48 - k) / 48 * 1.6 });
+      sk._skLk = { at: now, busy: false, hr, day: hr.filter((p, i) => i % 24 === 0), err: null };
+      const tile = sk._skLakeTile(), tiles = sk._skTiles();
+      sk._skLkR = 'w';
+      const sheet = sk._skLakeSheet();
+      sk._skLkR = 'y';
+      const year = sk._skLakeSheet();
+      sk._sheet = 'lake';
+      const via = sk._sheetHtml([]);
+      sk._sheet = null;
+      /* Offline: a dash and a hatched post, not a zero. */
+      put(ids[0], 'unavailable');
+      const off = sk._skLakeTile();
+      /* A recorder failure is said, not drawn as a flat lake. */
+      put(ids[0], '791.79');
+      sk._skLk = { at: now, busy: false, hr: null, day: null, err: 'boom' };
+      const err = sk._skLakeSheet();
+      const watched = sk._collectWatched();
+      sk._config = cfg;
+      const none = sk._skLakeTile() + sk._skLakeSheet();
+      return /<b>−3\.2<\/b><small>ft<\/small>/.test(bare) && !/sk-lkdir/.test(bare) && !/sk-lkchip/.test(bareSheet) &&
+        /aria-label="No history yet"/.test(bareSheet) &&
+        /data-sheet="lake"/.test(tile) && /sk-lkdir up/.test(tile) && />Lake · rising</.test(tile) && !/sk-tl">Smith/.test(tile) && /class="full"/.test(tile) && /class="fl"/.test(tile) &&
+        /sk-lktile/.test(tiles) &&
+        /<b>791\.79<\/b>/.test(sheet) && /sk-lkchip/.test(sheet) && />1\.6 ft · 2d/.test(sheet) && /FULL 795/.test(sheet) && /NORMAL 794\.2/.test(sheet) &&
+        /Leesville/.test(sheet) && /−9\.4<small>ft/.test(sheet) && /\+0\.03<small>ft\/h/.test(sheet) && !/\+1\.6 ft/.test(sheet) && /class="ln"/.test(sheet) &&
+        /data-sklkr="y" aria-selected="true"/.test(year) && /class="hatch"/.test(year) &&
+        /sk-lake/.test(via) &&
+        /ps-nodata/.test(off) && /sk-lkpost none/.test(off) &&
+        /would not load — boom/.test(err) && !/class="ln"/.test(err) &&
+        ids.every((id) => watched.indexOf(id) >= 0) && none === '';
+    } finally {
+      sk._config = cfg; sk._skLk = savedLk; sk._skLkR = undefined; sk._sheet = null;
+      ids.forEach((id, i) => { if (saved[i]) st[id] = saved[i]; else delete st[id]; });
+    }
+  })());
   check('the server pages are reachable from a Home tile, with power and parity actions', (() => {
     const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
     return /data-skmode="systems"/.test(skSrc) && /this\._skSys\(faults\)/.test(skSrc) && /this\._syPower\(s\)/.test(pg) && /this\._syParity\(s\)/.test(pg);

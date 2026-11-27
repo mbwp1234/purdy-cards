@@ -378,6 +378,36 @@ const SK_STYLES = `
       .sk-tank.warn i { background: var(--ps-warn); } .sk-tank.bad i { background: var(--ps-bad); }
       .sk-tank.none { background-image: repeating-linear-gradient(135deg, var(--ps-track) 0 2px, transparent 2px 6px); }
 
+      /* ---- the lake: a depth post beside the gap to full pond ---- */
+      .sk-lktile { flex-direction: row; align-items: stretch; }
+      .sk-lkcol { display: flex; flex-direction: column; justify-content: space-between; gap: 10px; min-width: 0; flex: 1; }
+      .sk-lkdir { --mdc-icon-size: 20px; color: var(--ps-cool); }
+      .sk-lkdir.flat { color: var(--ps-dim); }
+      .sk-lkpost { flex: none; align-self: center; }
+      .sk-lkpost .tr { fill: var(--ps-track); }
+      .sk-lkpost.none .tr { fill: none; stroke: var(--ps-dim); stroke-width: 1.5; stroke-dasharray: 3 3; }
+      .sk-lkpost .w { fill: var(--ps-cool); }
+      .sk-lkpost .full { stroke: var(--ps-text); stroke-width: 2; stroke-linecap: round; }
+      .sk-lkpost .fl { stroke: var(--ps-warn); stroke-width: 2; stroke-linecap: round; }
+      .sk-lktile.high .sk-tv b { color: var(--ps-warn); }
+      .sk-lake { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 6px; }
+      .sk-lktop { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+      .sk-lkchip ha-icon { --mdc-icon-size: 14px; }
+      .sk-lkseg { align-self: stretch; }
+      .sk-lkchart { display: block; width: 100%; height: auto; overflow: visible; }
+      .sk-lkchart.wait { aspect-ratio: 326 / 176; border-radius: 12px; background: var(--ps-track); opacity: .5; }
+      .sk-lkchart rect.hatch { fill: url(#sk-lkh); }
+      .sk-lkchart #sk-lkh path { stroke: var(--ps-track); stroke-width: 2; }
+      .sk-lkchart .ln { fill: none; stroke: var(--ps-cool); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+      .sk-lkchart .ar { fill: color-mix(in srgb, var(--ps-cool) 16%, transparent); }
+      .sk-lkchart .dot { fill: var(--ps-cool); stroke: var(--sk-card); stroke-width: 2; }
+      .sk-lkchart .base { stroke: var(--ps-track); stroke-width: 1; }
+      .sk-lkchart .full { stroke: var(--ps-dim); stroke-width: 1; stroke-dasharray: 3 4; }
+      .sk-lkchart .norm { stroke: var(--ps-track); stroke-width: 1; }
+      .sk-lkchart .flt { stroke: var(--ps-warn); stroke-width: 1; stroke-dasharray: 3 4; }
+      .sk-lkchart .rl, .sk-lkchart .ax { fill: var(--ps-dim); font-size: var(--pc-fs-xs); font-weight: 600; letter-spacing: .04em; }
+      .sk-lkst3 { margin-top: 0; }
+
       /* ---- server card ---- */
       .sk-meters { display: flex; flex-direction: column; gap: 8px; padding: 10px 18px 4px; }
       .sk-meter { display: grid; grid-template-columns: 56px minmax(0, 1fr) 54px; align-items: center; gap: 10px; font-size: var(--pc-fs-md); font-weight: 600; color: var(--ps-muted); }
