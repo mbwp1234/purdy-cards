@@ -11855,6 +11855,13 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     check('Last night is not a night from two days back wearing the label', /const isLast = n && \(n\.active \|\| n\.day === yk/.test(jSrc) && /isLast \? "Last night"/.test(jSrc));
     check('logging a missed night is wired from the card and the Timeline, and opens its sheet', (jSrc.match(/data-jlognight="\$\{/g) || []).length === 2 && /\[data-jlognight\]/.test(jSrc) && /this\._openNapEdit\(hit\.from\)/.test(jSrc));
   }
+  check('the page holds still behind an open sheet, keyed to the sheet actually drawn', () => {
+    const el = { style: { overflow: 'auto' } };
+    const s5 = Object.create(sk); s5._skScroller = () => el; s5._skLocked = null;
+    s5._skLockPage(true); const held = el.style.overflow === 'hidden';
+    s5._skLockPage(true); s5._skLockPage(false);
+    return held && el.style.overflow === 'auto' && /this\._skLockPage\(!!sheet\)/.test(skSrc) && /this\._skLockPage\(false\);/.test(skSrc);
+  });
   check('the correction drag binds its release to the window, never pointer capture', /window\.addEventListener\("pointerup", up\)/.test(jSrc) && !/setPointerCapture/.test(jSrc));
   check('every Joel page is dispatched and every page title is named', ['timeline', 'walk', 'weeks'].every((p) => new RegExp(`_skJPage === "${p}"`).test(jSrc) && SH.helpers.joelPages[p]));
   check('a player that reports no volume is a dash, never 0', /volume_level : null;/.test(pgSrc) && !/volume_level : 0;/.test(pgSrc) && /pv == null \? "—"/.test(pgSrc));
