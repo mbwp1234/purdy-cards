@@ -11824,6 +11824,37 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return /data-jback="1"/.test(html) && /Back asleep/.test(html) && /data-jarm="jup"/.test(html) && !/data-jwoke/.test(html)
       && /:host\(\[data-sk-ember\]\)/.test(SK.styles) && /toggleAttribute\("data-sk-ember"/.test(skSrc);
   });
+  /* ---- a missed night is logged after the fact (v1.108.0) ---- */
+  {
+    const H = 3600000, key = (d) => SH.helpers.dayKey ? SH.helpers.dayKey(d) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const today = new Date(2026, 10, 27, 0, 0, 0).getTime();
+    const yk = key(new Date(today - 12 * H)), dk = key(new Date(today - 36 * H));
+    const nap = { from: today - 24 * H + 10.5 * H, to: today - 24 * H + 11.75 * H, wokeAt: today - 24 * H + 11.75 * H, night: false, day: yk, manual: true };
+    const older = { from: today - 48 * H + 20.25 * H, to: today - 48 * H + 31 * H, wokeAt: today - 48 * H + 31 * H, night: true, day: dk, manual: true };
+    const m = { sessions: [older, nap], todayKey: key(new Date(today)) };
+    const s3 = Object.create(sk); s3._nowMs = () => today + 9 * H;
+    check('a day with no night offers his usual night to log, after anything else that day', () => {
+      const g = s3._skJNightGhost(m, yk);
+      return !!g && g.a === today - 24 * H + 19.5 * H && g.b === today + 7 * H;
+    });
+    check('a day that has a night offers nothing to log', () => s3._skJNightGhost(m, dk) === null);
+    check('a night ghost never runs into the future', () => {
+      const s4 = Object.create(sk); s4._nowMs = () => today + 2 * H;
+      const g = s4._skJNightGhost(m, yk);
+      return !!g && g.b === today + 2 * H;
+    });
+    check('a ghost shorter than a night is not offered', () => {
+      const s4 = Object.create(sk); s4._nowMs = () => today - 2 * H;
+      return s4._skJNightGhost(m, yk) === null;
+    });
+    check('two nights on record set the usual window, wake past midnight', () => {
+      const n2 = Object.assign({}, older, { from: older.from + 60 * 60000 - 24 * H, wokeAt: older.wokeAt - 24 * H, day: key(new Date(today - 60 * H)) });
+      const u = s3._skJUsualNight({ sessions: [older, n2] });
+      return u.a === 20 * 60 + 45 && u.b === 31 * 60;
+    });
+    check('Last night is not a night from two days back wearing the label', /const isLast = n && \(n\.active \|\| n\.day === yk/.test(jSrc) && /isLast \? "Last night"/.test(jSrc));
+    check('logging a missed night is wired from the card and the Timeline, and opens its sheet', (jSrc.match(/data-jlognight="\$\{/g) || []).length === 2 && /\[data-jlognight\]/.test(jSrc) && /this\._openNapEdit\(hit\.from\)/.test(jSrc));
+  }
   check('the correction drag binds its release to the window, never pointer capture', /window\.addEventListener\("pointerup", up\)/.test(jSrc) && !/setPointerCapture/.test(jSrc));
   check('every Joel page is dispatched and every page title is named', ['timeline', 'walk', 'weeks'].every((p) => new RegExp(`_skJPage === "${p}"`).test(jSrc) && SH.helpers.joelPages[p]));
   check('a player that reports no volume is a dash, never 0', /volume_level : null;/.test(pgSrc) && !/volume_level : 0;/.test(pgSrc) && /pv == null \? "—"/.test(pgSrc));
