@@ -280,12 +280,53 @@ const SK_STYLES = `
       .sk-rowcard { display: flex; align-items: center; gap: 12px; padding: 14px 18px; text-align: left; width: 100%; }
       .sk-rowcard b { display: block; font-size: var(--pc-fs-lg); font-weight: 650; }
       .sk-rowcard small { display: block; font-size: var(--pc-fs-sm); color: var(--ps-dim); }
-      .sk-sitn { font-size: var(--pc-fs-lg); font-weight: 650; font-variant-numeric: tabular-nums; }
-      .sk-sitter.here .sk-sitn { color: var(--sk-litter); }
-      .sk-sitsw { position: relative; flex: none; width: 42px; height: 24px; border-radius: 12px; background: var(--ps-track); }
-      .sk-sitsw i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
-      .sk-sitter.on .sk-sitsw { background: var(--sk-litter); }
-      .sk-sitter.on .sk-sitsw i { transform: translateX(18px); }
+      .sk-sitgo { flex: none; padding: 8px 14px; border-radius: 18px; background: var(--sk-card2); font-size: var(--pc-fs-sm); font-weight: 650; color: var(--sk-litter); }
+      .sk-sithd { margin-left: auto; font-size: var(--pc-fs-md); font-weight: 650; color: var(--sk-litter); }
+      .sk-sittop { display: flex; align-items: center; gap: 16px; margin-top: 14px; }
+      .sk-sitring { position: relative; flex: none; width: 108px; height: 108px; }
+      .sk-sitring .tr { fill: none; stroke: var(--ps-track); stroke-width: 10; }
+      .sk-sitring .fl { fill: none; stroke: var(--sk-litter); stroke-width: 10; stroke-linecap: round; }
+      .sk-sitring.late .fl { stroke: var(--ps-warn); }
+      .sk-sitring > div { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+      .sk-sitring b { font-size: var(--pc-fs-4xl); font-weight: 300; letter-spacing: -.035em; line-height: 1; font-variant-numeric: tabular-nums; }
+      .sk-sitring.live b { color: var(--sk-litter); font-size: var(--pc-fs-2xl); }
+      .sk-sitring b small { font-size: var(--pc-fs-md); font-weight: 500; color: var(--ps-dim); margin-left: 1px; }
+      .sk-sitring span { font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-dim); }
+      .sk-sitst { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+      .sk-sitst > div { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 16px; background: var(--sk-card2); }
+      .sk-sitst b { font-size: var(--pc-fs-xl); font-weight: 620; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .sk-sitst b small { font-size: var(--pc-fs-sm); font-weight: 500; color: var(--ps-dim); margin-left: 1px; }
+      .sk-sitst > div > span:last-child { flex: none; width: 50px; font-size: var(--pc-fs-sm); font-weight: 550; color: var(--ps-dim); }
+      .sk-sitst .sk-sitpips { flex: 1; justify-content: flex-start; max-width: none; }
+      .sk-sitpips i.on { background: var(--sk-litter); box-shadow: none; }
+      .sk-sitbar { position: relative; flex: 1; min-width: 30px; height: 6px; border-radius: 3px; background: var(--ps-track); }
+      .sk-sitbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--sk-litter); }
+      .sk-sitbar i.dot { top: -2px; bottom: auto; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%;
+                         box-shadow: 0 0 0 3px color-mix(in srgb, var(--sk-litter) 20%, transparent); }
+      .sk-sittrip { display: flex; flex-direction: column; gap: 9px; margin-top: 18px; }
+      .sk-sitrow { display: grid; grid-template-columns: 26px minmax(0, 1fr) 40px; align-items: center; gap: 8px;
+                   font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-dim); }
+      .sk-sitrow > span:last-child { text-align: right; }
+      .sk-sitrow.today { color: var(--ps-text); font-weight: 700; }
+      .sk-sittr { position: relative; height: 12px; border-radius: 6px; background: var(--ps-track); }
+      .sk-sitrow.fut .sk-sittr { background: none; border: 1.5px dashed var(--ps-track); box-sizing: border-box; }
+      .sk-sittr i { position: absolute; }
+      .sk-sittr .hatch { top: 0; bottom: 0; border-radius: 6px; background: repeating-linear-gradient(135deg, var(--ps-track) 0 2px, transparent 2px 6px); }
+      .sk-sittr .cap { top: 1px; bottom: 1px; border-radius: 5px; background: linear-gradient(90deg, var(--sk-litter), var(--pc-aur-b, #6741D9));
+                       box-shadow: 0 0 10px color-mix(in srgb, var(--sk-litter) 55%, transparent); }
+      .sk-sittr .op { top: -5px; width: 3px; height: 3px; border-radius: 50%; background: var(--sk-litter); }
+      .sk-sittr .now { top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ps-text); }
+      .sk-sitrow.ax { margin-top: -3px; }
+      .sk-sitrow.ax > span:nth-child(2) { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .sk-sithome { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 50px; margin-top: 16px;
+                    border-radius: 25px; background: var(--sk-card2); color: var(--ps-text); font-weight: 650; font-size: var(--pc-fs-lg); }
+      .sk-sithome ha-icon { --mdc-icon-size: 19px; }
+      .sk-sittile .sk-ring { color: var(--sk-litter); }
+      .sk-sittile .sk-ring .fl { stroke: var(--sk-litter); }
+      .sk-sittile.late .sk-ring .fl { stroke: var(--ps-warn); }
+      .sk-sittile.lit .sk-tv b { color: var(--sk-litter); }
+      .sk-sitglow { background: radial-gradient(150px 120px at 18% 82%, color-mix(in srgb, var(--sk-litter) 20%, transparent), transparent),
+                    radial-gradient(120px 90px at 90% 10%, color-mix(in srgb, var(--pc-aur-b, #6741D9) 16%, transparent), transparent); }
 
       /* ---- tiles ---- */
       .sk-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

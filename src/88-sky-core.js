@@ -779,7 +779,7 @@ class PurdySkyCard extends PurdyShellCard {
     if (tree && ids.indexOf(tree) < 0) ids.push(tree);
     if (ids.indexOf("sun.sun") < 0) ids.push("sun.sun");
     const sit = this._config.sitter || {};
-    [sit.mode, sit.visits, sit.last, sit.opens, sit.arrived].forEach((x) => { if (x && ids.indexOf(x) < 0) ids.push(x); });
+    [sit.mode, sit.log, sit.opens, sit.arrived].forEach((x) => { if (x && ids.indexOf(x) < 0) ids.push(x); });
     return ids;
   }
 
@@ -991,6 +991,8 @@ class PurdySkyCard extends PurdyShellCard {
           <span class="sk-tv"><b>${lit.length}</b><small>on</small></span>
           <span class="sk-tl">${psEsc(lit.map((l) => l.name).join(" · ") || "All off")}</span></button>`);
     }
+    const sit = this._skSitTile();
+    if (sit) tiles.push(sit);
     const crew = this._skSec("crew");
     const v = crew && crew.vacuum;
     if (v && v.entity) {
