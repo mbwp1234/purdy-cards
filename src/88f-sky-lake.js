@@ -24,7 +24,12 @@
  * sensor that will not read draws a hatched post and "—", and a trend that
  * cannot be computed draws no arrow rather than a level one.
  *
- * `lake: {entity, name, short, full, normal, floats, range: [lo, hi],
+ * AN ESTIMATE IS NEVER DRAWN AS A MEASUREMENT. `estimated_before` (ISO) names
+ * where back-filled history ends — a year read off another site's chart
+ * images, imported as statistics. Before it the line is dashed, and a change
+ * or rate measured against a point before it carries an ≈.
+ *
+ * `lake: {entity, name, short, full, normal, floats, range: [lo, hi], estimated_before,
  *         also: [{entity, name, full}]}`
  * ========================================================================== */
 
@@ -102,7 +107,14 @@ Object.assign(PurdySkyCard.prototype, {
     const want = now - wantH * 36e5;
     const ref = old.reduce((a, p) => (Math.abs(p.t - want) < Math.abs(a.t - want) ? p : a), old[0]);
     const hrs = (now - ref.t) / 36e5;
-    return { d: live - ref.v, hrs, rate: (live - ref.v) / hrs };
+    const est = this._skLakeEst();
+    return { d: live - ref.v, hrs, rate: (live - ref.v) / hrs, est: est != null && ref.t < est };
+  },
+
+  _skLakeEst() {
+    const c = this._skLakeCfg();
+    const t = c && c.estimated_before ? Date.parse(c.estimated_before) : NaN;
+    return Number.isFinite(t) ? t : null;
   },
 
   _skLakeSpan(hrs) {
@@ -166,11 +178,11 @@ Object.assign(PurdySkyCard.prototype, {
     const close = `<button class="ps-x" type="button" id="ps-close" aria-label="Close">
         <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
     const chip = d2 && Math.abs(d2.d) >= 0.05
-      ? `<span class="ps-chip cool sk-lkchip"><ha-icon icon="${d2.d > 0 ? "mdi:arrow-up" : "mdi:arrow-down"}"></ha-icon>${Math.abs(d2.d).toFixed(1)} ft · ${this._skLakeSpan(d2.hrs)}</span>` : "";
+      ? `<span class="ps-chip cool sk-lkchip"><ha-icon icon="${d2.d > 0 ? "mdi:arrow-up" : "mdi:arrow-down"}"></ha-icon>${d2.est ? "≈" : ""}${Math.abs(d2.d).toFixed(1)} ft · ${this._skLakeSpan(d2.hrs)}</span>` : "";
     const seg = `<div class="sk-seg sm sk-lkseg" role="tablist">${["w", "m", "y"].map((k) =>
       `<button type="button" role="tab" data-sklkr="${k}" aria-selected="${k === rk}">${k.toUpperCase()}</button>`).join("")}</div>`;
     const tiles = [];
-    tiles.push(`<div class="st3"><b>${tr == null ? "—" : `${skLakeFt(tr.rate, 2)}<small>ft/h</small>`}</b><span>Rate</span></div>`);
+    tiles.push(`<div class="st3"><b>${tr == null ? "—" : `${tr.est ? "≈" : ""}${skLakeFt(tr.rate, 2)}<small>ft/h</small>`}</b><span>Rate</span></div>`);
     (Array.isArray(c.also) ? c.also : []).forEach((a) => {
       if (!a || !a.entity) return;
       const av = pcNum(h, a.entity);
@@ -222,15 +234,23 @@ Object.assign(PurdySkyCard.prototype, {
           <rect class="hatch" x="0" y="${P}" width="${W}" height="${H - P}" rx="8"/>${refs}${one}${axis}</svg>`;
     }
     const xy = pts.map((p) => [X(p.t), Y(p.v)]);
-    const line = xy.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+    const path = (a) => a.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+    const line = path(xy);
+    /* Split at the end of the estimate: dashed before, solid after, the two
+       sharing the boundary point so the line does not break. */
+    const est = this._skLakeEst();
+    const k = est == null ? 0 : pts.findIndex((p) => p.t >= est);
+    const cut = k < 0 ? xy.length : k;
+    const lines = cut === 0 ? `<path class="ln" d="${line}"/>`
+      : `<path class="ln est" d="${path(xy.slice(0, Math.min(xy.length, cut + 1)))}"/>${cut < xy.length ? `<path class="ln" d="${path(xy.slice(Math.max(0, cut - 1)))}"/>` : ""}`;
     const x0 = xy[0][0];
     const gap = x0 > 6 ? `<rect class="hatch" x="0" y="${P}" width="${(x0 - 2).toFixed(1)}" height="${H - P}" rx="6"/>` : "";
     const area = `${line} L${xy[xy.length - 1][0].toFixed(1)},${H} L${x0.toFixed(1)},${H} Z`;
     const last = xy[xy.length - 1];
-    const words = `${c.name || "Lake"} level, ${{ w: "past week", m: "past month", y: "past year" }[rk]}, ${mn.toFixed(1)} to ${mx.toFixed(1)} feet; full pond ${full}`;
+    const words = `${c.name || "Lake"} level, ${{ w: "past week", m: "past month", y: "past year" }[rk]}, ${mn.toFixed(1)} to ${mx.toFixed(1)} feet; full pond ${full}${cut > 0 ? "; earlier part estimated" : ""}`;
     return `<svg class="sk-lkchart" viewBox="0 -4 ${W} ${H + 26}" role="img" aria-label="${psEsc(words)}">${defs}
         ${gap}${refs}
-        <path class="ar" d="${area}"/><path class="ln" d="${line}"/>
+        <path class="ar" d="${area}"/>${lines}
         <line class="base" x1="0" x2="${W}" y1="${H}" y2="${H}"/>
         <circle class="dot" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="5"/>${axis}</svg>`;
   },
