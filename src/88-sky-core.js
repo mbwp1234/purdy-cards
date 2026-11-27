@@ -643,7 +643,7 @@ class PurdySkyCard extends PurdyShellCard {
     return `
       <div class="sk-sky sky-${band}"><div class="sk-stars"></div>${this._skArc(sky)}</div>
       <div class="sk-heroin sky-${band}" id="sk-heroin">
-        <div class="sk-htop"><div class="sk-ppl">${this._hdrPeople()}</div></div>
+        <div class="sk-htop"><div class="sk-ppl">${this._hdrPeople({ sky: true })}</div></div>
         <div class="sk-greet" id="sk-greet"><div class="sk-hi">${this._skGreeting(now)}${who ? `, ${psEsc(who)}` : ""}</div>
           <div class="sk-date">${now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div></div>
         <button class="sk-temp" type="button" id="sk-temp" data-sheet="wx" aria-label="Weather: ${t == null ? "no reading" : Math.round(t) + " degrees"}">
@@ -712,19 +712,33 @@ class PurdySkyCard extends PurdyShellCard {
   /* Named, worst first, three at most — the desk's rule. With nothing raised
      there is no chip: an empty row is the all-clear. */
   _skFaultChips(faults) {
-    if (!faults.length || pcOffline(this._hass)) return pcOffline(this._hass) ? `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>` : "";
+    if (pcOffline(this._hass)) return `<span class="ps-chip bad"><span class="ps-dot"></span>Reconnecting…</span>`;
+    if (!faults.length) return "";
+    /* ONE row, always (v1.109.0). Two worded chips wrapped onto a second line
+       and that line ran into the sun's arc. A fault is now its glyph, plus a
+       tag only where the fault carries arithmetic (a count, an age); the words
+       ride on the label and the alerts sheet one tap away. Three fit beside
+       the wet chip at 390px, so a fourth folds into "+N" with the third. */
     const cls = (f) => (f.severity === "critical" ? "bad" : f.severity === "warn" ? "warn" : "");
-    return faults.slice(0, 2).map((f) => `<button class="ps-chip ${cls(f)}" type="button" data-sheet="alerts"><span class="ps-dot"></span>${
-      psEsc(f.short || f.title)}</button>`).join("")
-      + (faults.length > 2 ? `<button class="ps-chip" type="button" data-sheet="alerts">+${faults.length - 2}</button>` : "");
+    const ico = (f) => f.icon || (f.severity === "critical" ? "mdi:alert-circle-outline" : "mdi:alert-outline");
+    const shown = faults.length > 3 ? faults.slice(0, 2) : faults;
+    return shown.map((f) => {
+      const words = f.short || f.title;
+      return `<button class="ps-chip sk-ichip ${cls(f)}${f.tag ? "" : " solo"}" type="button" data-sheet="alerts" title="${psEsc(words)}" aria-label="${psEsc(words)}"><ha-icon icon="${psEsc(ico(f))}"></ha-icon>${
+        f.tag ? `<span>${psEsc(f.tag)}</span>` : ""}</button>`;
+    }).join("")
+      + (faults.length > 3 ? `<button class="ps-chip sk-ichip solo more" type="button" data-sheet="alerts" aria-label="${faults.length - 2} more">+${faults.length - 2}</button>` : "");
   }
 
-  /* The first wet day and how likely — a roll-up, so it is allowed a chip. */
+  /* The first wet day and how likely — a roll-up, so it is allowed a chip.
+     The glyph says rain or snow; the words stay on the label. */
   _skWetChip() {
     const wet = (this._wxFc || []).find((d) => d.pop != null && d.pop >= 50);
     if (!wet) return "";
     const when = wet.today ? (new Date(this._nowMs()).getHours() >= 17 ? "tonight" : "today") : this._wxDow(wet.ts, false);
-    return `<button class="ps-chip cool" type="button" data-sheet="wx"><span class="ps-dot"></span>${psEsc(skWetWord(wet.condition))} ${psEsc(when)} · ${Math.round(wet.pop)}%</button>`;
+    const word = skWetWord(wet.condition), pop = Math.round(wet.pop);
+    const icon = /snow/i.test(word) ? "mdi:weather-snowy" : "mdi:umbrella-outline";
+    return `<button class="ps-chip cool sk-ichip sk-wet" type="button" data-sheet="wx" aria-label="${psEsc(`${word} ${when} · ${pop}%`)}"><ha-icon icon="${icon}"></ha-icon><span>${psEsc(when)} ${pop}%</span></button>`;
   }
 
   _skCard(key, body, pill, extra) {

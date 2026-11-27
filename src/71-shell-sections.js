@@ -57,7 +57,10 @@ Object.assign(PurdyShellCard.prototype, {
    * about a person that is ever actionable from a dashboard, and the only
    * reason the old section's battery column existed. Steps are neither, so
    * they move to more-info along with everything else. */
-  _hdrPeople() {
+  /* `sky: true` is Skylight's hero (v1.109.0): 46px, a FULL ring for the
+     steps, and the low phone as a battery badge rather than a 7px pip that
+     read as a notification dot. Same data, same taps, same rules. */
+  _hdrPeople(o = {}) {
     const list = this._config.people || [];
     if (!list.length) return "";
     const h = this._hass;
@@ -80,14 +83,16 @@ Object.assign(PurdyShellCard.prototype, {
          steps: two coloured rings around a 21px photograph is one signal too
          many in the space of a fingernail, and "lit or grey" is the reading
          that survives at this size. */
-      const cls = `ps-pv ${home ? "home" : "away"} ${batt != null && batt < 25 ? "low" : ""} ${tracked ? "big" : ""}`;
+      const low = batt != null && batt < 25;
+      const cls = `ps-pv ${home ? "home" : "away"} ${low ? "low" : ""} ${tracked ? "big" : ""} ${o.sky ? "sky" : ""}`;
       const hooks = tracked
         ? `data-person="${i}" data-entity="${psEsc(p.entity)}"`
         : `data-info="${psEsc(p.entity)}"`;
       return `<span class="${cls}" ${hooks} role="button" tabindex="0"
           title="${psEsc(`${nm} — ${bits.join(", ")}`)}"
           aria-label="${psEsc(`${nm}, ${bits.join(", ")}`)}">${
-            tracked ? this._pvRing(s) : ""}${this._pvFace(p, nm)}</span>`;
+            tracked ? this._pvRing(s, o.sky ? { size: 46, full: true } : null) : ""}${this._pvFace(p, nm)}${
+            o.sky && low ? `<span class="ps-pvbat" aria-hidden="true"><svg viewBox="0 0 12 8"><rect x=".5" y=".5" width="9.5" height="7" rx="1.5"/><rect class="f" x="2" y="2" width="2" height="4"/><rect class="f" x="10.5" y="2.5" width="1.2" height="3"/></svg></span>` : ""}</span>`;
     }).join("")}</span>`;
   },
 

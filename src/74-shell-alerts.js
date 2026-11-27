@@ -321,6 +321,10 @@ Object.assign(PurdyShellCard.prototype, {
       title: `${who} ${r.title || "offline"}`,
       detail: `${dead.length > 2 ? dead.map((d) => d.name).join(" · ") + " · " : ""}not reporting since ${when}`,
       short: `${who} ${r.title || "offline"} · ${pcAgo(oldest)}`,
+      /* What the sky's icon chip prints beside the glyph: the count and the
+         age, which is the arithmetic the title would otherwise make you do. */
+      tag: `${dead.length > 1 ? dead.length + " · " : ""}${pcAgo(oldest)}`,
+      icon: r.icon || "mdi:wifi-off",
       entity: dead.length === 1 ? dead[0].entity : null,
       firedAt: Math.floor(newest / 1000),
     };
@@ -438,6 +442,8 @@ Object.assign(PurdyShellCard.prototype, {
             key,
             severity: r.severity || "info",
             title: `${names.length} ${r.title || "issues"}`,
+            tag: names.length > 1 ? String(names.length) : "",
+            icon: r.icon || null,
             detail: names.slice(0, 4).join(" · "),
             entity: null,
             firedAt: this._firedAt(r),
@@ -451,6 +457,7 @@ Object.assign(PurdyShellCard.prototype, {
           severity: r.severity || "warn",
           title: r.title || pcName(hass, r.entity),
           detail: r.detail || "",
+          icon: r.icon || null,
           entity: r.entity,
           firedAt: this._firedAt(r),
         });

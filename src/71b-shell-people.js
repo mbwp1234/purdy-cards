@@ -210,14 +210,17 @@ Object.assign(PurdyShellCard.prototype, {
    *
    * No goal and no reading both draw the TRACK ALONE. A ring at zero and a
    * phone that has not reported must never look the same. */
-  _pvRing(st) {
-    const size = 28, stroke = 2.2, r = size / 2 - stroke / 2 - 1.4;
-    const arc = pcRingArc(r);
+  _pvRing(st, o) {
+    /* `full` closes the ring: at 46px a horseshoe's open foot read as a
+       broken circle, and nothing sits in the gap to need it. */
+    const size = (o && o.size) || 28, stroke = o && o.full ? 3 : 2.2, r = size / 2 - stroke / 2 - 1.4;
     const c = 2 * Math.PI * r;
+    const arc = o && o.full ? c : pcRingArc(r);
     const cx = size / 2;
+    const rot = o && o.full ? -90 : PC_RING_START;
     const track = `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="var(--ps-track)"
         stroke-width="${stroke}" stroke-linecap="round"
-        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
+        stroke-dasharray="${arc.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${rot} ${cx} ${cx})"/>`;
     let seg = "";
     if (st.today != null && st.goal) {
       const frac = Math.max(0, Math.min(1, st.today / Math.max(st.today, st.goal)));
@@ -225,7 +228,7 @@ Object.assign(PurdyShellCard.prototype, {
       if (len > 0.2) {
         seg = `<circle cx="${cx}" cy="${cx}" r="${r.toFixed(2)}" fill="none" stroke="url(#ps-aur)"
           stroke-width="${stroke}" stroke-linecap="round"
-          stroke-dasharray="${len.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${PC_RING_START} ${cx} ${cx})"/>`;
+          stroke-dasharray="${len.toFixed(2)} ${c.toFixed(2)}" transform="rotate(${rot} ${cx} ${cx})"/>`;
       }
     }
     return `<svg class="ps-pvr" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
