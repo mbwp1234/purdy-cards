@@ -298,7 +298,7 @@ const SK_STYLES = `
       .sk-sitst b small { font-size: var(--pc-fs-sm); font-weight: 500; color: var(--ps-dim); margin-left: 1px; }
       .sk-sitst > div > span:last-child { flex: none; width: 50px; font-size: var(--pc-fs-sm); font-weight: 550; color: var(--ps-dim); }
       .sk-sitst .sk-sitpips { flex: 1; justify-content: flex-start; max-width: none; }
-      .sk-sitpips i.on { background: var(--sk-litter); box-shadow: none; }
+      .sk-pips.sk-sitpips i.on { background: var(--sk-litter); box-shadow: none; }
       .sk-sitbar { position: relative; flex: 1; min-width: 30px; height: 6px; border-radius: 3px; background: var(--ps-track); }
       .sk-sitbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--sk-litter); }
       .sk-sitbar i.dot { top: -2px; bottom: auto; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%;

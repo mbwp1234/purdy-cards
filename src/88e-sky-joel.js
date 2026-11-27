@@ -719,7 +719,6 @@ Object.assign(PurdySkyCard.prototype, {
           <span class="hdl" id="sk-jhb" style="left:${x(e.to)}%"><i></i></span>
           <span class="flag" id="sk-jflag"></span>
         </div>
-        <div class="sk-jax ends"><span style="left:0">${psEsc(at(lo))}</span><span style="left:100%">${psEsc(at(hi))}</span></div>
         <div class="sk-jtiles">
           ${["from", "to"].map((f) => `<div class="sk-jtile">
             <button type="button" data-napstep="${f}:-5" aria-label="Five minutes earlier">−</button>
@@ -1056,13 +1055,12 @@ const SK_JOEL_STYLES = `
       .sk-jtrk .flag { position: absolute; top: -4px; transform: translateX(-50%); padding: 2px 8px; border-radius: 9px; background: var(--ps-text); color: var(--sk-card);
                        font-size: var(--pc-fs-sm); font-weight: 650; white-space: nowrap; pointer-events: none; opacity: 0; }
       .sk-jtrk .flag.on { opacity: 1; }
-      .sk-jax.ends { margin: 0 8px; }
       .sk-jtiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-      .sk-jtile { display: flex; align-items: center; gap: 6px; padding: 10px; border-radius: 20px; background: var(--sk-card2); }
-      .sk-jtile > span { flex: 1; display: flex; flex-direction: column; align-items: center; }
+      .sk-jtile { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; border-radius: 20px; background: var(--sk-card2); }
+      .sk-jtile > span { grid-row: 1; grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; }
       .sk-jtile b { font-size: var(--pc-fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
       .sk-jtile small { font-size: var(--pc-fs-xs); color: var(--ps-dim); font-weight: 550; }
-      .sk-jtile button { width: 36px; height: 36px; border-radius: 18px; background: var(--sk-card); color: var(--ps-muted); font-weight: 700; font-size: var(--pc-fs-xl); }
+      .sk-jtile button { grid-row: 2; width: 100%; height: 36px; border-radius: 18px; background: var(--sk-card); color: var(--ps-muted); font-weight: 700; font-size: var(--pc-fs-xl); }
       .sk-jsum { margin-top: 10px; font-size: var(--pc-fs-lg); color: var(--ps-muted); }
       .sk-jsum b { color: var(--ps-text); font-weight: 650; }
       .sk-jsum span { color: var(--ps-dim); }
