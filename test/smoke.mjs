@@ -11681,7 +11681,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       const none = sk._skLakeTile() + sk._skLakeSheet();
       return /<b>−3\.2<\/b><small>ft<\/small>/.test(bare) && !/sk-lkdir/.test(bare) && !/sk-lkchip/.test(bareSheet) &&
         /aria-label="No history yet"/.test(bareSheet) &&
-        /data-sheet="lake"/.test(tile) && /sk-lkdir up/.test(tile) && />Lake · rising</.test(tile) && !/sk-tl">Smith/.test(tile) && /class="full"/.test(tile) && /class="fl"/.test(tile) &&
+        /data-sheet="lake"/.test(tile) && /sk-lkdir up/.test(tile) && />Lake · rising</.test(tile) && !/sk-tlab">Smith/.test(tile) && /class="full"/.test(tile) && /class="fl"/.test(tile) &&
         /sk-lktile/.test(tiles) &&
         /<b>791\.79<\/b>/.test(sheet) && /sk-lkchip/.test(sheet) && />1\.6 ft · 2d/.test(sheet) && /FULL 795/.test(sheet) && /NORMAL 794\.2/.test(sheet) &&
         /Leesville/.test(sheet) && /−9\.4<small>ft/.test(sheet) && /\+0\.03<small>ft\/h/.test(sheet) && !/\+1\.6 ft/.test(sheet) && /class="ln"/.test(sheet) &&
@@ -11971,7 +11971,19 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     s2._hass = h;
     return /<b>1<\/b><small>on<\/small>/.test(s2._skTiles()) && /1 of 1 on/.test(s2._lightChip(s2._lightList(s2._skSec('lights'))));
   });
-  check('a tile label wraps rather than truncating', /\.sk-tl \{[^}]*overflow-wrap: anywhere/.test(SK.styles) && !/\.sk-tl \{[^}]*text-overflow/.test(SK.styles));
+  check('a tile label wraps rather than truncating', /\.sk-tlab \{[^}]*overflow-wrap: anywhere/.test(SK.styles) && !/\.sk-tlab \{[^}]*text-overflow/.test(SK.styles));
+  /* v1.113.1: Joel's Weeks rows took .sk-tl, the Home tiles' label class, and
+     its 44px grid column squeezed every tile label to three letters a line.
+     A base rule for one class may live in ONE source file. */
+  check('no sky class has its base rule in two source files', () => {
+    const dir = new URL('../src/', import.meta.url);
+    const seen = {}, dup = [];
+    for (const f of fs.readdirSync(dir).filter((f) => /^88/.test(f)))
+      for (const x of fs.readFileSync(new URL(f, dir), 'utf8').matchAll(/^\s*(\.sk-[a-z0-9-]+) \{/gm))
+        if (seen[x[1]] && seen[x[1]] !== f) dup.push(x[1]); else seen[x[1]] = f;
+    if (dup.length) console.log('    shared:', dup.join(' '));
+    return dup.length === 0;
+  });
   check('a coasting page cannot set the volume', /const coasting = !!\(this\._scrollAt && t0 - this\._scrollAt < 150\)/.test(skSrc) &&
     /if \(!live && \(coasting \|\| \(this\._scrollAt \|\| 0\) > t0\)\) \{ end\(\); restore\(\); return; \}/.test(skSrc));
   check('an entity Home Assistant no longer has is named, not dumped', () => {
