@@ -196,9 +196,20 @@ const SK_STYLES = `
           radial-gradient(1.2px 1.2px at 78% 9%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 88% 46%, #fff 50%, transparent 51%),
           radial-gradient(1px 1px at 6% 60%, #fff 50%, transparent 51%), radial-gradient(1.3px 1.3px at 54% 58%, #fff 50%, transparent 51%),
           radial-gradient(1px 1px at 35% 70%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 93% 66%, #fff 50%, transparent 51%); }
-      .sk-heroin { position: relative; z-index: 1; padding: 0 18px 112px; color: var(--si); display: flex; flex-direction: column; gap: 2px; will-change: transform; }
-      .sk-htop { display: flex; align-items: center; height: 44px; margin: -50px 0 14px; padding-right: 56px; }
-      .sk-hero .ps-pav { gap: 6px; }
+      .sk-heroin { position: relative; z-index: 1; padding: 0 18px 140px; color: var(--si); display: flex; flex-direction: column; gap: 2px; will-change: transform; }
+      /* v1.109.0: the people sit at the RIGHT, beside the bell, so the
+         greeting owns the top-left; 46px faces, a full steps ring. */
+      .sk-htop { display: flex; align-items: center; justify-content: flex-end; height: 48px; margin: -52px 0 10px; padding-right: 56px; }
+      .sk-hero .ps-pav { gap: 8px; }
+      .sk-hero .ps-pv.sky { width: 36px; height: 36px; font-size: var(--pc-fs-sm); }
+      .sk-hero .ps-pv.sky.big { width: 46px; height: 46px; }
+      .sk-hero .ps-pv.sky img, .sk-hero .ps-pv.sky .ps-pvi { width: 36px; height: 36px; font-size: var(--pc-fs-sm); }
+      .sk-hero .ps-pv.sky::before { inset: -2px; }
+      .sk-hero .ps-pv.sky.low::after { display: none; }
+      .ps-pvbat { position: absolute; right: -4px; bottom: -1px; height: 16px; padding: 0 4px; border-radius: 8px; display: flex; align-items: center;
+                  background: var(--ps-bad); box-shadow: 0 0 0 2px var(--sk-card); }
+      .ps-pvbat svg { width: 12px; height: 8px; fill: none; stroke: #fff; stroke-width: 1; }
+      .ps-pvbat svg .f { fill: #fff; stroke: none; }
       .sk-greet { transition: opacity .1s linear; }
       .sk-hi { font-size: var(--pc-fs-xl); font-weight: 520; letter-spacing: -.01em; }
       .sk-hi b { font-weight: 700; background: linear-gradient(90deg, var(--ps-aur-a), var(--ps-aur-b)); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -218,7 +229,9 @@ const SK_STYLES = `
       .sk-capfill { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: linear-gradient(90deg, #4DABF7, #FFC078 70%, #FF922B); }
       .sk-cap i { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
                   background: var(--sk-card); border: 3px solid var(--si); box-shadow: 0 0 0 4px rgba(255,255,255,.25); }
-      .sk-hchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+      /* One row, never two (v1.109.0): a wrapped second row grew into the
+         arc, which sits a fixed distance off the hero's foot. */
+      .sk-hchips { display: flex; flex-wrap: nowrap; gap: 6px; margin-top: 14px; min-width: 0; }
       .sk-hchips .ps-chip { font-size: var(--pc-fs-sm); padding: 5px 10px; background: color-mix(in srgb, var(--sk-card) 78%, transparent);
                             -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
       /* The paper theme's semantic chips tint at 12% alpha, which outranks the
@@ -228,6 +241,12 @@ const SK_STYLES = `
       :host([data-sk-theme]) .sk-hchips .ps-chip.warn,
       :host([data-sk-theme]) .sk-hchips .ps-chip.bad,
       :host([data-sk-theme]) .sk-hchips .ps-chip.cool { background: color-mix(in srgb, var(--sk-card) 88%, transparent); }
+      .sk-hchips .sk-ichip { height: 34px; padding: 0 11px 0 9px; gap: 5px; display: inline-flex; align-items: center; flex: none;
+                             font-weight: 650; font-variant-numeric: tabular-nums; }
+      .sk-hchips .sk-ichip ha-icon { --mdc-icon-size: 18px; width: 18px; height: 18px; }
+      .sk-hchips .sk-ichip.solo { width: 34px; padding: 0; justify-content: center; }
+      .sk-hchips .sk-ichip.more { color: var(--ps-muted); }
+      .sk-hchips .sk-wet { margin-left: auto; }
 
       /* ---- cards ---- */
       .sk-card { position: relative; background: var(--sk-card); border: 1px solid var(--sk-edge); border-radius: 26px;
@@ -832,7 +851,7 @@ const SK_STYLES = `
 
       /* Home: the sky across the page, the cards in a grid under it. */
       :host([data-sk-w~="tab"]) .sk-hero { min-height: 400px; }
-      :host([data-sk-w~="tab"]) .sk-heroin { padding-left: var(--sk-padx); padding-right: var(--sk-padx); }
+      :host([data-sk-w~="tab"]) .sk-heroin { padding-left: var(--sk-padx); padding-right: var(--sk-padx); padding-bottom: 164px; }
       :host([data-sk-w~="tab"]) .sk-st.l { left: var(--sk-padx); } :host([data-sk-w~="tab"]) .sk-st.r { right: var(--sk-padx); }
       :host([data-sk-w~="tab"]) .sk-homecards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; grid-auto-flow: row dense;
         max-width: calc(var(--sk-maxw) + 2 * var(--sk-gut)); margin: -40px auto 0; padding: 0 var(--sk-gut); }

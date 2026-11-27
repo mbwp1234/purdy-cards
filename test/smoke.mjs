@@ -11906,6 +11906,25 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   check('the hero text carries its own ink for the band (the sky is a sibling, not a parent)',
     /:host\(\[data-sk-theme="light"\]\) \.sk-heroin\.sky-night \{ --si: #F3F5FA/.test(SK.styles) && /class="sk-heroin sky-\$\{band\}"/.test(skSrc));
   check('a warn chip over the sky keeps its card', /:host\(\[data-sk-theme\]\) \.sk-hchips \.ps-chip\.warn/.test(SK.styles));
+  /* ---- v1.109.0 --------------------------------------------------------- */
+  check('the hero chips never wrap into the arc', /\.sk-hchips \{ display: flex; flex-wrap: nowrap;/.test(SK.styles));
+  check('five faults draw two glyphs and a +3, never five chips', () => {
+    const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
+    const f = (i) => ({ key: 'k' + i, severity: 'warn', title: 'Fault ' + i });
+    const out = s2._skFaultChips([f(1), f(2), f(3), f(4), f(5)]);
+    return (out.match(/<button/g) || []).length === 3 && />\+3</.test(out) && /aria-label="Fault 1"/.test(out);
+  });
+  check('an offline fault carries its count and age as a tag, and its glyph', () => {
+    const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
+    const out = s2._skFaultChips([{ key: 'off', severity: 'warn', title: 'A + B offline', short: 'A + B offline · 44h', tag: '2 · 44h', icon: 'mdi:wifi-off' }]);
+    return /mdi:wifi-off/.test(out) && /<span>2 · 44h<\/span>/.test(out) && !/solo/.test(out);
+  });
+  check('the arc has its own floor: the hero reserves the arc and its sun', /\.sk-heroin \{ position: relative; z-index: 1; padding: 0 18px 140px;/.test(SK.styles));
+  check('Skylight faces close the steps ring; the shell keeps its horseshoe', () => {
+    const sh = psh();
+    const sky = sh._hdrPeople({ sky: true }), shell = sh._hdrPeople();
+    return /width="46"/.test(sky) && /rotate\(-90 /.test(sky) && !/width="46"/.test(shell) && !/rotate\(-90 /.test(shell);
+  });
   /* ---- v1.97.4 ---------------------------------------------------------- */
   check('a tap whose finger lands on a moving page is swallowed before any handler', () =>
     /this\._skStopper = !!\(this\._scrollAt && Date\.now\(\) - this\._scrollAt < 150\)/.test(skSrc) &&
