@@ -86,6 +86,34 @@ Object.assign(PurdySkyCard.prototype, {
     return { am: pick(true), pm: pick(false) };
   },
 
+  /* His usual night as minutes from the evening's midnight: bedtime and the
+     wake, which runs past 1440. Two nights or a plain 7:30 → 7:00. */
+  _skJUsualNight(m) {
+    const ns = m.sessions.filter((s) => s.night && !s.active);
+    const r5 = (v) => Math.round(v / 5) * 5;
+    if (ns.length < 2) return { a: 19 * 60 + 30, b: 31 * 60 };
+    return {
+      a: r5(skAvg(ns.map((s) => (s.from - skjMid(s.day)) / 60000))),
+      b: r5(skAvg(ns.map((s) => (psWokeAt(s) - skjMid(s.day)) / 60000))),
+    };
+  },
+
+  /* The night a day is missing, as one "?" to log: his usual window, trimmed
+     to whatever else was recorded either side of it and to now. Null when the
+     day has a night, or when what is left is too short to be one. */
+  _skJNightGhost(m, key) {
+    const all = m.all || m.sessions;
+    if (all.some((s) => s.night && s.day === key)) return null;
+    const u = this._skJUsualNight(m), mid = skjMid(key), now = this._nowMs();
+    let a = mid + u.a * 60000, b = Math.min(mid + u.b * 60000, now);
+    all.forEach((s) => {
+      const e = s.active ? now : psWokeAt(s);
+      if (e <= a || s.from >= b) return;
+      if (s.from <= a) a = e; else b = Math.min(b, s.from);
+    });
+    return b - a >= 3 * 3600000 ? { a, b } : null;
+  },
+
   /* The usual naps a day is missing, as "?" blocks: only windows already over,
      only when nothing overlaps them, never while he is asleep. */
   _skJGhosts(m, key, usual, opts) {
@@ -145,12 +173,27 @@ Object.assign(PurdySkyCard.prototype, {
 
     /* ---- last night ---- */
     const n = m.nightSession;
-    if (n) {
+    /* Last night is YESTERDAY's evening. A night from two days back is not it,
+       and while he is away the house saw nothing, so the gap is offered as a
+       "?" to log rather than an older night wearing the label. */
+    const yk = psDayKey(new Date(skjMid(m.todayKey) - 43200000));
+    const isLast = n && (n.active || n.day === yk || n.day === m.todayKey);
+    const gap = store && m.loaded && !isLast && !(live && live.night) ? this._skJNightGhost(m, yk) : null;
+    if (gap) {
+      P.night = `<div class="sk-card sk-pad" id="sk-c-jnight">
+          <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:weather-night"></ha-icon></span>
+            <span class="sk-hn">Last night</span></div>
+          <div class="sk-big"><span class="sk-num q">?</span></div>
+          <button class="sk-bigbtn pri wide" type="button" data-jlognight="${gap.a}:${gap.b}">
+            <ha-icon icon="mdi:plus"></ha-icon>Log last night · ${psEsc(skClk(gap.a))} → ${psEsc(skClk(gap.b))}</button>
+        </div>`;
+    } else if (n) {
       const rail = this._skRail(n, true);
       const mark = n.edited ? `<span class="ps-chip">corrected</span>` : n.manual ? `<span class="ps-chip">logged by hand</span>` : "";
-      P.night = `<button class="sk-card sk-pad sk-jlink" type="button" id="sk-c-jnight" data-skjp="walk" data-jnight="${n.from}" aria-label="${n.active ? "Tonight" : "Last night"}: walk through it">
+      const nName = n.active ? "Tonight" : isLast ? "Last night" : `${skDayName(n.from, true)} night`;
+      P.night = `<button class="sk-card sk-pad sk-jlink" type="button" id="sk-c-jnight" data-skjp="walk" data-jnight="${n.from}" aria-label="${psEsc(nName)}: walk through it">
           <div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-deep)"><ha-icon icon="mdi:weather-night"></ha-icon></span>
-            <span class="sk-hn">${n.active ? "Tonight" : "Last night"}</span>${mark}${this._skNightDelta(n, past)}</div>
+            <span class="sk-hn">${psEsc(nName)}</span>${mark}${this._skNightDelta(n, past)}</div>
           <div class="sk-big"><span class="sk-num">${skHMHtml(n.asleepMinutes)}</span>
             <span class="sk-wk ${n.interventions == null ? "q" : ""}"><ha-icon icon="mdi:door-open"></ha-icon>${skjWakes(n)}</span>
             <ha-icon class="sk-jchev" icon="mdi:chevron-right"></ha-icon></div>
@@ -466,8 +509,13 @@ Object.assign(PurdySkyCard.prototype, {
         blocks.push(`<button class="b${night.manual ? " man" : ""}${night.active ? " live" : ""}" type="button" style="left:${sp.l}%;width:${sp.w}%" data-skjp="walk" data-jnight="${night.from}" aria-label="${psEsc(skDayName(night.from, true))} night. Walk through it"></button>`);
         (night.events || []).forEach((t) => blocks.push(`<i class="k" style="left:${skjPct(minOf(t, d.mid), A, B)}%"></i>`));
       }
+      const ng = !naps && !night && !d.today && store ? this._skJNightGhost(m, d.key) : null;
+      if (ng) {
+        const sp = span(minOf(ng.a, d.mid), minOf(ng.b, d.mid));
+        blocks.push(`<button class="b ghost night" type="button" data-jlognight="${ng.a}:${ng.b}" style="left:${sp.l}%;width:${sp.w}%" aria-label="His usual night, ${psEsc(skClk(ng.a))}. Tap to log it">?</button>`);
+      }
       if (d.today) { const nx = skjPct(minOf(now, d.mid), A, B); blocks.push(`<i class="fut" style="left:${nx}%"></i><i class="now" style="left:${nx}%"></i>`); }
-      const fillBtn = store && !dn.length && !d.today && !ghosts.length
+      const fillBtn = store && !dn.length && !d.today && !ghosts.length && !ng
         ? `<button class="fill" type="button" data-jfill="${d.key}"><span>${away ? "Away · fill in" : "Fill in"}</span></button>` : "";
       let total, sub = "", q = "";
       const napMin = dn.filter((s) => !s.active).reduce((a, s) => a + s.asleepMinutes, 0);
@@ -533,6 +581,20 @@ Object.assign(PurdySkyCard.prototype, {
   _skJoelWalk(N) {
     const { sec, m, past } = N;
     const list = (m.all || m.sessions).filter((s) => s.night);
+    /* A night just logged from a "?" is not in hass until the write lands;
+       wait for it rather than showing another night, then open its sheet so
+       the times and the wake-ups are set while they are remembered. */
+    const fix = this._skJFix;
+    if (fix) {
+      const hit = list.find((s) => s.manual && Math.abs(s.from - fix.at) <= 60000);
+      if (hit) {
+        this._skJFix = null;
+        this._skNight = hit.from;
+        setTimeout(() => this._openNapEdit(hit.from), 0);
+      } else if (Date.now() - fix.t < 10000) {
+        return `${this._skJBack()}<div class="sk-card sk-pad"><div class="sk-empty">Saving the night…</div></div>`;
+      } else this._skJFix = null;
+    }
     const pick = list.find((s) => s.from === this._skNight) || m.nightSession || list[list.length - 1];
     if (!pick) return `${this._skJBack()}<div class="sk-card sk-pad"><div class="sk-empty">No night recorded yet</div></div>`;
     const i = list.indexOf(pick);
@@ -874,6 +936,14 @@ Object.assign(PurdySkyCard.prototype, {
       pcHaptic("success");
       this._manualWrite(sec, this._manualEntries(sec).filter((x) => !add.some((y) => Math.abs(y.start - x.start) <= 60000)).concat(add));
     }));
+    this._each("[data-jlognight]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const [a, b] = el.dataset.jlognight.split(":").map(Number);
+      const at = Math.round(a / 60000) * 60000;
+      this._manualAdd(a, b, "n");
+      this._skJFix = { at, t: Date.now() };
+      go("walk", at);
+    }));
     this._each("[data-jfill]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       this._skFill = Object.assign({}, this._skFill || {}, { [el.dataset.jfill]: true });
@@ -920,6 +990,7 @@ const SK_JOEL_STYLES = `
       .sk-jrib .b.ghost { background: transparent; border: 1.5px dashed var(--ps-dim); box-shadow: none; display: grid; place-items: center;
                           color: var(--ps-dim); font-weight: 700; font-size: var(--pc-fs-xs); }
       .sk-jrib .b.ghost.still { pointer-events: none; opacity: .7; }
+      .sk-num.q { color: var(--ps-dim); }
       .sk-jrib .b.ghost.night { border-color: color-mix(in srgb, var(--ps-deep) 55%, transparent); }
       .sk-jrib .b .dl { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--pc-fs-micro); font-weight: 700; color: #fff; white-space: nowrap; pointer-events: none; }
       .sk-jrib .b.man .dl { color: var(--ps-deep); }
