@@ -11648,6 +11648,10 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       for (let k = 72; k >= 1; k--) hr.push({ t: now - k * 36e5, v: k > 48 ? 790.19 : 790.19 + (48 - k) / 48 * 1.6 });
       sk._skLk = { at: now, busy: false, hr, day: hr.filter((p, i) => i % 24 === 0), err: null };
       const tile = sk._skLakeTile(), tiles = sk._skTiles();
+      sk._config = { ...sk._config, lake: { ...sk._config.lake, estimated_before: new Date(now - 24 * 36e5).toISOString() } };
+      sk._skLkR = 'w';
+      const est = sk._skLakeSheet();
+      sk._config = { ...sk._config, lake: { ...sk._config.lake, estimated_before: undefined } };
       sk._skLkR = 'w';
       const sheet = sk._skLakeSheet();
       sk._skLkR = 'y';
@@ -11673,6 +11677,8 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
         /Leesville/.test(sheet) && /−9\.4<small>ft/.test(sheet) && /\+0\.03<small>ft\/h/.test(sheet) && !/\+1\.6 ft/.test(sheet) && /class="ln"/.test(sheet) &&
         /data-sklkr="y" aria-selected="true"/.test(year) && /class="hatch"/.test(year) &&
         /sk-lake/.test(via) &&
+        /class="ln est"/.test(est) && /class="ln"/.test(est) && />≈1\.6 ft · 2d/.test(est) && /earlier part estimated/.test(est) &&
+        !/ln est/.test(sheet) && !/≈/.test(sheet) &&
         /ps-nodata/.test(off) && /sk-lkpost none/.test(off) &&
         /would not load — boom/.test(err) && !/class="ln"/.test(err) &&
         ids.every((id) => watched.indexOf(id) >= 0) && none === '';
