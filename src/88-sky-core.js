@@ -168,6 +168,7 @@ class PurdySkyCard extends PurdyShellCard {
       window.removeEventListener("keydown", this._skOnKey);
     }
     if (this._skRO) { this._skRO.disconnect(); this._skRO = null; }
+    this._skLockPage(false);
     if (this._skHooked) this._skHooked.removeEventListener("scroll", this._skOnElScroll);
     this._skHooked = null;
     this._skSc = null;
@@ -290,6 +291,29 @@ class PurdySkyCard extends PurdyShellCard {
     return want === "listen" ? "listen" : "watch";
   }
 
+  /* The page holds still while a sheet is open. A sheet is a fixed overlay,
+     and one too short to scroll itself hands every vertical wobble of the
+     thumb on it — a handle drag, a press on a stepper — straight through to
+     the page behind; overscroll-behavior only contains a box that can scroll.
+     The Night page under the correction sheet moves its pinned rail and cursor
+     with the scroll, so the whole screen jolted while a time was being set.
+     Locked on the element that scrolls, keyed to the sheet that was actually
+     DRAWN (a _sheet whose body came back empty must not freeze the page), and
+     restored exactly as found. */
+  _skLockPage(on) {
+    if (on) {
+      if (this._skLocked) return;
+      const sc = this._skScroller();
+      if (!sc || !sc.style) return;
+      this._skLocked = sc;
+      this._skLockWas = sc.style.overflow;
+      sc.style.overflow = "hidden";
+    } else if (this._skLocked) {
+      this._skLocked.style.overflow = this._skLockWas || "";
+      this._skLocked = null;
+    }
+  }
+
   /* The element the page actually scrolls in. HA's view, normally the
      document; found once by walking up through shadow roots. */
   _skScroller() {
@@ -402,7 +426,9 @@ class PurdySkyCard extends PurdyShellCard {
       this._patch("sk-" + view, html);
     }
 
-    this._patchSheet(this._sheetHtml(faults));
+    const sheet = this._sheetHtml(faults);
+    this._patchSheet(sheet);
+    this._skLockPage(!!sheet);
     this._mountSheetCard();
     if (view === "media") this._skMountRemote();
 
