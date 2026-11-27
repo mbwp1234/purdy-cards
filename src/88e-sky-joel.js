@@ -237,7 +237,7 @@ Object.assign(PurdySkyCard.prototype, {
     for (let i = 6; i >= 0; i--) {
       const d = new Date(now); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
       const key = psDayKey(d), today = i === 0;
-      const naps = m.sessions.filter((s) => !s.night && s.day === key);
+      const naps = (m.all || m.sessions).filter((s) => !s.night && s.day === key);
       const away = this._isAwayDay(sec, key);
       let inner;
       if (!naps.length && !today) inner = `<span class="sk-napbar hatch">${guides}${away ? "<em>away</em>" : ""}</span>`;
@@ -263,7 +263,7 @@ Object.assign(PurdySkyCard.prototype, {
      the afternoon nap has started, on average. A comparison, so it is a chip. */
   _skJNapShift(m) {
     const wk = skjWeek(this._nowMs());
-    const starts = (a, b, am) => m.sessions.filter((s) => !s.night && !s.active && s.day !== m.todayKey
+    const starts = (a, b, am) => (m.all || m.sessions).filter((s) => !s.night && !s.active && s.day !== m.todayKey
       && skjMid(s.day) >= a && skjMid(s.day) < b && (skjMod(s.from) < 780) === am).map((s) => skjMod(s.from));
     let best = null;
     [true, false].forEach((am) => {
@@ -288,8 +288,8 @@ Object.assign(PurdySkyCard.prototype, {
       const d = new Date(wk); d.setDate(d.getDate() + i); d.setHours(0, 0, 0, 0);
       const key = psDayKey(d);
       if (d.getTime() > now) { days.push(undefined); continue; }
-      const night = m.sessions.find((s) => s.night && s.day === key && !s.active) || null;
-      const naps = m.sessions.filter((s) => !s.night && s.day === key && !s.active);
+      const night = (m.all || m.sessions).find((s) => s.night && s.day === key && !s.active) || null;
+      const naps = (m.all || m.sessions).filter((s) => !s.night && s.day === key && !s.active);
       const today = key === m.todayKey;
       days.push({ key, today, night, naps,
         napMin: naps.length ? naps.reduce((a, s) => a + s.asleepMinutes, 0) : null,
@@ -329,7 +329,8 @@ Object.assign(PurdySkyCard.prototype, {
     const tab = this._skJWk || "night";
     const now = this._nowMs();
     const wk0 = skjWeek(now);
-    const weeks = [0, 1, 2, 3].map((i) => {
+    const nW = (m.archive || []).length ? 8 : 4;
+    const weeks = Array.from({ length: nW }, (_, i) => i).map((i) => {
       const wk = i ? skjPrevWk(wk0, i) : wk0;
       return { wk, days: this._skJWeekDays(m, wk) };
     });
@@ -425,7 +426,7 @@ Object.assign(PurdySkyCard.prototype, {
     /* The recorder keeps about ten days. A day before the oldest thing it still
        holds was never seen by this card at all — not a day to fill in, a day
        that is gone — so the list stops there and says so. */
-    const first = m.sessions.length ? Math.min(...m.sessions.map((s) => skjMid(s.day))) : now;
+    const first = (m.all || m.sessions).length ? Math.min(...(m.all || m.sessions).map((s) => skjMid(s.day))) : now;
     const kept = days.filter((d) => d.mid >= first || d.today);
     const lost = kept.length < days.length;
     const rows = [];
@@ -439,8 +440,8 @@ Object.assign(PurdySkyCard.prototype, {
         const chip = v != null && pv != null ? `<span class="ps-chip">${skjDelta(v - pv, "m")}</span>` : "";
         rows.push(`<div class="sk-jwkh">${psEsc(lab)}<i></i>${v == null ? "" : `<b>${psHM(Math.round(v))}</b>`}${chip}</div>`);
       }
-      const dn = m.sessions.filter((s) => !s.night && s.day === d.key);
-      const night = m.sessions.find((s) => s.night && s.day === d.key) || null;
+      const dn = (m.all || m.sessions).filter((s) => !s.night && s.day === d.key);
+      const night = (m.all || m.sessions).find((s) => s.night && s.day === d.key) || null;
       const away = this._isAwayDay(sec, d.key);
       const ghosts = store && (d.today || (!dn.length && (fill[d.key] || away)))
         ? this._skJGhosts(m, d.key, usual, { all: !d.today }) : [];
@@ -449,7 +450,7 @@ Object.assign(PurdySkyCard.prototype, {
       if (!dn.length && !d.today && !ghosts.length) blocks.push(`<span class="hz" style="left:${skjPct(8 * 60, A, B)}%;width:${(((18 - 8) * 60) / (B - A) * 100).toFixed(2)}%"></span>`);
       dn.forEach((s) => {
         const a = minOf(s.from, d.mid), b = minOf(s.active ? now : psWokeAt(s), d.mid), sp = span(a, b);
-        const can = s.manual ? !!this._manualStore(sec) : !!this._napEditStore(sec);
+        const can = !s.archived && (s.manual ? !!this._manualStore(sec) : !!this._napEditStore(sec));
         const lab = naps && +sp.w > 22 && !s.active ? `<span class="dl">${psHM(s.asleepMinutes)}</span>` : "";
         blocks.push(`<${can ? "button" : "span"} class="b nap${s.manual ? " man" : ""}${s.active ? " live" : ""}" style="left:${sp.l}%;width:${sp.w}%"${
           can ? ` type="button" data-napopen="${s.from}" data-entity="${psEsc(sec.hatch || "")}" aria-label="Nap ${psEsc(skClk(s.from))}, ${psHM(s.asleepMinutes)}. Tap to correct"` : ""}>${lab}</${can ? "button" : "span"}>`);
@@ -493,9 +494,9 @@ Object.assign(PurdySkyCard.prototype, {
       let n = 0, of = 0;
       seen.forEach((d) => {
         const at = d.mid + t * 60000;
-        const dn = m.sessions.filter((s) => !s.night && s.day === d.key);
+        const dn = (m.all || m.sessions).filter((s) => !s.night && s.day === d.key);
         const inNap = dn.some((s) => at >= s.from && at < psWokeAt(s));
-        const inNight = !naps && m.sessions.some((s) => s.night && at >= s.from && at < psWokeAt(s));
+        const inNight = !naps && (m.all || m.sessions).some((s) => s.night && at >= s.from && at < psWokeAt(s));
         if (!dn.length && t >= 480 && t < 1080 && !inNight) return;
         of++; if (inNap || inNight) n++;
       });
@@ -530,15 +531,15 @@ Object.assign(PurdySkyCard.prototype, {
   /* =============================================================== WALK === */
 
   _skJoelWalk(N) {
-    const { sec, m, nights, past } = N;
-    const list = nights;
+    const { sec, m, past } = N;
+    const list = (m.all || m.sessions).filter((s) => s.night);
     const pick = list.find((s) => s.from === this._skNight) || m.nightSession || list[list.length - 1];
     if (!pick) return `${this._skJBack()}<div class="sk-card sk-pad"><div class="sk-empty">No night recorded yet</div></div>`;
     const i = list.indexOf(pick);
     const rail = this._skRail(pick, true);
     /* A hand-logged night says so on its Down row; a corrected one needs the chip. */
-    const mark = pick.edited ? `<span class="ps-chip">corrected</span>` : "";
-    const canFix = pick.manual ? !!this._manualStore(sec) : !!this._napEditStore(sec);
+    const mark = pick.edited ? `<span class="ps-chip">corrected</span>` : pick.archived ? `<span class="ps-chip">archived</span>` : "";
+    const canFix = !pick.archived && (pick.manual ? !!this._manualStore(sec) : !!this._napEditStore(sec));
     const name = pick.active ? "Tonight" : `${skDayName(pick.from, true)} night`;
     return `${this._skJBack()}<div class="sk-ttl"><h1>Night</h1></div>
       <div class="sk-nightwrap" id="sk-nightwrap">

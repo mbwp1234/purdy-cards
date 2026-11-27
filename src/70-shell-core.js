@@ -2111,6 +2111,7 @@ class PurdyShellCard extends PcBaseCard {
       manualSessions: psManualSessions, mergeManual: psMergeManual,
       parseAway: psParseAway, writeAway: psWriteAway,
       wokeAt: psWokeAt,
+      logEncode: psLogEncode, logDecode: psLogDecode, logIndex: psLogIndex, logMerge: psLogMerge,
       /* Skylight's Joel pages (88e) — read at call time, after the whole bundle has run. */
       joelWakes: skjWakes, joelPages: SKJ_PAGES,
       weatherDays: psWeatherDays, weatherStats: psWeatherStats, weatherFc: psWeatherFc,
