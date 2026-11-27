@@ -11775,6 +11775,18 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     !/\.sk-bar\.pilled \.sk-pills \{[^}]*height/.test(skCss) && !/\.sk-bar\.pilled \{[^}]*(height|padding)/.test(skCss));
   check('the mini bar steps aside with paint only, never a margin', () =>
     ['.sk-mini', '.sk-mini.slim', '.sk-mini.np'].every((sel) => { const r = cssRule(sel); return r != null && !/margin/.test(r); }));
+  /* v1.113.2 — six pills on a phone that fits four: the row scrolled
+   * sideways with nothing to say more were there. It wraps, and the bar's
+   * ground follows the measured height of the lit pills. */
+  check('the pill row wraps rather than scrolling sideways', () => {
+    const r = cssRule('.sk-pills');
+    return !!r && /flex-wrap: wrap/.test(r) && !/overflow/.test(r) && !/height:/.test(r);
+  });
+  check('an unlit pill takes no room, so it cannot start a row', () =>
+    /\.sk-pill \{[^}]*margin: 0;/.test(skCss) && !/gap/.test(cssRule('.sk-pills') || 'gap'));
+  check('the bar ground grows to the measured pill rows', () =>
+    /\.sk-bar\.pilled \.sk-barbg \{ bottom: calc\(-1 \* var\(--sk-pillh/.test(skCss) &&
+    /this\._skPillFit\(root, bar, any\)/.test(skSrc) && /_skPillH \|\| 46/.test(skSrc));
   check('a pill has a gap between on and off', () => /was \? b < line \+ \d+ : b < line/.test(skSrc));
   check('the mini bar measures direction from where it last turned, per view', () => {
     const f = skSrc.slice(skSrc.indexOf('  _skFrame() {'), skSrc.indexOf('  _skCover() {'));

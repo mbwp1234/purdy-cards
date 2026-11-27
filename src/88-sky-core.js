@@ -1419,7 +1419,7 @@ class PurdySkyCard extends PurdyShellCard {
         temp.style.opacity = String(1 - skClamp((y - 120) / 140));
       }
       /* Cards fold into pills as they pass under the bar. */
-      let any = false;
+      let any = false, flipped = false;
       root.querySelectorAll("#sk-home [data-skc]").forEach((c) => {
         const key = c.dataset.skc;
         const pill = root.querySelector(`.sk-pill[data-skpill="${key}"]`);
@@ -1430,10 +1430,16 @@ class PurdySkyCard extends PurdyShellCard {
         const was = pill.classList.contains("on");
         const b = c.getBoundingClientRect().bottom, line = barR.top + 112;
         const on = was ? b < line + 16 : b < line;
-        if (was !== on) pill.classList.toggle("on", on);
+        if (was !== on) { pill.classList.toggle("on", on); flipped = true; }
         if (on) any = true;
       });
       if (bar.classList.contains("pilled") !== any) bar.classList.toggle("pilled", any);
+      this._skPillFit(root, bar, any);
+      /* A pill that just lit is still growing; measure again once it has. */
+      if (flipped) {
+        clearTimeout(this._skPillT);
+        this._skPillT = setTimeout(() => { const r = this.shadowRoot, b = r && r.getElementById("sk-bar"); if (b) this._skPillFit(r, b, b.classList.contains("pilled")); }, 400);
+      }
     } else {
       const ttl = root.querySelector(".sk-view.on .sk-ttl");
       const tr = ttl ? ttl.getBoundingClientRect() : null;
@@ -1543,13 +1549,31 @@ class PurdySkyCard extends PurdyShellCard {
     }
   }
 
+  /* How tall the pill row is when it wraps: the foot of the lowest LIT pill,
+     plus the 12px the single row always had under it. Written onto the bar as
+     --sk-pillh (the ground grows to cover it) and kept for _skCover. */
+  _skPillFit(root, bar, any) {
+    const row = root.getElementById("sk-pills");
+    let h = 46;
+    if (any && row && row.getBoundingClientRect) {
+      const top = row.getBoundingClientRect().top;
+      let foot = 0;
+      row.querySelectorAll(".sk-pill.on").forEach((p) => { foot = Math.max(foot, p.getBoundingClientRect().bottom - top); });
+      h = Math.max(46, Math.round(foot) + 12);
+    }
+    if (this._skPillH !== h) {
+      this._skPillH = h;
+      bar.style.setProperty("--sk-pillh", `${h}px`);
+    }
+  }
+
   /* How much of the top of the screen the bar covers: the bar, plus the pill
      row hanging under it when there is one. Its BOTTOM, not its height — the
      bar is translated down by the inset. */
   _skCover() {
     const bar = this.shadowRoot && this.shadowRoot.getElementById("sk-bar");
     if (!bar || !bar.getBoundingClientRect) return 100;
-    return Math.max(0, bar.getBoundingClientRect().bottom) + (bar.classList.contains("pilled") && !this._skHas("tab") ? 46 : 0);
+    return Math.max(0, bar.getBoundingClientRect().bottom) + (bar.classList.contains("pilled") && !this._skHas("tab") ? (this._skPillH || 46) : 0);
   }
 
   /* The notch, measured, against what already covers it. Two numbers:
