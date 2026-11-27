@@ -680,7 +680,7 @@ Object.assign(PurdySkyCard.prototype, {
         <div><span class="sk-sitbar">${avg == null ? "" : `<i style="width:${(Math.min(1, avg / 30) * 100).toFixed(1)}%"></i>`}</span><b>${avg == null ? "—" : `${Math.round(avg)}<small>m</small>`}</b><span>avg stay</span></div>
         <div><span class="sk-sitbar">${usual == null ? "" : `<i class="dot" style="left:${(usual / 14.4).toFixed(1)}%"></i>`}</span><b>${usualTs == null ? "—" : psEsc(skClk(usualTs).replace(/\s?[AP]M$/i, ""))}</b><span>arrives</span></div></div>`;
     /* The trip, one row per day on a 24h track. */
-    const pct = (t, d0) => ((t - d0) / 864e4).toFixed(2);
+    const pct = (t, d0) => ((t - d0) / 864e3).toFixed(2);
     const rows = days.map((d) => {
       const dow = new Date(d.t + 12 * 3600000).toLocaleDateString([], { weekday: "short" }).slice(0, 2);
       if (d.future) return `<div class="sk-sitrow fut"><span>${psEsc(dow)}</span><span class="sk-sittr"></span><span></span></div>`;

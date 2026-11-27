@@ -11619,6 +11619,11 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
         /sk-sittile/.test(tile) && /data-skto="sk-c-sitter"/.test(tile) && /h ago/.test(tile) && /Sitter · 20m/.test(tile) && /sk-sittile/.test(tiles) &&
         /Here now/.test(here) && /class="cap live"/.test(here) && /sk-sittile lit/.test(hereTile) && /<b>10<\/b><small>min/.test(hereTile) &&
         house.lastIndexOf('sk-c-sitter') > house.lastIndexOf('data-sheet="notifications"') &&
+        /* Marks sit at their time of day on a 0–100% track (a 10x divisor once
+           crowded every visit and the now tick into the first tenth). */
+        (() => { const m = /class="now" style="left:([0-9.]+)%/.exec(done); const d = new Date();
+          const want = (d.getHours() * 60 + d.getMinutes()) / 14.4; return m && Math.abs(Number(m[1]) - want) < 1; })() &&
+        /\.sk-pips\.sk-sitpips i\.on/.test(fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8')) &&
         ids.every((id) => watched.indexOf(id) >= 0) && none === '';
     } finally {
       sk._config = cfg;
