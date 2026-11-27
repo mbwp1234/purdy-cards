@@ -11688,9 +11688,15 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
         /data-sklkr="y" aria-selected="true"/.test(year) && /sk-lkchart wait/.test(year) &&
         /sk-lake/.test(via) &&
         /sk-lkchart wait/.test(allWait) && /data-sklkr="y5"[^>]*>5Y</.test(allWait) && /data-sklkr="all"[^>]*>All</.test(allWait) &&
-        /class="ar band"/.test(all) && /sk-lkscroll more" data-sklkscroll="all"/.test(all) && /class="sk-lkchart wide"[^>]*width="(\d+)"/.test(all) &&
-        Number(/class="sk-lkchart wide"[^>]*width="(\d+)"/.exec(all)[1]) > 326 * 5 && /class="tk"/.test(all) && /sk-lkrefs[^]*FULL 795/.test(all) && /scrolls back in time/.test(all) &&
-        !/sk-lkscroll more/.test(sheet) && /FULL 795/.test(sheet) && new RegExp('>' + (new Date(mo[0].t).getFullYear() + 1) + '</text>').test(all) && /since \d{4}/.test(all) &&
+        /class="ar band"/.test(all) && /data-scrub="lake"><div class="ps-cross" hidden>/.test(all) && /viewBox="0 -4 326 176"/.test(all) && /class="tk"/.test(all) && /sk-lkrefs[^]*FULL 795/.test(all) &&
+        (all.match(/class="ax"/g) || []).length <= 8 && /data-readout="lake"/.test(sheet) && /FULL 795/.test(sheet) &&
+        /* The readout: the nearest REAL point (not the thinned line), with its span and an ≈ before the estimate ended. */
+        (() => { sk._lakeData = { rk: 'all', t0: mo[0].t, t1: now, pts: mo, est: now, band: true };
+          const r0 = sk._skLakeReadout(0), r1 = sk._skLakeReadout(1);
+          sk._lakeData = { rk: 'w', t0: now - 7 * 864e5, t1: now, pts: [{ t: now - 3600e3, v: 791.5 }], est: null, band: false };
+          const rw = sk._skLakeReadout(0.5);
+          return new RegExp('<b>≈' + mo[0].v.toFixed(2) + '</b>').test(r0) && /sk-lkspan">\d{3}\.\d–\d{3}\.\d/.test(r0) && new RegExp(String(new Date(mo[0].t).getFullYear())).test(r0) &&
+            new RegExp('<b>≈' + mo[mo.length - 1].v.toFixed(2) + '</b>').test(r1) && /<b>791\.50<\/b>/.test(rw) && !/≈/.test(rw) && !/sk-lkspan/.test(rw); })() && new RegExp('>' + (new Date(mo[0].t).getFullYear() + 1) + '</text>').test(all) && /since \d{4}/.test(all) &&
         /would not load — nope/.test(y5err) &&
         /class="ln est"/.test(est) && /class="ln"/.test(est) && />≈1\.6 ft · 2d/.test(est) && /earlier part estimated/.test(est) &&
         !/ln est/.test(sheet) && !/≈/.test(sheet) &&
@@ -11702,12 +11708,12 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       ids.forEach((id, i) => { if (saved[i]) st[id] = saved[i]; else delete st[id]; });
     }
   })());
-  check('the lake chart is the Skylight scroller: plain overflow-x, contained, no touch-action, and it opens at today', (() => {
+  check('the lake chart reads back through the shell scrub, not a sideways scroller', (() => {
     const css = fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8');
-    const blk = (/\.sk-lkscroll \{[^}]*\}/.exec(css) || [''])[0];
     const lk = fs.readFileSync(new URL('../src/88f-sky-lake.js', import.meta.url), 'utf8');
-    return /overflow-x: auto/.test(blk) && /overscroll-behavior-x: contain/.test(blk) && !/touch-action/.test(blk) &&
-      !/touch-action:/.test(lk) && /el\.scrollLeft = Math\.max\(0, el\.scrollWidth - el\.clientWidth - back\)/.test(lk) && /this\._skLkPos = null/.test(lk);
+    const core = fs.readFileSync(new URL('../src/70-shell-core.js', import.meta.url), 'utf8');
+    return !/sk-lkscroll/.test(css + lk) && /data-scrub="lake"/.test(lk) && /data-readout="lake"/.test(lk) &&
+      /kind === "lake"/.test(core) && /this\._skLakeReadout\(f\)/.test(core);
   })());
   check('the server pages are reachable from a Home tile, with power and parity actions', (() => {
     const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');

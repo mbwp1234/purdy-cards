@@ -1998,6 +1998,10 @@ class PurdyShellCard extends PcBaseCard {
           html = `<b>${new Date(near || t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</b>` +
             `<span><i style="background:${phase[0]}"></i>${phase[1]}</span>` +
             `<span>${psDur(into)} in</span>`;
+        } else if (kind === "lake") {
+          /* Skylight's lake sheet: the card builds its own answer. */
+          html = this._skLakeReadout ? this._skLakeReadout(f) : null;
+          if (!html) return;
         } else {
           const d = this._hypData;
           if (!d) return;
