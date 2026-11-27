@@ -395,6 +395,16 @@ const SK_STYLES = `
       .sk-lkchip ha-icon { --mdc-icon-size: 14px; }
       .sk-lkseg { align-self: stretch; }
       .sk-lkchart { display: block; width: 100%; height: auto; overflow: visible; }
+      .sk-lkchart.wide { width: auto; max-width: none; }
+      .sk-lkwrap { position: relative; }
+      .sk-lkscroll { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+      .sk-lkscroll::-webkit-scrollbar { display: none; }
+      .sk-lkscroll.more { -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px); mask-image: linear-gradient(90deg, transparent, #000 28px); }
+      .sk-lkrefs { position: absolute; inset: 0; pointer-events: none; }
+      .sk-lkrefs span { position: absolute; left: 0; transform: translateY(-100%); padding: 0 4px 0 0; border-radius: 4px;
+                        background: color-mix(in srgb, var(--sk-card) 82%, transparent);
+                        color: var(--ps-dim); font-size: var(--pc-fs-xs); font-weight: 600; letter-spacing: .04em; }
+      .sk-lkchart .tk { stroke: var(--ps-track); stroke-width: 1; }
       .sk-lkchart.wait { aspect-ratio: 326 / 176; border-radius: 12px; background: var(--ps-track); opacity: .5; }
       .sk-lkchart rect.hatch { fill: url(#sk-lkh); }
       .sk-lkchart #sk-lkh path { stroke: var(--ps-track); stroke-width: 2; }
@@ -407,7 +417,7 @@ const SK_STYLES = `
       .sk-lkchart .full { stroke: var(--ps-dim); stroke-width: 1; stroke-dasharray: 3 4; }
       .sk-lkchart .norm { stroke: var(--ps-track); stroke-width: 1; }
       .sk-lkchart .flt { stroke: var(--ps-warn); stroke-width: 1; stroke-dasharray: 3 4; }
-      .sk-lkchart .rl, .sk-lkchart .ax { fill: var(--ps-dim); font-size: var(--pc-fs-xs); font-weight: 600; letter-spacing: .04em; }
+      .sk-lkchart .ax { fill: var(--ps-dim); font-size: var(--pc-fs-xs); font-weight: 600; letter-spacing: .04em; }
       .sk-lkst3 { margin-top: 0; }
 
       /* ---- server card ---- */
