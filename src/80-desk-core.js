@@ -77,6 +77,7 @@ const PD_BORROW = [
   "_collectWatched", "_historyEntities", "_startHistory", "_fetchHistory", "_fetchEvents",
   /* nursery — the derivation, the fetch and the single clock the fixtures pin */
   "_nurserySection", "_startNursery", "_fetchNursery", "_nowMs", "_nurserySessions",
+  "_sleepLogEntity", "_fetchSleepLog", "_nurseryArchive", "_syncSleepLog",
   /* The corrections store. `_nurserySessions` applies it, so leaving these
      behind would have thrown out of the borrowed method the moment a nursery
      panel rendered — and more quietly, the desk would have gone on showing the

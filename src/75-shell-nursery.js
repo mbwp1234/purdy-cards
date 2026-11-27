@@ -1092,6 +1092,105 @@ function psNurseryNorms(sessions, opts) {
   };
 }
 
+/* ---- the permanent log ----------------------------------------------------
+ *
+ * The recorder keeps about ten days, so everything above is derived from a
+ * window that slides: a night three weeks ago is not lost, it was never kept.
+ * The log is a `todo` list (local_todo), one item per FINISHED session, written
+ * by the card the first time it sees one. A to-do list because it is the one
+ * store in Home Assistant a card can append to, read back in full and edit in
+ * place, with no 255-character cap and no retention.
+ *
+ * Authority is split by age. While the recorder still holds a session the
+ * derivation is the truth and the log item is kept in step with it — a
+ * correction made on Tuesday rewrites Tuesday's item. Once the recorder has
+ * forgotten it, the item IS the record, and the card reads it back as a
+ * session of the same shape. Items are marked completed as they are written,
+ * so the list reads as an archive rather than nine hundred open tasks.
+ *
+ * One item per session, keyed by its start minute. Two phones open at once can
+ * both write the same night; reading keeps the newest per key, so a duplicate
+ * costs a line in the list and nothing on screen.
+ *
+ * The description is "v1 " + JSON, in minutes, short keys:
+ *   s start · e woke · k n|p · a asleep · st settle · w wake-ups (absent =
+ *   unknown) · wp a floor · ev wake-ups as offsets from s · ls longest
+ *   stretch · src h(atch)|m(anual) · ed corrected · pl a(way)
+ */
+function psLogEncode(s, opts) {
+  const o = opts || {};
+  const min = (t) => Math.round(t / 60000);
+  const from = min(s.from), woke = min(psWokeAt(s));
+  const d = { s: from, e: woke, k: s.night ? "n" : "p", a: s.asleepMinutes };
+  if (s.settleMinutes) d.st = s.settleMinutes;
+  if (s.interventions != null) d.w = s.interventions;
+  if (s.blindMin || s.wakesPlus) d.wp = 1;
+  if ((s.events || []).length) d.ev = s.events.map((t) => min(t) - from);
+  if (s.longestStretch != null) d.ls = s.longestStretch;
+  d.src = s.manual ? "m" : "h";
+  if (s.edited) d.ed = 1;
+  if (o.away) d.pl = "a";
+  const when = new Date(s.from);
+  const summary = `${s.night ? "Night" : "Nap"} · ${when.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} · ${
+    when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} · ${psHM(s.asleepMinutes)}`;
+  return { key: from, summary, description: "v1 " + JSON.stringify(d), data: d };
+}
+
+/* An item back into a session the rest of the card already understands. What
+   was never stored stays null — an archived night with no count is "?", never
+   an undisturbed one. */
+function psLogDecode(item, opts) {
+  const desc = item && item.description;
+  if (!desc || desc.slice(0, 3) !== "v1 ") return null;
+  let d;
+  try { d = JSON.parse(desc.slice(3)); } catch (e) { return null; }
+  if (!d || !Number.isFinite(d.s) || !Number.isFinite(d.e) || d.e < d.s) return null;
+  const morning = ((opts || {}).morning_hour == null ? 5 : opts.morning_hour);
+  const from = d.s * 60000, to = d.e * 60000;
+  const night = d.k === "n";
+  const anchor = new Date(from);
+  if (night && anchor.getHours() < morning) anchor.setDate(anchor.getDate() - 1);
+  const settle = Number.isFinite(d.st) ? d.st : 0;
+  return {
+    from, to, wokeAt: to, active: false, splits: 1,
+    minutes: Math.round((to - from) / 60000),
+    night, day: psDayKey(anchor),
+    interventions: Number.isFinite(d.w) ? d.w : null,
+    wakesPlus: !!d.wp,
+    events: Array.isArray(d.ev) ? d.ev.map((m) => from + m * 60000) : [],
+    doorAt: [],
+    settledAt: from + settle * 60000, settleMinutes: settle,
+    asleepMinutes: Number.isFinite(d.a) ? d.a : Math.round((to - from) / 60000) - settle,
+    hadExit: true,
+    longestStretch: Number.isFinite(d.ls) ? d.ls : null,
+    manual: d.src === "m",
+    edited: !!d.ed,
+    away: d.pl === "a",
+    archived: true,
+    logKey: d.s,
+  };
+}
+
+/* The newest item per start minute: a second phone's duplicate, or an item
+   rewritten after a correction, never draws twice. */
+function psLogIndex(items) {
+  const by = {};
+  (items || []).forEach((it) => {
+    const s = psLogDecode(it);
+    if (!s) return;
+    const prev = by[s.logKey];
+    if (!prev || String(it.uid) > String(prev.item.uid)) by[s.logKey] = { item: it, session: s };
+  });
+  return by;
+}
+
+/* Archived sessions the live window does not cover, joined to it. Anything
+   that overlaps a live session gives way: the live one is the derivation. */
+function psLogMerge(live, archived) {
+  const add = (archived || []).filter((a) => !(live || []).some((l) => l.from < a.to && a.from < (l.active ? Infinity : psWokeAt(l))));
+  return (live || []).concat(add).sort((a, b) => a.from - b.from);
+}
+
 Object.assign(PurdyShellCard.prototype, {
 
   /* A longer window than the shared 26h fetch, because this section is about
@@ -1142,11 +1241,85 @@ Object.assign(PurdyShellCard.prototype, {
       this._nurseryErr = null;
       this._last = null;
       this._render();
+      /* Borrowed by the desk, which carries no log: guard rather than assume. */
+      if (typeof this._fetchSleepLog === "function") this._fetchSleepLog();
     } catch (e) {
       this._nurseryErr = (e && e.message) || "recorder did not answer";
       this._last = null;
       this._render();
     }
+  },
+
+  /* --- the permanent log (see psLogEncode) --------------------------------- */
+  _sleepLogEntity(sec) {
+    const l = sec && sec.log;
+    return typeof l === "string" ? l : (l && l.entity) || null;
+  },
+
+  async _fetchSleepLog() {
+    const sec = this._nurserySection();
+    const ent = this._sleepLogEntity(sec);
+    if (!ent || !this._hass || !this._hass.callWS) return;
+    try {
+      const res = await this._hass.callWS({ type: "todo/item/list", entity_id: ent });
+      this._sleepLog = { items: (res && res.items) || [], at: Date.now() };
+      this._sleepLogIdx = psLogIndex(this._sleepLog.items);
+      this._sleepLogErr = null;
+      this._last = null;
+      this._render();
+      this._syncSleepLog();
+    } catch (e) {
+      this._sleepLogErr = (e && e.message) || "log did not answer";
+    }
+  },
+
+  /* Archived sessions, decoded. Empty until the list has been read once. */
+  _nurseryArchive() {
+    return Object.values(this._sleepLogIdx || {}).map((x) => x.session);
+  },
+
+  /* Write what the log is missing and correct what it has wrong, for every
+     finished session the recorder still holds. One pass at a time; a write
+     is followed by one re-read. A session must have been over for twenty
+     minutes, so a nap whose Hatch is restarted after a short gap is not
+     archived as two. */
+  async _syncSleepLog() {
+    const sec = this._nurserySection();
+    const ent = this._sleepLogEntity(sec);
+    if (!ent || !this._nursery || !this._sleepLog || this._sleepLogBusy || !this._hass || !this._hass.callService) return;
+    this._sleepLogBusy = true;
+    let wrote = 0;
+    try {
+      const now = this._nowMs();
+      const idx = this._sleepLogIdx || {};
+      const live = this._nurserySessions(sec).filter((s) => !s.active && psWokeAt(s) < now - 20 * 60000);
+      for (const s of live) {
+        if (wrote >= 40) break;
+        const enc = psLogEncode(s, { away: this._isAwayDay(sec, s.day) });
+        const have = idx[enc.key];
+        if (!have) {
+          await this._hass.callService("todo", "add_item", { entity_id: ent, item: enc.summary, description: enc.description });
+          wrote++;
+        } else if (have.item.description !== enc.description || have.item.summary !== enc.summary || have.item.status !== "completed") {
+          await this._hass.callService("todo", "update_item", { entity_id: ent, item: have.item.uid, rename: enc.summary, description: enc.description, status: "completed" });
+          wrote++;
+        }
+      }
+      /* Anything left open — a write from this pass, or another phone's — is
+         filed as done, so the list stays an archive. */
+      for (const it of (this._sleepLog.items || [])) {
+        if (wrote >= 80) break;
+        if (it.status !== "completed" && psLogDecode(it)) {
+          await this._hass.callService("todo", "update_item", { entity_id: ent, item: it.uid, status: "completed" });
+          wrote++;
+        }
+      }
+    } catch (e) {
+      this._sleepLogErr = (e && e.message) || "log write failed";
+    } finally {
+      this._sleepLogBusy = false;
+    }
+    if (wrote) setTimeout(() => this._fetchSleepLog(), 1500);
   },
 
   /* One clock for the whole render path. Every nap fixture in the suite was
@@ -2648,7 +2821,12 @@ Object.assign(PurdyShellCard.prototype, {
     const statusR = live
       ? (live.hadExit ? `left him ${psClock(live.settledAt)}` : "still settling…")
       : (stats.bedMean != null ? `bedtime ~${clock(stats.bedMean)}` : "");
-    return { h, playing, doorOpen, loaded, err, sessions, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR };
+    /* The archive reaches only the surfaces that look further back than the
+       recorder (Skylight's Timeline and Weeks). Every live figure above —
+       the predictions, the bands, the averages — stays on the live window. */
+    const archive = this._nurseryArchive ? this._nurseryArchive() : [];
+    const all = archive.length ? psLogMerge(sessions, archive) : sessions;
+    return { h, playing, doorOpen, loaded, err, sessions, all, archive, stats, live, past, lastNight, nightSession, todayKey, todayNaps, napMins, catnapUnder, napTarget, canEdit, editable, edd, away, awayLabel, wifiOk, clock, chipCls, chipTxt, chipAwake, avg, maxMins, nightMins, nightNoData, noData, statusL, statusR };
   },
 
   /* The night against his own usual, in NUMBERS — what the meters place on

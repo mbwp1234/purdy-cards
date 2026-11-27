@@ -7149,6 +7149,48 @@ check('moving a hand-logged night keeps its wake-ups at the clock times they hap
   return new RegExp(`^${t - 10}~130~n~w40\\+5$`).test(s._calls[0][2].value);
 });
 
+/* ---- the permanent log (v1.105.0) ---- */
+check('a session archives and reads back the same; unknown wake-ups stay unknown', () => {
+  const H = SH.helpers, t = NT(19, 0);
+  const night = { from: t, to: t + 11 * 3600000, wokeAt: t + 11 * 3600000, settledAt: t + 18 * 60000, settleMinutes: 18,
+    asleepMinutes: 642, interventions: 2, events: [t + 3 * 3600000, t + 7 * 3600000], longestStretch: 300, night: true, day: '2026-09-23' };
+  const enc = H.logEncode(night, { away: true });
+  const back = H.logDecode({ uid: 'a', summary: enc.summary, description: enc.description });
+  const hand = H.logDecode({ uid: 'b', description: H.logEncode(Object.assign({}, night, { interventions: null, events: [], manual: true, longestStretch: null })).description });
+  return back.from === t && back.asleepMinutes === 642 && back.interventions === 2 && back.events[1] === t + 7 * 3600000
+    && back.settledAt === t + 18 * 60000 && back.away === true && back.archived === true && back.night === true
+    && hand.interventions === null && hand.longestStretch === null && hand.manual === true
+    && H.logDecode({ description: 'buy milk' }) === null;
+});
+check('the log keeps one item per start, and a live session outranks an archived one', () => {
+  const H = SH.helpers, t = NT(10, 0);
+  const nap = { from: t, to: t + 3600000, settledAt: t, settleMinutes: 0, asleepMinutes: 60, night: false, events: [] };
+  const a = H.logEncode(nap), b = H.logEncode(Object.assign({}, nap, { asleepMinutes: 55 }));
+  const idx = H.logIndex([{ uid: '1', description: a.description }, { uid: '2', description: b.description }]);
+  const old = H.logDecode({ uid: '9', description: H.logEncode(Object.assign({}, nap, { from: t - 864e5 * 20, to: t - 864e5 * 20 + 3600000 })).description });
+  const merged = H.logMerge([nap], [idx[a.key].session, old]);
+  return Object.keys(idx).length === 1 && idx[a.key].session.asleepMinutes === 55
+    && merged.length === 2 && merged[0] === old && merged[1] === nap;
+});
+/* Awaited HERE: check() runs a function it is given but would believe the promise an async one returns. */
+const logSyncOk = await (async () => {
+  const t = Math.round(NT(9, 0) / 60000);
+  const s = travelCard({ log: `${t}~60|${t + 240}~40|${Math.round(NT(14, 50) / 60000)}~a` });
+  s._config.sections[0].log = 'todo.sleeplog';
+  const calls = [];
+  s._hass.callService = async (d, sv, data) => { calls.push([d, sv, data]); };
+  const sess = s._nurserySessions(s._config.sections[0]);
+  const stale = SH.helpers.logEncode(Object.assign({}, sess.find((x) => !x.active && x.asleepMinutes === 40), { asleepMinutes: 1 }));
+  s._sleepLog = { items: [{ uid: 'u1', summary: stale.summary, description: stale.description, status: 'needs_action' }] };
+  s._sleepLogIdx = SH.helpers.logIndex(s._sleepLog.items);
+  await s._syncSleepLog();
+  const adds = calls.filter((c) => c[1] === 'add_item'), ups = calls.filter((c) => c[1] === 'update_item');
+  return adds.length === 1 && /"a":60/.test(adds[0][2].description) && adds[0][2].entity_id === 'todo.sleeplog'
+    && ups.some((c) => c[2].item === 'u1' && /"a":40/.test(c[2].description) && c[2].status === 'completed')
+    && !calls.some((c) => /"e":/.test(c[2].description || '') && /~a/.test(c[2].description || ''));
+})();
+check('the sync writes what is missing, corrects what changed, files it as done, and leaves a running session alone', logSyncOk === true);
+
 check('the sheet shows Stop, not Start, while a log is running', (() => {
   const s = travelCard({ log: `${Math.round(NT(14, 0) / 60000)}~a` });
   s._openNurseryLog();
