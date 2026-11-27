@@ -303,7 +303,7 @@ Object.assign(PurdySkyCard.prototype, {
       const A = SK_ARC;
       let cap = "";
       for (let x = 0; x <= A.W; x += 8) cap += (x ? "L" : "M") + x + " " + (A.base - 3 - 2.4 * Math.sin(x / 23) - 1.6 * Math.sin(x / 9 + 1)).toFixed(1);
-      ground.push(`<svg viewBox="0 0 ${A.W} ${A.H}" preserveAspectRatio="none"><path d="${cap} L${A.W} ${A.H} L0 ${A.H} Z" class="sk-bank"/><path d="${cap}" class="sk-cap"/></svg>`);
+      ground.push(`<svg viewBox="0 0 ${A.W} ${A.H}" preserveAspectRatio="none"><path d="${cap} L${A.W} ${A.H} L0 ${A.H} Z" class="sk-bank"/><path d="${cap}" class="sk-bankcap"/></svg>`);
     }
     if (S.christmas) {
       const lit = this._skTreeLit();
@@ -373,7 +373,7 @@ const SK_SKY_STYLES = `
       :host([data-sk-w~="tab"]) .sk-fxarc { bottom: 62px; }
       .sk-fxarc svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
       .sk-bank { fill: rgba(244,248,255,.16); }
-      .sk-cap { fill: none; stroke: #F4F8FF; stroke-opacity: .85; stroke-width: 2.4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+      .sk-bankcap { fill: none; stroke: #F4F8FF; stroke-opacity: .85; stroke-width: 2.4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
       .sk-wire { fill: none; stroke: #2F6B4A; stroke-opacity: .95; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
       .sk-bulb { position: absolute; width: 6px; height: 8px; margin-left: -3px; border-radius: 50% 50% 45% 45% / 40% 40% 60% 60%;
                  background: var(--c); box-shadow: 0 0 6px 2px color-mix(in srgb, var(--c) 55%, transparent), 0 0 14px 4px color-mix(in srgb, var(--c) 20%, transparent);

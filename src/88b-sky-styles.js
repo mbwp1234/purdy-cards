@@ -359,7 +359,7 @@ const SK_STYLES = `
       .sk-tv { display: flex; align-items: baseline; gap: 2px; }
       .sk-tv b { font-size: var(--pc-fs-4xl); font-weight: 300; letter-spacing: -.035em; line-height: 1; }
       .sk-tv small { font-size: var(--pc-fs-lg); color: var(--ps-dim); font-weight: 500; margin-left: 2px; }
-      .sk-tl { font-size: var(--pc-fs-sm); color: var(--ps-dim); font-weight: 550; overflow-wrap: anywhere; }
+      .sk-tlab { font-size: var(--pc-fs-sm); color: var(--ps-dim); font-weight: 550; overflow-wrap: anywhere; }
       .sk-pips { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 70%; }
       .sk-pips i { width: 8px; height: 8px; border-radius: 4px; background: var(--ps-track); }
       .sk-pips i.on { background: var(--g); box-shadow: 0 0 6px var(--g); }
@@ -818,7 +818,7 @@ const SK_STYLES = `
       .sk-dsk .sk-mbar { height: 14px; border-radius: 7px; }
       .sk-dsk .sk-mbar.empty { background: none; border: 1.5px dashed var(--ps-track); }
       .sk-dsk .tp { text-align: right; font-size: var(--pc-fs-sm); font-weight: 650; color: var(--ps-muted); } .sk-dsk .tp.hot { color: var(--ps-warn); }
-      .sk-hl { font-size: var(--pc-fs-md); font-weight: 650; } .sk-hl.good { color: var(--ps-good); } .sk-hl.bad { color: var(--ps-bad); }
+      .sk-dhl { font-size: var(--pc-fs-md); font-weight: 650; } .sk-dhl.good { color: var(--ps-good); } .sk-dhl.bad { color: var(--ps-bad); }
       .sk-shares { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
       .sk-shares span { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 16px; background: var(--sk-card2); font-size: var(--pc-fs-sm); font-weight: 600; color: var(--ps-muted); }
       .sk-shares small { color: var(--ps-dim); font-weight: 500; }

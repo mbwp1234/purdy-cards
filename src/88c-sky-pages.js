@@ -728,7 +728,7 @@ Object.assign(PurdySkyCard.prototype, {
           frac > 0 ? `<circle cx="22" cy="22" r="${R}" class="fl" stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}"/>` : ""}</svg>
           <ha-icon icon="mdi:cat"></ha-icon></span><span class="sk-pips sk-sitpips">${this._skSitPips(days)}</span></span>
         <span class="sk-tv">${num}</span>
-        <span class="sk-tl">${psEsc(lbl)}</span></button>`;
+        <span class="sk-tlab">${psEsc(lbl)}</span></button>`;
   },
 
   _skRing(v, size, stroke, col) {
@@ -965,7 +965,7 @@ Object.assign(PurdySkyCard.prototype, {
       const name = d.key.replace(/^disk/, "Disk ").replace(/_/g, " ").replace(/\b([a-z])/g, (m) => m.toUpperCase());
       const bar = !d.present ? `<span class="sk-mbar empty"></span>`
         : d.hasUsage ? `<span class="sk-mbar${d.usage == null ? " none" : ""}"><i style="width:${d.usage || 0}%"></i></span>`
-          : `<span class="sk-hl ${/PASS/i.test(d.health) ? "good" : "bad"}">${psEsc(this._humanize(String(d.health).toLowerCase()))}</span>`;
+          : `<span class="sk-dhl ${/PASS/i.test(d.health) ? "good" : "bad"}">${psEsc(this._humanize(String(d.health).toLowerCase()))}</span>`;
       return `<div class="sk-dsk"><span class="nm">${psEsc(name)}<small>${psEsc(sub(d))}</small></span>${bar}<span class="tp${t != null && t >= 45 ? " hot" : ""}">${!d.present ? "—" : t == null ? "" : Math.round(t) + "°C"}</span></div>`;
     };
     const data = disks.filter((d) => /^disk\d/.test(d.key));

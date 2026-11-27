@@ -189,7 +189,7 @@ Object.assign(PurdySkyCard.prototype, {
         <span class="sk-lkcol">
           <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="mdi:waves"></ha-icon></span>${arrow}</span>
           <span class="sk-tv">${v == null ? `<b class="ps-nodata">—</b>` : `<b>${skLakeFt(gap)}</b><small>ft</small>`}</span>
-          <span class="sk-tl">${psEsc(name)}${word ? ` · ${word}` : ""}</span>
+          <span class="sk-tlab">${psEsc(name)}${word ? ` · ${word}` : ""}</span>
         </span>${this._skLakePost(v, c)}</button>`;
   },
 

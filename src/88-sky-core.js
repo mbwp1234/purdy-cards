@@ -1032,7 +1032,7 @@ class PurdySkyCard extends PurdyShellCard {
           <span class="sk-trow"><span class="sk-ico" style="--c:var(--sk-lamp)"><ha-icon icon="mdi:lightbulb-outline"></ha-icon></span>
             <span class="sk-pips">${ls.map((l) => `<i class="${l.gone ? "x" : l.on ? "on" : ""}" style="--g:rgb(${skKelvin(l.kelvin || 2700)})"></i>`).join("")}</span></span>
           <span class="sk-tv"><b>${lit.length}</b><small>on</small></span>
-          <span class="sk-tl">${psEsc(lit.map((l) => l.name).join(" · ") || "All off")}</span></button>`);
+          <span class="sk-tlab">${psEsc(lit.map((l) => l.name).join(" · ") || "All off")}</span></button>`);
     }
     const sit = this._skSitTile();
     if (sit) tiles.push(sit);
@@ -1053,7 +1053,7 @@ class PurdySkyCard extends PurdyShellCard {
             ring == null ? "" : `<circle cx="22" cy="22" r="${R}" class="fl" stroke-dasharray="${(C * skClamp(ring / 100)).toFixed(1)} ${C.toFixed(1)}"/>`}</svg>
             <ha-icon icon="mdi:robot-vacuum"></ha-icon></span>${worn.length ? `<span class="sk-warn" title="${psEsc(worn[0].label)} ${Math.round(worn[0].v)}%"></span>` : ""}</span>
           <span class="sk-tv">${running && prog != null ? `<b>${Math.round(prog)}</b><small>%</small>` : bat == null ? `<b class="ps-nodata">—</b>` : `<b>${Math.round(bat)}</b><small>%</small>`}</span>
-          <span class="sk-tl">${psEsc(v.name || "Vacuum")} · ${psEsc(running ? (state === "returning" ? "returning" : "cleaning") : this._humanize(state))}</span></button>`);
+          <span class="sk-tlab">${psEsc(v.name || "Vacuum")} · ${psEsc(running ? (state === "returning" ? "returning" : "cleaning") : this._humanize(state))}</span></button>`);
     }
     const l = crew && crew.litter;
     if (l && (l.waste_drawer || l.litter_level)) {
@@ -1062,7 +1062,7 @@ class PurdySkyCard extends PurdyShellCard {
       tiles.push(`<button class="sk-tile" type="button" data-sktab="house" data-skto="sk-c-litter" aria-label="${psEsc(l.name || "Litter box")}, drawer ${dr == null ? "no reading" : Math.round(dr) + "%"}">
           <span class="sk-trow"><span class="sk-tanks">${bar(dr, "dr")}${bar(lv, "lv")}</span><span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span></span>
           <span class="sk-tv">${dr == null ? `<b class="ps-nodata">—</b>` : `<b>${Math.round(dr)}</b><small>%</small>`}</span>
-          <span class="sk-tl">Drawer${lv == null ? "" : ` · litter ${Math.round(lv)}%`}</span></button>`);
+          <span class="sk-tlab">Drawer${lv == null ? "" : ` · litter ${Math.round(lv)}%`}</span></button>`);
     }
     const s = this._sysCfg && this._sysCfg();
     if (s) {
@@ -1075,7 +1075,7 @@ class PurdySkyCard extends PurdyShellCard {
             m.v != null && m.critical_above != null && m.v >= m.critical_above ? " bad" : m.v != null && m.warn_above != null && m.v >= m.warn_above ? " warn" : ""}"><i style="height:${m.v == null ? 0 : skClamp(m.v / 100) * 100}%"></i></span>`).join("")}</span>
             <span class="sk-ico" style="--c:var(--sk-nas)"><ha-icon icon="mdi:server"></ha-icon></span></span>
           <span class="sk-tv">${arr && arr.v != null ? `<b>${Math.round(arr.v)}</b><small>%</small>` : `<b class="ps-nodata">—</b>`}</span>
-          <span class="sk-tl">${psEsc(s.name || "Server")} · ${online ? psEsc(pcState(h, (s.docker || {}).running) || "online") : r.ok ? psEsc(String(r.st.state)) : "no data"}</span></button>`);
+          <span class="sk-tlab">${psEsc(s.name || "Server")} · ${online ? psEsc(pcState(h, (s.docker || {}).running) || "online") : r.ok ? psEsc(String(r.st.state)) : "no data"}</span></button>`);
     }
     const lake = this._skLakeTile();
     if (lake) tiles.push(lake);
@@ -1088,7 +1088,7 @@ class PurdySkyCard extends PurdyShellCard {
       if (ws && !/^(off|idle|empty|unknown|unavailable|none)$/.test(ws) && !/done|finish|complete/.test(ws)) {
         tiles.push(`<button class="sk-tile wide" type="button" data-sktab="house" data-skto="sk-c-washer">
             <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="${psEsc(w.icon || "mdi:washing-machine")}"></ha-icon></span>
-              <span class="sk-tl" style="margin-left:10px">${psEsc(w.name || "Washer")}</span><span class="ps-chip ${/done|finish|complete/.test(ws) ? "warn" : "cool"}" style="margin-left:auto"><span class="ps-dot"></span>${psEsc(this._humanize(ws))}</span></span></button>`);
+              <span class="sk-tlab" style="margin-left:10px">${psEsc(w.name || "Washer")}</span><span class="ps-chip ${/done|finish|complete/.test(ws) ? "warn" : "cool"}" style="margin-left:auto"><span class="ps-dot"></span>${psEsc(this._humanize(ws))}</span></span></button>`);
       }
     }
     return tiles.join("");
