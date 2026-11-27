@@ -596,40 +596,139 @@ Object.assign(PurdySkyCard.prototype, {
     return parts.join("");
   },
 
-  /* Sitter mode: one switch and one number. The automation that tracks the
-     visit owns every derivation (door opens in pairs, 15 min quiet, the 3h
-     backstop) and writes its answers to helpers, so this row only reads
-     them — a second "is the sitter here" rule in the card would drift from
-     the one that sends the message. `sitter: {mode, visits, last, opens,
-     arrived}`; only `mode` is required. Mid-visit the number is the live
-     minutes since the door first opened; otherwise the last visit's length,
-     and the trip's visit count as the caption. Off with no visits logged,
-     it says nothing beyond "Off". */
-  _skSitter() {
+  /* Sitter mode. The automation owns every derivation (door opens in pairs,
+     15 min quiet, the 3h backstop) and writes its answers to helpers — a
+     second "is the sitter here" rule in the card would drift from the one
+     that sends the message. `sitter: {mode, log, opens, arrived}`; `log` is
+     an input_text the automation appends to: "S<mode-on epoch>;<arrival
+     epoch>,<minutes>,<door opens>;…". Off, House carries one row to turn it
+     on and Home carries nothing; on, House carries the trip card and Home a
+     tile. */
+  _skSitData() {
     const c = this._config.sitter;
     const h = this._hass;
-    if (!c || !c.mode || !h.states[c.mode]) return "";
-    const on = h.states[c.mode].state === "on";
-    const visits = pcNum(h, c.visits), last = pcNum(h, c.last), opens = pcNum(h, c.opens);
-    const arr = c.arrived && h.states[c.arrived] ? Number(h.states[c.arrived].attributes.timestamp) : null;
-    const here = on && opens != null && opens > 0 && arr;
-    const dur = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m` : `${Math.round(m)}m`;
-    let num = "", sub;
-    if (here) {
-      const m = Math.max(0, (Date.now() / 1000 - arr) / 60);
-      num = dur(m);
-      sub = `Here now · since ${skClk(arr * 1000)}`;
-    } else if (visits) {
-      num = last ? dur(last) : "";
-      sub = `${visits} visit${visits === 1 ? "" : "s"}${last ? " · last" : ""}`;
-      if (!on) sub = `Off · ${sub}`;
-    } else sub = on ? "Waiting for the door" : "Off";
-    return `<button class="sk-card sk-rowcard sk-sitter ${on ? "on" : ""} ${here ? "here" : ""}" type="button" data-sktoggle="${psEsc(c.mode)}"
-        role="switch" aria-checked="${on}" aria-label="Sitter mode ${on ? "on" : "off"}">
-        <span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span>
-        <span class="ps-grow"><b>Sitter mode</b><small>${psEsc(sub)}</small></span>
-        ${num ? `<span class="sk-sitn">${psEsc(num)}</span>` : ""}
-        <span class="sk-sitsw" aria-hidden="true"><i></i></span></button>`;
+    if (!c || !c.mode || !h.states[c.mode]) return null;
+    const ms = h.states[c.mode];
+    const on = ms.state === "on";
+    const raw = c.log && h.states[c.log] ? String(h.states[c.log].state) : "";
+    let start = null;
+    const visits = [];
+    raw.split(";").forEach((p) => {
+      let m = /^S(\d+)$/.exec(p);
+      if (m) { start = Number(m[1]) * 1000; return; }
+      m = /^(\d+),(\d+),(\d+)$/.exec(p);
+      if (m) visits.push({ t: Number(m[1]) * 1000, m: Number(m[2]), o: Number(m[3]) });
+    });
+    if (start == null) { const lc = Date.parse(ms.last_changed); start = isFinite(lc) ? lc : null; }
+    const opens = pcNum(h, c.opens);
+    const arr = c.arrived && h.states[c.arrived] ? Number(h.states[c.arrived].attributes.timestamp) * 1000 : null;
+    const now = Date.now();
+    const live = on && opens != null && opens > 0 && arr && arr <= now ? { t: arr, o: opens, m: (now - arr) / 60000 } : null;
+    const last = visits.length ? visits[visits.length - 1] : null;
+    const since = live ? 0 : last ? (now - (last.t + last.m * 60000)) / 60000 : start != null ? (now - start) / 60000 : null;
+    return { on, start, visits, live, last, since, now };
+  },
+
+  /* One row per trip day: mode-on day through today, and one dashed day to
+     come. Capped at the last seven. */
+  _skSitDays(D) {
+    const mid = (t) => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+    const first = mid(D.start != null ? D.start : D.now), today = mid(D.now);
+    const days = [];
+    for (let t = first; t <= today; t = mid(t + 36 * 3600000)) days.push({ t, end: mid(t + 36 * 3600000), today: t === today });
+    days.push({ t: mid(today + 36 * 3600000), future: true });
+    days.forEach((d) => { d.v = d.future ? [] : D.visits.filter((v) => v.t >= d.t && v.t < d.end); });
+    return days.slice(-7);
+  },
+
+  _skSitDur(m) { return m >= 60 ? `${Math.floor(m / 60)}h${Math.round(m % 60) ? ` ${Math.round(m % 60)}m` : ""}` : `${Math.max(0, Math.round(m))}m`; },
+
+  _skSitPips(days) {
+    return days.map((d) => `<i class="${d.future ? "x" : d.v.length || (d.today && this._skSitD && this._skSitD.live) ? "on" : ""}"></i>`).join("");
+  },
+
+  _skSitter() {
+    const c = this._config.sitter;
+    const D = this._skSitData();
+    if (!D) return "";
+    const mode = psEsc(c.mode);
+    if (!D.on) {
+      return `<button class="sk-card sk-rowcard sk-sitoff" type="button" data-sktoggle="${mode}" aria-label="Turn sitter mode on">
+          <span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span>
+          <span class="ps-grow"><b>Sitter mode</b><small>Off</small></span><span class="sk-sitgo">Turn on</span></button>`;
+    }
+    this._skSitD = D;
+    const days = this._skSitDays(D);
+    const vs = D.visits;
+    /* The ring: time since anyone was in, against a day. */
+    const R = 47, C = 2 * Math.PI * R;
+    const late = D.since != null && D.since >= 1440;
+    const frac = D.live ? 1 : D.since == null ? 0 : Math.min(1, D.since / 1440);
+    const big = D.live ? this._skSitDur(D.live.m) : D.since == null ? "—" : D.since >= 60 ? `${Math.floor(D.since / 60)}<small>h</small>` : `${Math.round(D.since)}<small>m</small>`;
+    const ring = `<div class="sk-sitring${late ? " late" : ""}${D.live ? " live" : ""}">
+        <svg viewBox="0 0 108 108" width="108" height="108" aria-hidden="true"><circle cx="54" cy="54" r="${R}" class="tr"/>${
+          frac > 0 ? `<circle cx="54" cy="54" r="${R}" class="fl" stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 54 54)"/>` : ""}</svg>
+        <div><b>${D.live ? psEsc(big) : big}</b><span>${D.live ? "here now" : vs.length ? "since visit" : "no visit yet"}</span></div></div>`;
+    /* Three stats, each a picture first. A trip with no visits has no
+       average and no usual time: those read "—" and draw no mark. */
+    const avg = vs.length ? vs.reduce((a, v) => a + v.m, 0) / vs.length : null;
+    const tod = (t) => { const d = new Date(t); return d.getHours() * 60 + d.getMinutes(); };
+    const usual = vs.length ? vs.reduce((a, v) => a + tod(v.t), 0) / vs.length : null;
+    const usualTs = usual == null ? null : new Date(new Date(D.now).setHours(0, Math.round(usual), 0, 0)).getTime();
+    const stats = `<div class="sk-sitst">
+        <div><span class="sk-pips sk-sitpips">${this._skSitPips(days)}</span><b>${vs.length}</b><span>visit${vs.length === 1 ? "" : "s"}</span></div>
+        <div><span class="sk-sitbar">${avg == null ? "" : `<i style="width:${(Math.min(1, avg / 30) * 100).toFixed(1)}%"></i>`}</span><b>${avg == null ? "—" : `${Math.round(avg)}<small>m</small>`}</b><span>avg stay</span></div>
+        <div><span class="sk-sitbar">${usual == null ? "" : `<i class="dot" style="left:${(usual / 14.4).toFixed(1)}%"></i>`}</span><b>${usualTs == null ? "—" : psEsc(skClk(usualTs).replace(/\s?[AP]M$/i, ""))}</b><span>arrives</span></div></div>`;
+    /* The trip, one row per day on a 24h track. */
+    const pct = (t, d0) => ((t - d0) / 864e4).toFixed(2);
+    const rows = days.map((d) => {
+      const dow = new Date(d.t + 12 * 3600000).toLocaleDateString([], { weekday: "short" }).slice(0, 2);
+      if (d.future) return `<div class="sk-sitrow fut"><span>${psEsc(dow)}</span><span class="sk-sittr"></span><span></span></div>`;
+      const marks = [];
+      const visits = d.v.slice();
+      if (d.today && D.live) visits.push({ ...D.live, live: true });
+      if (!visits.length) {
+        const a = Math.max(d.t, D.start || d.t), b = d.today ? D.now : d.end;
+        if (b > a) marks.push(`<i class="hatch" style="left:${pct(a, d.t)}%;width:${(Number(pct(b, d.t)) - Number(pct(a, d.t))).toFixed(2)}%"></i>`);
+      }
+      visits.forEach((v) => {
+        const l = pct(v.t, d.t);
+        marks.push(`<i class="cap${v.live ? " live" : ""}" style="left:${l}%;width:max(9px,${(v.m / 14.4).toFixed(2)}%)"></i>`);
+        for (let k = 0; k < Math.min(v.o, 6); k++) marks.push(`<i class="op" style="left:calc(${l}% + ${2 + k * 5}px)"></i>`);
+      });
+      if (d.today) marks.push(`<i class="now" style="left:${pct(D.now, d.t)}%"></i>`);
+      const tot = d.v.reduce((a, v) => a + v.m, 0);
+      return `<div class="sk-sitrow${d.today ? " today" : ""}"><span>${psEsc(dow)}</span><span class="sk-sittr">${marks.join("")}</span><span>${
+        d.v.length ? psEsc(this._skSitDur(tot)) : d.today ? "" : "—"}</span></div>`;
+    }).join("");
+    const head = D.live ? "Here now" : "On";
+    return this._skCard("sitter", `<div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span><span class="sk-hn">Cat sitter</span><span class="sk-sithd">${head}</span></div>
+        <div class="sk-sittop">${ring}${stats}</div>
+        <div class="sk-sittrip" role="img" aria-label="Sitter visits this trip, one row per day">${rows}
+          <div class="sk-sitrow ax"><span></span><span><span>12a</span><span>6a</span><span>12p</span><span>6p</span></span><span></span></div></div>
+        <button class="sk-sithome" type="button" data-sktoggle="${mode}"><ha-icon icon="mdi:home-outline"></ha-icon>We're home</button>`, null, "sk-pad sk-sitter");
+  },
+
+  /* The Home tile: drawn only while sitter mode is on. */
+  _skSitTile() {
+    const D = this._skSitData();
+    if (!D || !D.on) return "";
+    this._skSitD = D;
+    const days = this._skSitDays(D);
+    const R = 19, C = 2 * Math.PI * R;
+    const late = D.since != null && D.since >= 1440;
+    const frac = D.live ? 1 : D.since == null ? 0 : Math.min(1, D.since / 1440);
+    const num = D.live ? `<b>${Math.round(D.live.m)}</b><small>min</small>`
+      : D.since == null ? `<b class="ps-nodata">—</b>`
+      : D.since >= 60 ? `<b>${Math.floor(D.since / 60)}</b><small>h ago</small>` : `<b>${Math.round(D.since)}</b><small>m ago</small>`;
+    const lbl = D.live ? "Sitter here" : D.last ? `Sitter · ${this._skSitDur(D.last.m)}` : "Sitter · no visit yet";
+    return `<button class="sk-tile sk-sittile${D.live ? " lit" : ""}${late ? " late" : ""}" type="button" data-sktab="house" data-skto="sk-c-sitter" aria-label="${psEsc(lbl)}">
+        ${D.live ? `<span class="sk-tglow sk-sitglow"></span>` : ""}
+        <span class="sk-trow"><span class="sk-ring"><svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="${R}" class="tr"/>${
+          frac > 0 ? `<circle cx="22" cy="22" r="${R}" class="fl" stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}"/>` : ""}</svg>
+          <ha-icon icon="mdi:cat"></ha-icon></span><span class="sk-pips sk-sitpips">${this._skSitPips(days)}</span></span>
+        <span class="sk-tv">${num}</span>
+        <span class="sk-tl">${psEsc(lbl)}</span></button>`;
   },
 
   _skRing(v, size, stroke, col) {

@@ -11587,27 +11587,38 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   })());
   check('the notification log is reachable from House and the bell', /data-sheet="notifications"/.test(house) &&
     /want = faults\.length \? "alerts" : notes \? "notifications"/.test(skSrc));
-  check('sitter mode: a switch row at the foot of House, reading the automation\'s helpers', (() => {
+  check('sitter mode: one row while off; a trip card on House and a Home tile while on, drawn from the visit log', (() => {
     const cfg = sk._config, st = sk._hass.states;
-    const put = (id, state, attributes = {}) => { st[id] = { entity_id: id, state: String(state), attributes, last_changed: '', last_updated: '' }; };
-    const ids = ['input_boolean.t_sit', 'counter.t_visits', 'input_number.t_last', 'counter.t_opens', 'input_datetime.t_arr'];
+    const put = (id, state, attributes = {}, lc = '') => { st[id] = { entity_id: id, state: String(state), attributes, last_changed: lc, last_updated: lc }; };
+    const ids = ['input_boolean.t_sit', 'input_text.t_log', 'counter.t_opens', 'input_datetime.t_arr'];
     const saved = ids.map((id) => st[id]);
-    sk._config = { ...cfg, sitter: { mode: ids[0], visits: ids[1], last: ids[2], opens: ids[3], arrived: ids[4] } };
+    sk._config = { ...cfg, sitter: { mode: ids[0], log: ids[1], opens: ids[2], arrived: ids[3] } };
+    const now = Date.now(), s = (ms) => Math.round(ms / 1000);
     try {
-      put(ids[0], 'off'); put(ids[1], 0); put(ids[2], 0); put(ids[3], 0); put(ids[4], '', { timestamp: 0 });
-      const off = sk._skSitter();
-      put(ids[0], 'on'); put(ids[1], 2); put(ids[2], 72);
-      const done = sk._skSitter();
-      put(ids[3], 1); put(ids[4], 'x', { timestamp: Date.now() / 1000 - 600 });
-      const here = sk._skSitter();
+      put(ids[0], 'off'); put(ids[1], ''); put(ids[2], 0); put(ids[3], '', { timestamp: 0 });
+      const off = sk._skSitter(), offTile = sk._skSitTile(), offTiles = sk._skTiles();
+      /* On, no visit yet: no average, no usual time — a dash, not a zero bar. */
+      put(ids[0], 'on'); put(ids[1], `S${s(now - 5 * 3600e3)}`);
+      const empty = sk._skSitter();
+      /* Two visits, the last ending 3h30m ago (not on the hour: s() rounds to a second). */
+      put(ids[1], `S${s(now - 50 * 3600e3)};${s(now - 27 * 3600e3)},10,2;${s(now - 3 * 3600e3 - 50 * 60e3)},20,4`);
+      const done = sk._skSitter(), tile = sk._skSitTile(), tiles = sk._skTiles();
+      /* Here now. */
+      put(ids[2], 1); put(ids[3], 'x', { timestamp: s(now - 600e3) });
+      const here = sk._skSitter(), hereTile = sk._skSitTile();
       const house = sk._skHouse();
       const watched = sk._collectWatched();
       sk._config = cfg;
-      const none = sk._skSitter();
-      return /aria-checked="false"/.test(off) && /<small>Off<\/small>/.test(off) && !/sk-sitn/.test(off) &&
-        /data-sktoggle="input_boolean\.t_sit"/.test(done) && /class="sk-sitn">1h 12m</.test(done) && /2 visits · last/.test(done) &&
-        /sk-sitter on here/.test(here) && /class="sk-sitn">10m</.test(here) && /Here now · since/.test(here) &&
-        house.lastIndexOf('sk-sitter') > house.lastIndexOf('data-sheet="notifications"') &&
+      const none = sk._skSitter() + sk._skSitTile();
+      return /data-sktoggle="input_boolean\.t_sit"/.test(off) && /Turn on/.test(off) && !/sk-sitring/.test(off) &&
+        offTile === '' && !/sk-sittile/.test(offTiles) &&
+        /no visit yet/.test(empty) && />—<\/b><span>avg stay/.test(empty) && !/class="dot"/.test(empty) && /class="hatch"/.test(empty) &&
+        /id="sk-c-sitter"/.test(done) && /<b>3<small>h<\/small><\/b><span>since visit/.test(done) && /<b>2<\/b><span>visits/.test(done) &&
+        /<b>15<small>m<\/small><\/b><span>avg stay/.test(done) && /class="dot"/.test(done) && (done.match(/class="cap"/g) || []).length === 2 &&
+        (done.match(/class="op"/g) || []).length === 6 && /class="now"/.test(done) && /sk-sitrow fut/.test(done) && /We're home/.test(done) &&
+        /sk-sittile/.test(tile) && /data-skto="sk-c-sitter"/.test(tile) && /h ago/.test(tile) && /Sitter · 20m/.test(tile) && /sk-sittile/.test(tiles) &&
+        /Here now/.test(here) && /class="cap live"/.test(here) && /sk-sittile lit/.test(hereTile) && /<b>10<\/b><small>min/.test(hereTile) &&
+        house.lastIndexOf('sk-c-sitter') > house.lastIndexOf('data-sheet="notifications"') &&
         ids.every((id) => watched.indexOf(id) >= 0) && none === '';
     } finally {
       sk._config = cfg;
