@@ -29,11 +29,17 @@
  * images, imported as statistics. Before it the line is dashed, and a change
  * or rate measured against a point before it carries an ≈.
  *
- * `lake: {entity, name, short, full, normal, floats, range: [lo, hi], estimated_before,
+ * `lake: {entity, name, short, full, normal, floats, range: [lo, hi], estimated_before, since,
  *         also: [{entity, name, full}]}`
  * ========================================================================== */
 
-const SK_LAKE_RANGES = { w: 7, m: 30, y: 365 };
+const SK_LAKE_RANGES = { w: 7, m: 30, y: 365, y5: 1826, all: 365 * 40 };
+/* The long views are fetched only when asked for, at a coarser period: a week
+   per point over five years, a month per point back to the first reading.
+   They carry min and max as well, drawn as a band, because a monthly mean of
+   a lake that swings a foot a day would otherwise read as a calm one. */
+const SK_LAKE_LONG = { y5: "week", all: "month" };
+const SK_LAKE_TABS = [["w", "W"], ["m", "M"], ["y", "Y"], ["y5", "5Y"], ["all", "All"]];
 
 function skLakeFt(v, dp) {
   const s = Math.abs(v).toFixed(dp == null ? 1 : dp);
@@ -80,16 +86,54 @@ Object.assign(PurdySkyCard.prototype, {
     });
   },
 
+  /* A long view, fetched once and kept for six hours. `since` (ISO) is where
+     the record begins, so All does not ask for forty years of nothing. */
+  _skLakeLoadLong(rk) {
+    const c = this._skLakeCfg();
+    const h = this._hass;
+    if (!c || !h || !h.callWS || !SK_LAKE_LONG[rk]) return;
+    const S = this._skLk || (this._skLk = { at: 0, busy: false, hr: null, day: null, err: null });
+    const L = (S.long = S.long || {})[rk] || (S.long[rk] = { at: 0, busy: false, pts: null, err: null });
+    const now = Date.now();
+    if (L.busy || now - L.at < 6 * 36e5) return;
+    L.busy = true;
+    const since = Date.parse(c.since || "");
+    const from = rk === "all" && Number.isFinite(since) ? since : now - SK_LAKE_RANGES[rk] * 864e5;
+    h.callWS({
+      type: "recorder/statistics_during_period",
+      start_time: new Date(from).toISOString(),
+      end_time: pcNowIso(),
+      statistic_ids: [c.entity],
+      period: SK_LAKE_LONG[rk],
+      types: ["mean", "min", "max"],
+    }).then((r) => {
+      L.pts = ((r || {})[c.entity] || [])
+        .map((p) => ({ t: typeof p.start === "number" ? p.start : Date.parse(p.start), v: Number(p.mean), lo: Number(p.min), hi: Number(p.max) }))
+        .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v));
+      L.err = null;
+    }, (e) => {
+      L.err = (e && e.message) || "the recorder did not answer";
+    }).then(() => {
+      L.at = Date.now();
+      L.busy = false;
+      this._last = null;
+      this._render();
+    });
+  },
+
   /* The series for a range, with the live reading as its last point. */
   _skLakeSeries(rk) {
     const S = this._skLk;
     const c = this._skLakeCfg();
     const live = c ? pcNum(this._hass, c.entity) : null;
     const now = Date.now();
-    const t0 = now - SK_LAKE_RANGES[rk] * 864e5;
-    const src = S ? (rk === "y" ? S.day : S.hr) : null;
+    let t0 = now - SK_LAKE_RANGES[rk] * 864e5;
+    const L = SK_LAKE_LONG[rk] && S && S.long ? S.long[rk] : null;
+    const src = SK_LAKE_LONG[rk] ? (L ? L.pts : null) : S ? (rk === "y" ? S.day : S.hr) : null;
     if (src == null) return null;
     const pts = src.filter((p) => p.t >= t0);
+    /* All starts where the record does, not forty years back. */
+    if (rk === "all" && pts.length) t0 = pts[0].t;
     if (live != null) pts.push({ t: now, v: live });
     return { pts, t0, t1: now };
   },
@@ -179,8 +223,8 @@ Object.assign(PurdySkyCard.prototype, {
         <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
     const chip = d2 && Math.abs(d2.d) >= 0.05
       ? `<span class="ps-chip cool sk-lkchip"><ha-icon icon="${d2.d > 0 ? "mdi:arrow-up" : "mdi:arrow-down"}"></ha-icon>${d2.est ? "≈" : ""}${Math.abs(d2.d).toFixed(1)} ft · ${this._skLakeSpan(d2.hrs)}</span>` : "";
-    const seg = `<div class="sk-seg sm sk-lkseg" role="tablist">${["w", "m", "y"].map((k) =>
-      `<button type="button" role="tab" data-sklkr="${k}" aria-selected="${k === rk}">${k.toUpperCase()}</button>`).join("")}</div>`;
+    const seg = `<div class="sk-seg sm sk-lkseg" role="tablist">${SK_LAKE_TABS.map(([k, l]) =>
+      `<button type="button" role="tab" data-sklkr="${k}" aria-selected="${k === rk}">${l}</button>`).join("")}</div>`;
     const tiles = [];
     tiles.push(`<div class="st3"><b>${tr == null ? "—" : `${tr.est ? "≈" : ""}${skLakeFt(tr.rate, 2)}<small>ft/h</small>`}</b><span>Rate</span></div>`);
     (Array.isArray(c.also) ? c.also : []).forEach((a) => {
@@ -203,7 +247,10 @@ Object.assign(PurdySkyCard.prototype, {
 
   _skLakeChart(rk, c) {
     const S = this._skLk;
-    if (S && S.err) return `<div class="sk-empty">The history would not load — ${psEsc(S.err)}</div>`;
+    if (SK_LAKE_LONG[rk]) this._skLakeLoadLong(rk);
+    const L = SK_LAKE_LONG[rk] && S && S.long ? S.long[rk] : null;
+    const err = L ? L.err : S && S.err;
+    if (err) return `<div class="sk-empty">The history would not load — ${psEsc(err)}</div>`;
     const ser = this._skLakeSeries(rk);
     if (!ser) return `<div class="sk-lkchart wait" role="img" aria-label="Loading"></div>`;
     const W = 326, H = 150, P = 22;
@@ -212,8 +259,21 @@ Object.assign(PurdySkyCard.prototype, {
     const floats = c.floats == null ? null : Number(c.floats);
     /* The live point is kept whole: downsampling would average it into the
        last bucket and the dot would sit off the reading on the sheet. */
-    const pts = ser.pts.length > 160 ? pcDownsample(ser.pts.slice(0, -1), 159).concat(ser.pts.slice(-1)) : ser.pts;
-    const vals = pts.map((p) => p.v);
+    const thin = (a, n) => {
+      if (a.length <= n) return a;
+      const out = [], k = a.length / n;
+      for (let i = 0; i < n; i++) {
+        const sl = a.slice(Math.floor(i * k), Math.floor((i + 1) * k));
+        if (!sl.length) continue;
+        const los = sl.map((p) => p.lo).filter(Number.isFinite), his = sl.map((p) => p.hi).filter(Number.isFinite);
+        out.push({ t: sl[Math.floor(sl.length / 2)].t, v: sl.reduce((x, p) => x + p.v, 0) / sl.length,
+          lo: los.length ? Math.min(...los) : NaN, hi: his.length ? Math.max(...his) : NaN });
+      }
+      return out;
+    };
+    const pts = ser.pts.length > 160 ? thin(ser.pts.slice(0, -1), 159).concat(ser.pts.slice(-1)) : ser.pts;
+    const band = !!SK_LAKE_LONG[rk];
+    const vals = pts.map((p) => p.v).concat(band ? pts.filter((p) => Number.isFinite(p.lo)).flatMap((p) => [p.lo, p.hi]) : []);
     const mn = vals.length ? Math.min(...vals) : full - 4;
     const mx = vals.length ? Math.max(...vals) : full;
     let lo = Math.floor((mn - 0.5) * 2) / 2;
@@ -225,7 +285,8 @@ Object.assign(PurdySkyCard.prototype, {
       `<line class="${cls}" x1="0" x2="${W}" y1="${Y(x).toFixed(1)}" y2="${Y(x).toFixed(1)}"/><text class="rl" x="0" y="${(Y(x) - 5).toFixed(1)}">${label}</text>`;
     const refs = ref(full, "full", `FULL ${full}`) + (normal != null && Y(normal) - Y(full) >= 16 ? ref(normal, "norm", `NORMAL ${normal}`) : "")
       + (floats != null && floats <= hi ? ref(floats, "flt", `LIFTS FLOAT ${floats}`) : "");
-    const fmt = (t) => new Date(t).toLocaleDateString([], rk === "y" ? { month: "short" } : rk === "m" ? { month: "short", day: "numeric" } : { weekday: "short" }).toUpperCase();
+    const fmt = (t) => band ? String(new Date(t).getFullYear())
+      : new Date(t).toLocaleDateString([], rk === "y" ? { month: "short" } : rk === "m" ? { month: "short", day: "numeric" } : { weekday: "short" }).toUpperCase();
     const defs = `<defs><pattern id="sk-lkh" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0,0 V6"/></pattern></defs>`;
     const axis = `<text class="ax" x="0" y="${H + 18}">${psEsc(fmt(ser.t0))}</text><text class="ax" x="${W}" y="${H + 18}" text-anchor="end">NOW</text>`;
     if (pts.length < 2) {
@@ -245,12 +306,17 @@ Object.assign(PurdySkyCard.prototype, {
       : `<path class="ln est" d="${path(xy.slice(0, Math.min(xy.length, cut + 1)))}"/>${cut < xy.length ? `<path class="ln" d="${path(xy.slice(Math.max(0, cut - 1)))}"/>` : ""}`;
     const x0 = xy[0][0];
     const gap = x0 > 6 ? `<rect class="hatch" x="0" y="${P}" width="${(x0 - 2).toFixed(1)}" height="${H - P}" rx="6"/>` : "";
-    const area = `${line} L${xy[xy.length - 1][0].toFixed(1)},${H} L${x0.toFixed(1)},${H} Z`;
+    /* Short views fill under the line; long ones draw the span each point
+       covered, low to high, so a month's swing is not averaged away. */
+    const bp = band ? pts.filter((p) => Number.isFinite(p.lo) && Number.isFinite(p.hi)) : [];
+    const area = bp.length > 1
+      ? `${bp.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${Y(p.hi).toFixed(1)}`).join(" ")} ${bp.slice().reverse().map((p) => `L${X(p.t).toFixed(1)},${Y(p.lo).toFixed(1)}`).join(" ")} Z`
+      : `${line} L${xy[xy.length - 1][0].toFixed(1)},${H} L${x0.toFixed(1)},${H} Z`;
     const last = xy[xy.length - 1];
-    const words = `${c.name || "Lake"} level, ${{ w: "past week", m: "past month", y: "past year" }[rk]}, ${mn.toFixed(1)} to ${mx.toFixed(1)} feet; full pond ${full}${cut > 0 ? "; earlier part estimated" : ""}`;
+    const words = `${c.name || "Lake"} level, ${{ w: "past week", m: "past month", y: "past year", y5: "past five years", all: "since " + fmt(ser.t0) }[rk]}, ${mn.toFixed(1)} to ${mx.toFixed(1)} feet; full pond ${full}${cut > 0 ? "; earlier part estimated" : ""}`;
     return `<svg class="sk-lkchart" viewBox="0 -4 ${W} ${H + 26}" role="img" aria-label="${psEsc(words)}">${defs}
         ${gap}${refs}
-        <path class="ar" d="${area}"/>${lines}
+        <path class="ar${bp.length > 1 ? " band" : ""}" d="${area}"/>${lines}
         <line class="base" x1="0" x2="${W}" y1="${H}" y2="${H}"/>
         <circle class="dot" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="5"/>${axis}</svg>`;
   },

@@ -11656,6 +11656,16 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       const sheet = sk._skLakeSheet();
       sk._skLkR = 'y';
       const year = sk._skLakeSheet();
+      /* The long views: nothing loaded yet waits (it is fetched on demand),
+         loaded draws a min-max band labelled by year from the first point. */
+      sk._skLkR = 'all';
+      const allWait = sk._skLakeSheet();
+      const mo = [];
+      for (let k = 250; k >= 1; k--) mo.push({ t: now - k * 30 * 864e5, v: 792 + Math.sin(k / 6), lo: 791 + Math.sin(k / 6), hi: 793 + Math.sin(k / 6) });
+      sk._skLk = { ...sk._skLk, long: { all: { at: now, busy: false, pts: mo, err: null }, y5: { at: now, busy: false, pts: null, err: 'nope' } } };
+      const all = sk._skLakeSheet();
+      sk._skLkR = 'y5';
+      const y5err = sk._skLakeSheet();
       sk._sheet = 'lake';
       const via = sk._sheetHtml([]);
       sk._sheet = null;
@@ -11677,6 +11687,9 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
         /Leesville/.test(sheet) && /−9\.4<small>ft/.test(sheet) && /\+0\.03<small>ft\/h/.test(sheet) && !/\+1\.6 ft/.test(sheet) && /class="ln"/.test(sheet) &&
         /data-sklkr="y" aria-selected="true"/.test(year) && /class="hatch"/.test(year) &&
         /sk-lake/.test(via) &&
+        /sk-lkchart wait/.test(allWait) && /data-sklkr="y5"[^>]*>5Y</.test(allWait) && /data-sklkr="all"[^>]*>All</.test(allWait) &&
+        /class="ar band"/.test(all) && new RegExp('>' + new Date(mo[0].t).getFullYear() + '</text>').test(all) && /since \d{4}/.test(all) &&
+        /would not load — nope/.test(y5err) &&
         /class="ln est"/.test(est) && /class="ln"/.test(est) && />≈1\.6 ft · 2d/.test(est) && /earlier part estimated/.test(est) &&
         !/ln est/.test(sheet) && !/≈/.test(sheet) &&
         /ps-nodata/.test(off) && /sk-lkpost none/.test(off) &&
