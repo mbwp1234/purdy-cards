@@ -69,16 +69,21 @@ globalThis.console.info = ()=>{};
 eval(bundle);
 
 const names = Object.keys(defined);
-console.log('defined elements:', names.join(', '));
+if (process.argv.includes('-v') || process.env.VERBOSE) console.log('defined elements:', names.join(', '));
 
 let fail = 0;
 /* `cond` is a VALUE, not a thunk. An uncalled arrow function is truthy, so
    `check('x', () => whatever)` passes however wrong `whatever` is — twenty of
    them went green in one pass while asserting nothing at all. The condition is
    run for you if you hand one over rather than being silently believed. */
+/* Quiet by default: ~2000 PASS lines are ~30k tokens of context on every run
+   and say nothing a count does not. `-v` (or VERBOSE=1) prints them all. */
+const VERBOSE = process.argv.includes('-v') || !!process.env.VERBOSE;
+let pass = 0;
 const check = (label, cond) => {
   const v = typeof cond === 'function' ? cond() : cond;
-  console.log((v?'  PASS  ':'  FAIL  ')+label); if(!v) fail++;
+  if (!v || VERBOSE) console.log((v?'  PASS  ':'  FAIL  ')+label);
+  v ? pass++ : fail++;
 };
 
 /* A DOM node real enough to reconcile against, and to stand in for a hosted
@@ -12485,5 +12490,5 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   check('the old dotted arc is gone (one arc, one stylesheet)', !/_skSunArc/.test(core) && !/sk-path/.test(fs.readFileSync(new URL('../src/88b-sky-styles.js', import.meta.url), 'utf8')));
 }
 
-console.log(fail ? `\n${fail} FAILED` : '\nALL PASSED');
+console.log(fail ? `\n${fail} FAILED, ${pass} passed` : `\nALL PASSED (${pass})`);
 process.exit(fail?1:0);
