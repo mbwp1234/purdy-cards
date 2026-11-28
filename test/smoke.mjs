@@ -11472,7 +11472,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   const skSrc = fs.readFileSync(new URL('../src/88-sky-core.js', import.meta.url), 'utf8');
   /* House on the phone is four pages picked from the dock's fan; a test that
      asks "does House carry X" reads all four. */
-  const skHouseAll = (x) => { const was = x._skHg; const h = ['lights', 'clean', 'pets', 'server'].map((g) => { x._skHg = g; return x._skHouse(); }).join(''); x._skHg = was; return h; };
+  const skHouseAll = (x) => { const was = x._skHg; const h = ['lights', 'clean', 'pets'].map((g) => { x._skHg = g; return x._skHouse(); }).join(''); x._skHg = was; return h; };
   check('purdy-sky-card defined', !!SK);
   check('purdy-sky-card registered in customCards', window.customCards.some((c) => c.type === 'purdy-sky-card'));
   check('sky IS a shell — inherits every section, sheet and handler', SK && SK.prototype instanceof SH);
@@ -11538,11 +11538,13 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     /* Stable ids only: an SVG gradient's id carries a counter that moves on every render. */
     const ids = (h) => (h.match(/id="[^"]+"/g) || []).filter((x) => !/id="sk[a-z]{1,2}\d+"/.test(x)).sort().join();
     /* House on the phone is four pages; together they carry everything. */
-    const allHouse = () => ['lights', 'clean', 'pets', 'server'].map((g) => { p._skHg = g; return p._skHouse(); }).join('');
+    const allHouse = () => ['lights', 'clean', 'pets'].map((g) => { p._skHg = g; return p._skHouse(); }).join('');
     const phone = [p._skJoel(), p._skClimate(), allHouse()].map(ids);
     p._skSize(1600);
     const wide = [p._skJoel(), p._skClimate(), p._skHouse()].map(ids);
-    return phone.every((x, i) => x === wide[i]) && phone[0].length > 20;
+    /* Every id the phone draws is on the wide page too (the phone has fewer:
+       PurdyNAS is its own page there, reached from the fan). */
+    return phone.every((x, i) => x.split(',').every((id) => wide[i].split(',').includes(id))) && phone[0].length > 20;
   });
   check('widths: keys do nothing on a phone, and never while typing', () => {
     const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass();
@@ -11590,8 +11592,12 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return /data-skvacopts/.test(o) && /open \? ids\.map/.test(o) && /this\._skVacOpts\(v, sib\)/.test(pg) &&
       /\[data-skvacopts\]/.test(skSrc);
   })());
-  check('the notification log is reachable from House and the bell', /data-sheet="notifications"/.test(house) &&
-    /want = faults\.length \? "alerts" : notes \? "notifications"/.test(skSrc));
+  check('the notification log is reachable from the bell: directly, or from the foot of the alerts list it opens', (() => {
+    const al = fs.readFileSync(new URL('../src/74-shell-alerts.js', import.meta.url), 'utf8');
+    const sheet = al.slice(al.indexOf('if (this._sheet === "alerts")'), al.indexOf('if (this._sheet === "lights")'));
+    return /class="ps-ar ps-arlog" type="button" data-sheet="notifications"/.test(sheet) && /All notifications/.test(sheet) &&
+      /want = faults\.length \? "alerts" : notes \? "notifications"/.test(skSrc);
+  })());
   check('sitter mode: one row while off; a trip card on House and a Home tile while on, drawn from the visit log', (() => {
     const cfg = sk._config, st = sk._hass.states;
     const put = (id, state, attributes = {}, lc = '') => { st[id] = { entity_id: id, state: String(state), attributes, last_changed: lc, last_updated: lc }; };
@@ -11623,7 +11629,6 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
         (done.match(/class="op"/g) || []).length === 6 && /class="now"/.test(done) && /sk-sitrow fut/.test(done) && /We're home/.test(done) &&
         /sk-sittile/.test(tile) && /data-skto="sk-c-sitter"/.test(tile) && /h ago/.test(tile) && /Sitter · 20m/.test(tile) && /sk-sittile/.test(tiles) &&
         /Here now/.test(here) && /class="cap live"/.test(here) && /sk-sittile lit/.test(hereTile) && /<b>10<\/b><small>min/.test(hereTile) &&
-        house.lastIndexOf('sk-c-sitter') < house.lastIndexOf('data-sheet="notifications"') &&
         /* Marks sit at their time of day on a 0–100% track (a 10x divisor once
            crowded every visit and the now tick into the first tenth). */
         (() => { const m = /class="now" style="left:([0-9.]+)%/.exec(done); const d = new Date();
@@ -11979,7 +11984,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return /data-skto="sk-c-litter"/.test(t) && /data-skto="sk-c-washer"/.test(t) &&
       /id="sk-c-litter"/.test(hs) && /id="sk-c-washer"/.test(hs);
   });
-  check('House on the phone: four pages from the fan, cards above and each page with its one tile below', () => {
+  check('House on the phone: three pages from the fan, and the fan Server opens the PurdyNAS page', () => {
     const c = skCfg();
     c.sections.find((x) => x.type === 'crew').litter = { entity: 'vacuum.lb', waste_drawer: 'sensor.dr' };
     c.server = { name: 'S', status: 'sensor.srv', meters: [] };
@@ -11994,8 +11999,17 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return /id="sk-c-lights"/.test(L) && !/id="sk-c-crew"/.test(L) && /<h1>Lights<\/h1>/.test(L) &&
       before(C, /id="sk-c-crew"/, /id="sk-c-washer"/) && !/id="sk-c-litter"/.test(C) &&
       /id="sk-c-litter"/.test(P) && !/id="sk-c-nas"/.test(P) &&
-      before(S, /id="sk-c-nas"/, /data-sheet="notifications"/) &&
-      /class="sk-tile" type="button" id="sk-c-washer"/.test(C);
+      S === L && !/data-sheet="notifications"/.test(L + C + P) &&
+      /class="sk-tile" type="button" id="sk-c-washer"/.test(C) &&
+      /g\.mode \? `data-skmode="\$\{g\.mode\}"`/.test(skSrc) && /key: "server"[^\n]*mode: "systems"/.test(skSrc);
+  });
+  check('PurdyNAS on the phone: back names and returns to the tab you came from', () => {
+    const cf = skCfg(); cf.server = { name: 'S', status: 'sensor.srv', meters: [] };
+    const p = new SK(); p.setConfig(cf); p._hass = d2Hass();
+    p._skTab = 'home'; const ph = p._skSys([]);
+    p._skSize(1600); const dk = p._skSys([]);
+    return /data-skback="1"><ha-icon icon="mdi:chevron-left"><\/ha-icon>Home</.test(ph) && /data-skback="1"><ha-icon icon="mdi:chevron-left"><\/ha-icon>House</.test(dk) &&
+      /if \(!this\._skHas\("tab"\)\) \{ this\._skGo\(this\._skTab \|\| "home"\); return; \}/.test(skSrc);
   });
   check('the dock opens the House fan on the phone and goes straight to House from the tab tier up', () => {
     const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass();
@@ -12009,9 +12023,9 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     p._render = () => {}; p._skToHash = () => {}; p._skScroller = () => null;
     p._skGo('house', { to: 'sk-c-litter' }); const a = p._skHg;
     p._skGo('house', { to: 'sk-c-crew' }); const b = p._skHg;
-    p._skGo('house', { hg: 'server' }); const c2 = p._skHg;
+    p._skGo('house', { hg: 'pets' }); const c2 = p._skHg;
     p._skGo('house', { to: 'sk-c-washer' }); const d = p._skHg;
-    return a === 'pets' && b === 'clean' && c2 === 'server' && d === 'clean' && /SK_HGROUP_OF\[o\.to\]/.test(skSrc);
+    return a === 'pets' && b === 'clean' && c2 === 'pets' && d === 'clean' && /SK_HGROUP_OF\[o\.to\]/.test(skSrc);
   });
   check('the fan is a static slot: its markup is in the mounted skeleton, opened by a host attribute, never by a render', () =>
     /<div class="sk-fan" id="sk-fan">/.test(skSrc) && /this\.toggleAttribute\("data-sk-fan", on\)/.test(skSrc) && !/_patch\("sk-fan"/.test(skSrc));

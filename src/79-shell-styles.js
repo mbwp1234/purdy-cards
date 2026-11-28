@@ -1324,6 +1324,7 @@ const PS_STYLES = `
       .ps-ar { display: flex; align-items: center; gap: 9px; padding: 9px 0;
                border-top: 1px solid var(--ps-hair-soft); cursor: pointer; }
       .ps-ar:first-of-type { border-top: 0; }
+      .ps-arlog { width: 100%; text-align: left; }
       .ps-at { display: block; font-size: var(--pc-fs-md); font-weight: 650; }
       .ps-ad { display: block; font-size: var(--pc-fs-xs); color: var(--ps-muted); }
 

@@ -531,7 +531,15 @@ Object.assign(PurdyShellCard.prototype, {
             ${this._config.dismiss_store ? `<button class="ps-x" type="button" data-dismiss="${i}"
               aria-label="Dismiss ${psEsc(f.title)}">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
-          </div>`).join("")}
+          </div>`).join("")}${
+          /* While anything is raised the bell opens THIS list, so the log
+             needs a door from here or it is unreachable. */
+          (this._config.sheets || {}).notifications ? (() => {
+            const n = this._logOpenCount();
+            return `<button class="ps-ar ps-arlog" type="button" data-sheet="notifications">
+              <span class="ps-grow"><span class="ps-at">All notifications</span><span class="ps-ad">${n ? `${n} unread` : "Everything read"}</span></span>
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 6l6 6-6 6"/></svg></button>`;
+          })() : ""}
         </div>`;
     }
 
