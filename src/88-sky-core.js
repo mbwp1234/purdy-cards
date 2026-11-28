@@ -760,8 +760,18 @@ class PurdySkyCard extends PurdyShellCard {
     };
     this._skCtx = "home";
     try {
-      const media = this._skMediaHome();
+      const media = this._skMediaHome("home");
       const liveNp = this._nowPlaying && this._nowPlaying();
+      /* Your order (2026-11-27): what is playing, then what needs you, then
+         Joel, Climate, the week and the garage as cards, the tiles below.
+         Media is on Home only while something is on — two TVs that are off
+         were a 195px card saying "Off" twice. */
+      if (media) push("now", media, { icon: "mdi:music-note", text: liveNp ? (liveNp.st.attributes.media_title || "Playing") : "Media", tab: "media", color: "var(--sk-media)" }, "sk-pad");
+      const crewH = this._skSec("crew");
+      if (crewH) {
+        const needs = this._secCrew(crewH);
+        if (needs) push("needs", `<div class="ps-sect">${needs}</div>`, null);
+      }
       const jsec = this._skSec("nursery");
       if (jsec) {
         const N = this._skNurse();
@@ -770,7 +780,6 @@ class PurdySkyCard extends PurdyShellCard {
       }
       const C = this._skClim();
       if (C) push("clim", this._skClimateHome(), { icon: "mdi:thermostat", text: C.cur == null ? "Climate" : `${C.cur.toFixed(1)}°`, tab: "climate", color: "var(--ps-heat)" }, "sk-pad sk-tap");
-      if (media) push("now", media, { icon: "mdi:music-note", text: liveNp ? (liveNp.st.attributes.media_title || "Playing") : "Media", tab: "media", color: "var(--sk-media)" }, "sk-pad");
       const wsec = this._weatherSection();
       /* From 1100px the week is in the sky (_skHeroWeek), not a card. */
       if (wsec && !this._skHas("desk")) {
@@ -783,11 +792,6 @@ class PurdySkyCard extends PurdyShellCard {
             weekChip ? `<span class="ps-chip cool"><span class="ps-dot"></span>${psEsc(skWetWord(wet.condition))} ${psEsc(this._wxDow(wet.ts, false))}</span>` : ""}</div>
             <div class="sk-week" data-sheet="wx" role="button" tabindex="0">${this._skWeekRail()}</div>`,
           { icon: "mdi:weather-partly-rainy", text: wet ? this._wxDow(wet.ts, false) : "Week", color: "var(--ps-cool)" }, "sk-pad");
-      }
-      const crew = this._skSec("crew");
-      if (crew) {
-        const needs = this._secCrew(crew);
-        if (needs) push("needs", `<div class="ps-sect">${needs}</div>`, null);
       }
       const veh = this._skVehicleHome();
       if (veh) push("truck", veh.html, veh.pill, "sk-pad sk-veh");
@@ -1015,7 +1019,7 @@ class PurdySkyCard extends PurdyShellCard {
   /* The house at a glance: one picture and one number per tile. */
   _skTiles() {
     const h = this._hass;
-    const tiles = [];
+    const T = {};
     const lsec = this._skSec("lights");
     if (lsec) {
       const ls = this._lightList(lsec);
@@ -1028,7 +1032,7 @@ class PurdySkyCard extends PurdyShellCard {
         const at = ["18% 82%", "86% 18%", "60% 60%"][i];
         return `radial-gradient(${80 + l.bri * 1.4}px ${64 + l.bri}px at ${at}, rgba(${rgb},var(--sk-glow)), rgba(${rgb},0))`;
       }).join(",");
-      tiles.push(`<button class="sk-tile ${lit.length ? "lit" : ""}" type="button" data-sktab="house" data-skto="sk-c-lights" aria-label="${lit.length} lights on">
+      T.lights = (`<button class="sk-tile ${lit.length ? "lit" : ""}" type="button" data-sktab="house" data-skto="sk-c-lights" aria-label="${lit.length} lights on">
           ${glow ? `<span class="sk-tglow" style="background:${glow}"></span>` : ""}
           <span class="sk-trow"><span class="sk-ico" style="--c:var(--sk-lamp)"><ha-icon icon="mdi:lightbulb-outline"></ha-icon></span>
             <span class="sk-pips">${ls.map((l) => `<i class="${l.gone ? "x" : l.on ? "on" : ""}" style="--g:rgb(${skKelvin(l.kelvin || 2700)})"></i>`).join("")}</span></span>
@@ -1036,7 +1040,7 @@ class PurdySkyCard extends PurdyShellCard {
           <span class="sk-tlab">${psEsc(lit.map((l) => l.name).join(" · ") || "All off")}</span></button>`);
     }
     const sit = this._skSitTile();
-    if (sit) tiles.push(sit);
+    if (sit) T.sit = sit;
     const crew = this._skSec("crew");
     const v = crew && crew.vacuum;
     if (v && v.entity) {
@@ -1049,7 +1053,7 @@ class PurdySkyCard extends PurdyShellCard {
         .sort((a, b) => a.v - b.v);
       const ring = running && prog != null ? prog : bat;
       const R = 19, C = 2 * Math.PI * R;
-      tiles.push(`<button class="sk-tile" type="button" data-sktab="house" data-skto="sk-c-crew" aria-label="${psEsc(v.name || "Vacuum")}, ${psEsc(state)}">
+      T.vac = (`<button class="sk-tile" type="button" data-sktab="house" data-skto="sk-c-crew" aria-label="${psEsc(v.name || "Vacuum")}, ${psEsc(state)}">
           <span class="sk-trow"><span class="sk-ring"><svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="${R}" class="tr"/>${
             ring == null ? "" : `<circle cx="22" cy="22" r="${R}" class="fl" stroke-dasharray="${(C * skClamp(ring / 100)).toFixed(1)} ${C.toFixed(1)}"/>`}</svg>
             <ha-icon icon="mdi:robot-vacuum"></ha-icon></span>${worn.length ? `<span class="sk-warn" title="${psEsc(worn[0].label)} ${Math.round(worn[0].v)}%"></span>` : ""}</span>
@@ -1060,7 +1064,7 @@ class PurdySkyCard extends PurdyShellCard {
     if (l && (l.waste_drawer || l.litter_level)) {
       const dr = pcNum(h, l.waste_drawer), lv = pcNum(h, l.litter_level);
       const bar = (x, cls) => `<span class="sk-tank ${cls}${x == null ? " none" : ""}"><i style="height:${x == null ? 0 : skClamp(x / 100) * 100}%"></i></span>`;
-      tiles.push(`<button class="sk-tile" type="button" data-sktab="house" data-skto="sk-c-litter" aria-label="${psEsc(l.name || "Litter box")}, drawer ${dr == null ? "no reading" : Math.round(dr) + "%"}">
+      T.litter = (`<button class="sk-tile" type="button" data-sktab="house" data-skto="sk-c-litter" aria-label="${psEsc(l.name || "Litter box")}, drawer ${dr == null ? "no reading" : Math.round(dr) + "%"}">
           <span class="sk-trow"><span class="sk-tanks">${bar(dr, "dr")}${bar(lv, "lv")}</span><span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span></span>
           <span class="sk-tv">${dr == null ? `<b class="ps-nodata">—</b>` : `<b>${Math.round(dr)}</b><small>%</small>`}</span>
           <span class="sk-tlab">Drawer${lv == null ? "" : ` · litter ${Math.round(lv)}%`}</span></button>`);
@@ -1071,7 +1075,7 @@ class PurdySkyCard extends PurdyShellCard {
       const arr = meters[0];
       const r = pcReading(h, s.status);
       const online = r.ok && String(r.st.state).toLowerCase() === "online";
-      tiles.push(`<button class="sk-tile" type="button" data-skmode="systems" aria-label="${psEsc(s.name || "Server")}">
+      T.nas = (`<button class="sk-tile" type="button" data-skmode="systems" aria-label="${psEsc(s.name || "Server")}">
           <span class="sk-trow"><span class="sk-tanks">${meters.map((m) => `<span class="sk-tank nas${m.v == null ? " none" : ""}${
             m.v != null && m.critical_above != null && m.v >= m.critical_above ? " bad" : m.v != null && m.warn_above != null && m.v >= m.warn_above ? " warn" : ""}"><i style="height:${m.v == null ? 0 : skClamp(m.v / 100) * 100}%"></i></span>`).join("")}</span>
             <span class="sk-ico" style="--c:var(--sk-nas)"><ha-icon icon="mdi:server"></ha-icon></span></span>
@@ -1079,7 +1083,7 @@ class PurdySkyCard extends PurdyShellCard {
           <span class="sk-tlab">${psEsc(s.name || "Server")} · ${online ? psEsc(pcState(h, (s.docker || {}).running) || "online") : r.ok ? psEsc(String(r.st.state)) : "no data"}</span></button>`);
     }
     const lake = this._skLakeTile();
-    if (lake) tiles.push(lake);
+    if (lake) T.lake = lake;
     const w = crew && crew.washer;
     if (w && w.entity) {
       const ws = String(pcState(h, w.entity) || "").toLowerCase();
@@ -1087,12 +1091,14 @@ class PurdySkyCard extends PurdyShellCard {
          the crew row that says "has finished" — so the tile carries a RUNNING
          washer only, the one state nothing else on Home shows. */
       if (ws && !/^(off|idle|empty|unknown|unavailable|none)$/.test(ws) && !/done|finish|complete/.test(ws)) {
-        tiles.push(`<button class="sk-tile wide" type="button" data-sktab="house" data-skto="sk-c-washer">
+        T.washer = (`<button class="sk-tile wide" type="button" data-sktab="house" data-skto="sk-c-washer">
             <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="${psEsc(w.icon || "mdi:washing-machine")}"></ha-icon></span>
               <span class="sk-tlab" style="margin-left:10px">${psEsc(w.name || "Washer")}</span><span class="ps-chip ${/done|finish|complete/.test(ws) ? "warn" : "cool"}" style="margin-left:auto"><span class="ps-dot"></span>${psEsc(this._humanize(ws))}</span></span></button>`);
       }
     }
-    return tiles.join("");
+    /* Your order: lights, server, vacuum, litter, lake, sitter. A running
+       washer is the one wide tile and closes the grid. */
+    return ["lights", "nas", "vac", "litter", "lake", "sit", "washer"].map((k) => T[k] || "").join("");
   }
 
   /* ------------------------------------------------------------------ pages --- */
