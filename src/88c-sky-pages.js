@@ -850,16 +850,19 @@ Object.assign(PurdySkyCard.prototype, {
     const pet = l.pet || {};
     const w = pcNum(h, pet.weight), visits = pcNum(h, pet.visits), scoops = pcNum(h, pet.scoops);
     const err = st === "error";
-    const tank = (v, cls, name) => `<div class="sk-tankw"><div class="sk-tankb ${cls}${v == null ? " none" : ""}"><i style="height:${v == null ? 0 : skClamp(v / 100) * 100}%"></i></div>
-        <div class="tl"><span>${name}</span><b>${v == null ? "—" : `${Math.round(v)}<small>%</small>`}</b></div></div>`;
-    return `<div class="sk-hd"><span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span><span class="sk-hn">${psEsc(l.name || "Litter box")}</span>
-        <span class="sk-status ${err ? "bad" : ""}">${psEsc(this._humanize(st))}</span></div>
-      <div class="sk-tanks2">${tank(dr, "dr", "Drawer")}${tank(lv, "lv", "Litter")}</div>
-      <div class="sk-st3">
-        <div class="st3"><b>${w == null ? "—" : w.toFixed(1)}<small>lb</small></b><span>${psEsc(pet.name || "Cat")}</span></div>
-        <div class="st3"><b>${visits == null ? "—" : Math.round(visits)}</b><span>Visits today</span></div>
-        <div class="st3"><b>${scoops == null ? "—" : Math.round(scoops).toLocaleString()}</b><span>Cycles</span></div>
-      </div>
+    const tank = (v, cls, name) => `<span class="sk-tankw"><span class="sk-tankb ${cls}${v == null ? " none" : ""}"><i style="height:${v == null ? 0 : skClamp(v / 100) * 100}%"></i></span>
+        <span class="tl"><span>${name}</span><b>${v == null ? "—" : `${Math.round(v)}<small>%</small>`}</b></span></span>`;
+    /* The card is the door to the stats sheet (88g): everything above the
+       Reset button is one tap target. */
+    return `<button class="sk-ltopen" type="button" data-sheet="litter" aria-label="${psEsc(l.name || "Litter box")}: stats">
+      <span class="sk-hd"><span class="sk-ico" style="--c:var(--sk-litter)"><ha-icon icon="mdi:cat"></ha-icon></span><span class="sk-hn">${psEsc(l.name || "Litter box")}</span>
+        <span class="sk-status ${err ? "bad" : ""}">${psEsc(this._humanize(st))}</span><ha-icon class="sk-ltgo" icon="mdi:chevron-right"></ha-icon></span>
+      <span class="sk-tanks2">${tank(dr, "dr", "Drawer")}${tank(lv, "lv", "Litter")}</span>
+      <span class="sk-st3">
+        <span class="st3"><b>${w == null ? "—" : w.toFixed(1)}<small>lb</small></b><span>${psEsc(pet.name || "Cat")}</span></span>
+        <span class="st3"><b>${visits == null ? "—" : Math.round(visits)}</b><span>Visits today</span></span>
+        <span class="st3"><b>${scoops == null ? "—" : Math.round(scoops).toLocaleString()}</b><span>Cycles</span></span>
+      </span></button>
       ${l.reset_button ? `<button class="sk-bigbtn wide ${err ? "pri" : ""} ${this._skArmed === "lr" ? "armed" : ""}" type="button" data-skarm="lr" data-skpress="${psEsc(l.reset_button)}">
           <ha-icon icon="mdi:restart"></ha-icon>${this._skArmed === "lr" ? "Tap again to reset" : err ? "Reset after clearing it" : "Reset"}</button>` : ""}`;
   },
