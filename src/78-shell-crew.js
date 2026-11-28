@@ -474,7 +474,7 @@ Object.assign(PurdyShellCard.prototype, {
     return `<div class="ps-cwsub">Tonight</div>
       <div class="ps-cwtabs">${tab("sweep", "Sweep", !mop)}${tab("mop", "Sweep & mop", mop)}</div>
       ${note}
-      <div class="ps-cwfine">Set automatically each night, alternating. Runs when the
+      <div class="ps-cwfine ps-cwwhy">Set automatically each night, alternating. Runs when the
         living room lights go off after 9pm.</div>`;
   },
 
@@ -506,7 +506,7 @@ Object.assign(PurdyShellCard.prototype, {
         <span class="ps-grow">${armed ? "Tap again to start" : "Run deep clean"}</span>
         <span class="ps-cwage">${psEsc(age)}</span>
       </button>
-      <div class="ps-cwfine">Intensive carpet pass, vacuum and mop, CleanGenius on.
+      <div class="ps-cwfine ps-cwwhy">Intensive carpet pass, vacuum and mop, CleanGenius on.
         Takes hours — run it on the way out.</div>`;
   },
 

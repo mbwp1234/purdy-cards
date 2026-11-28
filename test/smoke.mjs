@@ -11470,6 +11470,9 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
 {
   const SK = defined['purdy-sky-card'];
   const skSrc = fs.readFileSync(new URL('../src/88-sky-core.js', import.meta.url), 'utf8');
+  /* House on the phone is four pages picked from the dock's fan; a test that
+     asks "does House carry X" reads all four. */
+  const skHouseAll = (x) => { const was = x._skHg; const h = ['lights', 'clean', 'pets', 'server'].map((g) => { x._skHg = g; return x._skHouse(); }).join(''); x._skHg = was; return h; };
   check('purdy-sky-card defined', !!SK);
   check('purdy-sky-card registered in customCards', window.customCards.some((c) => c.type === 'purdy-sky-card'));
   check('sky IS a shell — inherits every section, sheet and handler', SK && SK.prototype instanceof SH);
@@ -11534,7 +11537,9 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass(); p._testNow = sk._testNow;
     /* Stable ids only: an SVG gradient's id carries a counter that moves on every render. */
     const ids = (h) => (h.match(/id="[^"]+"/g) || []).filter((x) => !/id="sk[a-z]{1,2}\d+"/.test(x)).sort().join();
-    const phone = [p._skJoel(), p._skClimate(), p._skHouse()].map(ids);
+    /* House on the phone is four pages; together they carry everything. */
+    const allHouse = () => ['lights', 'clean', 'pets', 'server'].map((g) => { p._skHg = g; return p._skHouse(); }).join('');
+    const phone = [p._skJoel(), p._skClimate(), allHouse()].map(ids);
     p._skSize(1600);
     const wide = [p._skJoel(), p._skClimate(), p._skHouse()].map(ids);
     return phone.every((x, i) => x === wide[i]) && phone[0].length > 20;
@@ -11568,7 +11573,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   });
 
   /* Every destination the phone dock had is still reachable (orphan rule). */
-  const house = sk._skHouse();
+  const house = skHouseAll(sk);
   check('House carries the lights and the crew', /id="sk-c-lights"/.test(house) && /id="sk-c-crew"/.test(house));
   check('the vacuum card carries the map, dock, tonight and deep clean', (() => {
     const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
@@ -11606,7 +11611,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       /* Here now. */
       put(ids[2], 1); put(ids[3], 'x', { timestamp: s(now - 600e3) });
       const here = sk._skSitter(), hereTile = sk._skSitTile();
-      const house = sk._skHouse();
+      const house = skHouseAll(sk);
       const watched = sk._collectWatched();
       sk._config = cfg;
       const none = sk._skSitter() + sk._skSitTile();
@@ -11970,23 +11975,49 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const h = d2Hass(); h.states['input_select.w'] = { state: 'Running', attributes: {} };
     h.states['sensor.dr'] = { state: '40', attributes: {} }; h.states['vacuum.lb'] = { state: 'docked', attributes: {} };
     s2._hass = h;
-    const t = s2._skTiles(), hs = s2._skHouse();
+    const t = s2._skTiles(), hs = skHouseAll(s2);
     return /data-skto="sk-c-litter"/.test(t) && /data-skto="sk-c-washer"/.test(t) &&
       /id="sk-c-litter"/.test(hs) && /id="sk-c-washer"/.test(hs);
   });
-  check('House order: cards above (lights, vacuum, litter, server, sitter), washer and notifications as tiles below', () => {
+  check('House on the phone: four pages from the fan, cards above and each page with its one tile below', () => {
     const c = skCfg();
     c.sections.find((x) => x.type === 'crew').litter = { entity: 'vacuum.lb', waste_drawer: 'sensor.dr' };
+    c.server = { name: 'S', status: 'sensor.srv', meters: [] };
     const s2 = new SK(); s2.setConfig(c);
     const h = d2Hass(); h.states['input_select.w'] = { state: 'Off', attributes: {} };
     h.states['sensor.dr'] = { state: '40', attributes: {} }; h.states['vacuum.lb'] = { state: 'docked', attributes: {} };
+    h.states['sensor.srv'] = { state: 'online', attributes: {} };
     s2._hass = h;
-    const hs = s2._skHouse();
-    const at = (re) => hs.search(re);
-    const order = [/id="sk-c-lights"/, /id="sk-c-crew"/, /id="sk-c-litter"/, /id="sk-c-washer"/].map(at);
-    return order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])) &&
-      /<button class="sk-tile" type="button" id="sk-c-washer"/.test(hs) && !/sk-rowcard" type="button" data-sheet="notifications"/.test(hs) &&
-      !/id="sk-c-washer" data-skc="washer" data-info="[^"]*"[^>]*>\s*<div class="sk-hd"/.test(hs);
+    const pg = (g) => { s2._skHg = g; return s2._skHouse(); };
+    const L = pg('lights'), C = pg('clean'), P = pg('pets'), S = pg('server');
+    const before = (x, a, b) => x.search(a) >= 0 && x.search(b) > x.search(a);
+    return /id="sk-c-lights"/.test(L) && !/id="sk-c-crew"/.test(L) && /<h1>Lights<\/h1>/.test(L) &&
+      before(C, /id="sk-c-crew"/, /id="sk-c-washer"/) && !/id="sk-c-litter"/.test(C) &&
+      /id="sk-c-litter"/.test(P) && !/id="sk-c-nas"/.test(P) &&
+      before(S, /id="sk-c-nas"/, /data-sheet="notifications"/) &&
+      /class="sk-tile" type="button" id="sk-c-washer"/.test(C);
+  });
+  check('the dock opens the House fan on the phone and goes straight to House from the tab tier up', () => {
+    const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass();
+    const phone = p._skDock('home');
+    p._skSize(1600);
+    const desk = p._skDock('home');
+    return /data-skfan="1"/.test(phone) && !/data-sktab="house"/.test(phone) && /data-sktab="house"/.test(desk) && !/data-skfan/.test(desk);
+  });
+  check('a Home tile lands on its own House page, and a fan pick opens that page at the top', () => {
+    const p = new SK(); p.setConfig(skCfg()); p._hass = d2Hass();
+    p._render = () => {}; p._skToHash = () => {}; p._skScroller = () => null;
+    p._skGo('house', { to: 'sk-c-litter' }); const a = p._skHg;
+    p._skGo('house', { to: 'sk-c-crew' }); const b = p._skHg;
+    p._skGo('house', { hg: 'server' }); const c2 = p._skHg;
+    p._skGo('house', { to: 'sk-c-washer' }); const d = p._skHg;
+    return a === 'pets' && b === 'clean' && c2 === 'server' && d === 'clean' && /SK_HGROUP_OF\[o\.to\]/.test(skSrc);
+  });
+  check('the fan is a static slot: its markup is in the mounted skeleton, opened by a host attribute, never by a render', () =>
+    /<div class="sk-fan" id="sk-fan">/.test(skSrc) && /this\.toggleAttribute\("data-sk-fan", on\)/.test(skSrc) && !/_patch\("sk-fan"/.test(skSrc));
+  check('the week is the last card on Home', () => {
+    const src = skSrc.slice(skSrc.indexOf('  _skHome(faults) {'), skSrc.indexOf('} finally {', skSrc.indexOf('  _skHome(faults) {')));
+    return src.indexOf('push("week"') > src.indexOf('const tiles = this._skTiles();') && src.indexOf('push("truck"') < src.indexOf('const tiles = this._skTiles();');
   });
   check('Home tiles run lights, server, vacuum, litter in that order', () => {
     const c = skCfg();
@@ -12050,7 +12081,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     s2._sheet = null;
     s2._skLt = { at: now, busy: false, err: 'boom' };
     const err = s2._skLitterSheet();
-    const card = s2._skHouse();
+    const card = skHouseAll(s2);
     return /sk-ltchart wait/.test(wait) && /sk-ltbars wait/.test(wait) && !/>0<\/b>/.test(wait) &&
       /<b>10\.03<\/b><small>lb/.test(sheet) && /−0\.1 lb · 3 mo/.test(sheet) && /class="band"/.test(sheet) &&
       weeks.every((w) => w.lo > 9) &&
@@ -12213,7 +12244,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
 
     check('no vehicle: key, no truck card and no House row', () => {
       const s2 = new SK(); s2.setConfig(skCfg()); s2._hass = d2Hass();
-      return s2._skVehicleHome() === null && !/data-sknav/.test(s2._skHouse()) && !/id="sk-c-truck"/.test(s2._skHome([]).html);
+      return s2._skVehicleHome() === null && !/data-sknav/.test(skHouseAll(s2)) && !/id="sk-c-truck"/.test(s2._skHome([]).html);
     });
     const a = mkVeh({ 'sensor.fuel': { state: '40', attributes: {} } });
     a.s2._skHome([]);
@@ -12236,7 +12267,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const lo = mkVeh({ 'sensor.fuel': { state: '5', attributes: {} } }, Object.assign({}, VEH, { economy: { mpg: 18 } }));
     lo.s2._skHome([]); await settle(); await settle();
     check('under 30 mi of range the gauge turns amber (the fill-up automation\'s line)', /class="sk-vfuel low"/.test(lo.s2._skHome([]).html) && /≈24 mi/.test(lo.s2._skHome([]).html));
-    check('the truck lives on Home only: House draws no vehicle row, and the Home card opens the same panel', !/data-sknav/.test(a.s2._skHouse()) && /data-sknav="\/garage"/.test(a.s2._skHome([]).html));
+    check('the truck lives on Home only: House draws no vehicle row, and the Home card opens the same panel', !/data-sknav/.test(skHouseAll(a.s2)) && /data-sknav="\/garage"/.test(a.s2._skHome([]).html));
     check('the vehicle sensors are watched (a top-level key the section walk never sees)', () => {
       const w = a.s2._collectWatched();
       return w.indexOf('sensor.over') >= 0 && w.indexOf('sensor.next') >= 0;
@@ -12283,7 +12314,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       !/nothing due/.test(home2.html));
     check('a vehicle with no fuel sensor draws no gauge at all (only the truck has one)', (home2.html.match(/class="sk-vfuel"/g) || []).length === 1);
     check('the pill counts across vehicles', /3 due/.test(home2.pills));
-    const house2 = t.s2._skHouse();
+    const house2 = skHouseAll(t.s2);
     check('two vehicles: House draws no rows, Home opens each one', !/data-sknav/.test(house2) && /data-sknav="\/garage\?vehicle=Kona"/.test(home2.html));
     check('every vehicle\'s sensors are watched', t.s2._collectWatched().indexOf('sensor.k_over') >= 0);
     const t2 = mkTwo([{ id: 'y' }]);
