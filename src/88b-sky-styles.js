@@ -507,6 +507,33 @@ const SK_STYLES = `
       .sk-db ha-icon { --mdc-icon-size: 22px; }
       .sk-db.on { color: var(--ps-deep); }
 
+      /* ---- the House fan (phone only) ---- */
+      .sk-dock { z-index: 1; }
+      .sk-fanx { position: fixed; inset: 0; z-index: 0; border: 0; padding: 0; background: rgba(10,14,22,.32);
+                 opacity: 0; pointer-events: none; transition: opacity .25s; }
+      :host([data-sk-fan]) .sk-fanx { opacity: 1; pointer-events: auto; }
+      .sk-fan { position: absolute; left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); height: 64px; z-index: 2; pointer-events: none; }
+      .sk-fanb { position: absolute; right: calc((100% - 8px) / 10 + 4px - 32px); bottom: 4px; width: 64px; display: flex; flex-direction: column; align-items: center; gap: 5px;
+                 border: 0; padding: 0; background: none; color: var(--ps-text); opacity: 0; pointer-events: none;
+                 transform: scale(.3); transition: transform .42s cubic-bezier(.2,.9,.25,1.2), opacity .2s; transition-delay: calc(var(--d) * 35ms); }
+      :host([data-sk-fan]) .sk-fanb { opacity: 1; pointer-events: auto; transform: translate(var(--dx), var(--dy)); }
+      .sk-fanb .orb { width: 56px; height: 56px; border-radius: 28px; display: grid; place-items: center; background: var(--sk-dock); border: 1px solid var(--sk-edge);
+                      box-shadow: 0 14px 30px -14px rgba(0,0,0,.45); -webkit-backdrop-filter: blur(24px) saturate(1.7); backdrop-filter: blur(24px) saturate(1.7); }
+      .sk-fanb .sk-ico { width: 40px; height: 40px; border-radius: 14px; }
+      .sk-fanb .sk-ico ha-icon { --mdc-icon-size: 22px; }
+      .sk-fanl { font-size: var(--pc-fs-sm); font-weight: 700; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,.45); }
+      .sk-swap { position: relative; width: 22px; height: 22px; }
+      .sk-swap ha-icon { position: absolute; inset: 0; transition: transform .3s cubic-bezier(.2,.9,.25,1.15), opacity .2s; }
+      .sk-swap .x { opacity: 0; transform: rotate(-90deg) scale(.6); }
+      :host([data-sk-fan]) .sk-swap .g { opacity: 0; transform: rotate(90deg) scale(.6); }
+      :host([data-sk-fan]) .sk-swap .x { opacity: 1; transform: none; }
+      :host([data-sk-fan]) .sk-dbfan { color: var(--ps-deep); }
+      /* A page's single tile spans the row rather than sitting half-empty. */
+      .sk-housetiles > .sk-tile:only-child { grid-column: 1 / -1; }
+      /* Explanations of what a control does, not what is happening: the
+         controls say it themselves on Skylight. */
+      .ps-cwwhy { display: none; }
+
       /* ---- sheets on paper ---- */
       .ps-scrim { background: rgba(10,14,22,.32); z-index: 40; }
       .ps-sheet { z-index: 41; }
@@ -1014,5 +1041,6 @@ const SK_STYLES = `
       @media (prefers-reduced-motion: reduce) {
         .sk-eq i, .sk-rm .s i.play { animation: none !important; }
         .sk-pill, .sk-pills, .sk-lens, .sk-mini, .sk-barbg { transition: none !important; }
+        .sk-fanb, .sk-fanx, .sk-swap ha-icon { transition: none !important; }
       }
 `;

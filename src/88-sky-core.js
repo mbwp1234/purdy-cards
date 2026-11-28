@@ -44,6 +44,19 @@ const SK_TABS = [
   { key: "house", name: "House", icon: "mdi:view-grid-outline" },
 ];
 
+/* House on the phone is four short pages, picked from a fan that opens out
+   of the dock's House button (2026-11-27). From the tab tier up there is
+   room for all of it, so House stays one page and the button goes direct.
+   `dx`/`dy` place each bubble on an arc above the button. */
+const SK_HGROUPS = [
+  { key: "lights", name: "Lights", icon: "mdi:lightbulb-outline", c: "var(--sk-lamp)", dx: -163, dy: -83 },
+  { key: "clean", name: "Cleaning", icon: "mdi:robot-vacuum", c: "var(--ps-good)", dx: -133, dy: -157 },
+  { key: "pets", name: "Pets", icon: "mdi:cat", c: "var(--sk-litter)", dx: -72, dy: -208 },
+  { key: "server", name: "Server", icon: "mdi:server", c: "var(--sk-nas)", dx: 6, dy: -225 },
+];
+/* Which page a card lives on, so a Home tile lands on the right one. */
+const SK_HGROUP_OF = { "sk-c-lights": "lights", "sk-c-crew": "clean", "sk-c-washer": "clean", "sk-c-litter": "pets", "sk-c-sitter": "pets", "sk-c-nas": "server" };
+
 /* Which tab a section belongs to — a collapsed section on Home opens its tab
    rather than expanding in place. */
 const SK_TAB_OF = { nursery: "joel", climate: "climate", nowplaying: "media", music: "media", tv: "media", lights: "house", crew: "house" };
@@ -207,7 +220,8 @@ class PurdySkyCard extends PurdyShellCard {
         <section class="sk-view" data-v="media"><div class="sk-stack" id="sk-media"></div></section>
         <section class="sk-view" data-v="house"><div class="sk-stack" id="sk-house"></div></section>
         <section class="sk-view sk-sys" data-v="sys"><div class="sk-stack" id="sk-sys"></div></section>
-        <footer class="sk-foot" id="sk-foot"><div class="sk-brand" id="sk-brand"></div><div class="sk-mini" id="sk-mini"></div><nav class="sk-dock" id="sk-dock" aria-label="Tabs"></nav></footer>
+        <footer class="sk-foot" id="sk-foot"><div class="sk-brand" id="sk-brand"></div><div class="sk-mini" id="sk-mini"></div><button class="sk-fanx" type="button" data-skfanx="1" tabindex="-1" aria-label="Close"></button><nav class="sk-dock" id="sk-dock" aria-label="Tabs"></nav><div class="sk-fan" id="sk-fan">${
+          SK_HGROUPS.map((g, n) => `<button class="sk-fanb" type="button" data-skhg="${g.key}" style="--c:${g.c};--dx:${g.dx}px;--dy:${g.dy}px;--d:${n}" tabindex="-1"><span class="orb"><span class="sk-ico"><ha-icon icon="${g.icon}"></ha-icon></span></span><span class="sk-fanl">${g.name}</span></button>`).join("")}</div></footer>
       </div>
       <div id="ps-sheetslot"></div>`;
     this._mounted = true;
@@ -343,6 +357,11 @@ class PurdySkyCard extends PurdyShellCard {
 
   _skGo(tab, opts) {
     const o = opts || {};
+    this._skFan(false);
+    if (tab === "house" && !o.mode) {
+      if (o.hg) this._skHg = o.hg;
+      else if (o.to && SK_HGROUP_OF[o.to]) this._skHg = SK_HGROUP_OF[o.to];
+    }
     const sc = this._skScroller();
     const was = this._skView();
     if (sc) this._skScroll[was] = sc.scrollTop;
@@ -367,7 +386,9 @@ class PurdySkyCard extends PurdyShellCard {
     raf(() => {
       if (!sc) return;
       const now = this._skView();
-      if (o.to) {
+      if (o.hg) {
+        sc.scrollTop = 0;
+      } else if (o.to) {
         const el = this.shadowRoot.getElementById(o.to);
         const bar = this.shadowRoot.getElementById("sk-bar");
         if (el && el.getBoundingClientRect) {
@@ -500,9 +521,11 @@ class PurdySkyCard extends PurdyShellCard {
        lost. */
     const vals = this._skHas("desk") ? this._skTabVals() : null;
     const keys = tabs.map((t, n) => n < 9 ? ` aria-keyshortcuts="${n + 1}"` : "");
+    const fan = !this._skHas("tab");
     return `<span class="sk-lens" style="--n:${tabs.length};--i:${i}"></span>` + tabs.map((t, n) => `
-      <button class="sk-db ${t.key === cur ? "on" : ""}" type="button" data-sktab="${t.key}"${t.key === cur ? ` aria-current="page"` : ""}${vals ? keys[n] : ""}>
-        <ha-icon icon="${t.icon}"></ha-icon><span>${psEsc(t.key === "joel" ? this._skTabName("joel") : t.name)}</span>${
+      <button class="sk-db ${t.key === cur ? "on" : ""}${fan && t.key === "house" ? " sk-dbfan" : ""}" type="button" ${
+        fan && t.key === "house" ? `data-skfan="1" aria-haspopup="true" aria-expanded="${this._skFanOpen()}"` : `data-sktab="${t.key}"`}${t.key === cur ? ` aria-current="page"` : ""}${vals ? keys[n] : ""}>
+        ${fan && t.key === "house" ? `<span class="sk-swap"><ha-icon class="g" icon="${t.icon}"></ha-icon><ha-icon class="x" icon="mdi:close"></ha-icon></span>` : `<ha-icon icon="${t.icon}"></ha-icon>`}<span>${psEsc(t.key === "joel" ? this._skTabName("joel") : t.name)}</span>${
           vals && vals[t.key] ? `<span class="sk-dv">${psEsc(vals[t.key])}</span>` : ""}</button>`).join("");
   }
 
@@ -571,7 +594,22 @@ class PurdySkyCard extends PurdyShellCard {
      order, Escape closes a sheet. Never while typing, never with a modifier,
      and only once the layout is a desktop's — a phone's Bluetooth keyboard
      is not a reason to change how the phone behaves. */
+  _skFanOpen() {
+    return typeof this.hasAttribute === "function" && this.hasAttribute("data-sk-fan");
+  }
+
+  _skFan(open) {
+    const on = !!open;
+    if (on === this._skFanOpen() || typeof this.toggleAttribute !== "function") return;
+    this.toggleAttribute("data-sk-fan", on);
+    const root = this.shadowRoot;
+    const b = root && root.querySelector("[data-skfan]");
+    if (b) b.setAttribute("aria-expanded", String(on));
+    if (root) root.querySelectorAll(".sk-fanb").forEach((x) => x.setAttribute("tabindex", on ? "0" : "-1"));
+  }
+
   _skKey(e) {
+    if (e.key === "Escape" && this._skFanOpen()) { this._skFan(false); return; }
     if (!this._skHas("tab") || !this.isConnected || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
     const path = typeof e.composedPath === "function" ? e.composedPath() : [e.target];
     const t = path[0];
@@ -780,6 +818,16 @@ class PurdySkyCard extends PurdyShellCard {
       }
       const C = this._skClim();
       if (C) push("clim", this._skClimateHome(), { icon: "mdi:thermostat", text: C.cur == null ? "Climate" : `${C.cur.toFixed(1)}°`, tab: "climate", color: "var(--ps-heat)" }, "sk-pad sk-tap");
+      const veh = this._skVehicleHome();
+      if (veh) push("truck", veh.html, veh.pill, "sk-pad sk-veh");
+      const tiles = this._skTiles();
+      if (tiles) {
+        const lsec = this._skSec("lights");
+        const on = lsec ? this._lightList(lsec).filter((l) => l.on && !l.cfg.protect && !l.gone).length : 0;
+        out.push(`<div class="sk-tiles" id="sk-c-tiles" data-skc="tiles" data-pill="mdi:lightbulb-outline|${on} on|house|var(--sk-lamp)">${tiles}</div>`);
+        pills.push({ key: "tiles", icon: "mdi:lightbulb-outline", text: `${on} on`, tab: "house", color: "var(--sk-lamp)" });
+      }
+      /* The week is a glance, not a headline (2026-11-27): last on Home. */
       const wsec = this._weatherSection();
       /* From 1100px the week is in the sky (_skHeroWeek), not a card. */
       if (wsec && !this._skHas("desk")) {
@@ -792,15 +840,6 @@ class PurdySkyCard extends PurdyShellCard {
             weekChip ? `<span class="ps-chip cool"><span class="ps-dot"></span>${psEsc(skWetWord(wet.condition))} ${psEsc(this._wxDow(wet.ts, false))}</span>` : ""}</div>
             <div class="sk-week" data-sheet="wx" role="button" tabindex="0">${this._skWeekRail()}</div>`,
           { icon: "mdi:weather-partly-rainy", text: wet ? this._wxDow(wet.ts, false) : "Week", color: "var(--ps-cool)" }, "sk-pad");
-      }
-      const veh = this._skVehicleHome();
-      if (veh) push("truck", veh.html, veh.pill, "sk-pad sk-veh");
-      const tiles = this._skTiles();
-      if (tiles) {
-        const lsec = this._skSec("lights");
-        const on = lsec ? this._lightList(lsec).filter((l) => l.on && !l.cfg.protect && !l.gone).length : 0;
-        out.push(`<div class="sk-tiles" id="sk-c-tiles" data-skc="tiles" data-pill="mdi:lightbulb-outline|${on} on|house|var(--sk-lamp)">${tiles}</div>`);
-        pills.push({ key: "tiles", icon: "mdi:lightbulb-outline", text: `${on} on`, tab: "house", color: "var(--sk-lamp)" });
       }
     } finally {
       this._skCtx = null;
@@ -1212,6 +1251,20 @@ class PurdySkyCard extends PurdyShellCard {
     this._each("[data-sktab]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
       this._skGo(el.dataset.sktab, { to: el.dataset.skto, face: el.dataset.face });
+    }));
+    /* The fan. Open and shut are an attribute on the host — paint only, so
+       a repaint never restarts the bubbles' flight. */
+    this._each("[data-skfan]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._skFan(!this._skFanOpen());
+    }));
+    this._each("[data-skfanx]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._skFan(false);
+    }));
+    this._each("[data-skhg]", (el) => el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._skGo("house", { hg: el.dataset.skhg });
     }));
     this._each("[data-skface]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();

@@ -597,6 +597,19 @@ Object.assign(PurdySkyCard.prototype, {
           <span class="sk-tlab">Notifications</span></button>`);
     }
     if (tl.length) parts.push(P.tiles = `<div class="sk-tiles sk-housetiles">${tl.join("")}</div>`);
+    /* The phone: one page at a time, picked from the dock's fan. The washer
+       rides with the vacuum, the notification log with the server. */
+    if (!this._skHas("tab")) {
+      const g = SK_HGROUPS.find((x) => x.key === this._skHg) || SK_HGROUPS[0];
+      const tile = (t) => (t ? `<div class="sk-tiles sk-housetiles">${t}</div>` : "");
+      const page = {
+        lights: [P.lights],
+        clean: [P.vac, tile(crew && crew.washer && crew.washer.entity ? this._skWasherTile(crew.washer) : "")],
+        pets: [P.litter, P.sit],
+        server: [P.nas, tile(tl.find((x) => /data-sheet="notifications"/.test(x)) || "")],
+      }[g.key];
+      return this._skTitle(g.name) + page.filter(Boolean).join("");
+    }
     /* The vacuum is the tallest thing in the house, so it gets a column of
        its own and the rest stack beside it. */
     if (this._skHas("wide")) return parts[0] + this._skCols([[P.lights, P.litter], [P.vac], [P.nas, P.sit, P.tiles]], "sk-housecols");
@@ -789,7 +802,7 @@ Object.assign(PurdySkyCard.prototype, {
           data-skpart="${i}" role="button" tabindex="0" aria-label="${psEsc(w.label)} ${w.v == null ? "no reading" : Math.round(w.v) + "%"}, hold to clean">
           <span class="r">${w.v == null ? `<span class="hatch"></span>` : this._skRing(w.v, 44, 5, w.v <= (w.warn_below == null ? 20 : w.warn_below) ? "var(--ps-warn)" : "var(--ps-good)")}<b>${w.v == null ? "—" : Math.round(w.v) + "%"}</b></span>
           <span>${psEsc(w.label)}</span></div>`).join("")}</div>
-        <div class="sk-wearhint">hold a part to clean it</div>` : ""}
+        ` : ""}
       ${this._skVacOpts(v, sib)}
       <div class="sk-vrooms">${this._crewRooms(v)}</div>
       <button class="sk-bigbtn pri wide vac" type="button" data-crewgo="${psEsc(v.entity)}" data-script="${psEsc(v.room_script || "")}"${go ? go.attrs : ""}>
