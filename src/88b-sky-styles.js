@@ -811,7 +811,20 @@ const SK_STYLES = `
       .sk-optrow { display: flex; flex-direction: column; gap: 6px; }
       .sk-optrow .ps-lbl { padding-left: 4px; }
       .sk-seg.sm button { height: 34px; font-size: var(--pc-fs-sm); }
-      .sk-vrooms { margin-top: 14px; }
+      .sk-vrooms { margin-top: 4px; }
+      .sk-opts + .sk-bigbtn.vac { margin-top: 12px; }
+      .sk-ctiles.one { grid-template-columns: minmax(0, 1fr); }
+      .sk-ttap { text-align: left; font: inherit; color: inherit; border: 0; cursor: pointer; }
+      .sk-ttap.armed { background: color-mix(in srgb, var(--ps-warn) 22%, var(--sk-card2)); }
+      .st3 span.warn, .sk-warntx { color: var(--ps-warn); }
+      .sk-tdial { --sk-dirty: color-mix(in srgb, var(--ps-good) 80%, #6b4f2a); }
+      .sk-tdial circle { fill: none; stroke-width: 9; stroke-linecap: round; }
+      .sk-tdial circle.tr { stroke: var(--ps-track); stroke-linecap: butt; }
+      .sk-tdial circle.d { stroke: var(--sk-dirty); } .sk-tdial circle.c { stroke: var(--ps-cool); }
+      .sk-tdial > div { gap: 3px; }
+      .sk-tdl { display: flex; align-items: center; gap: 3px; }
+      .sk-tdl ha-icon { --mdc-icon-size: 15px; } .sk-tdl.d ha-icon { color: var(--sk-dirty); } .sk-tdl.c ha-icon { color: var(--ps-cool); }
+      .sk-tdial .sk-tdl b { font-size: var(--pc-fs-lg); font-weight: 650; color: var(--ps-text); }
       .sk-btnrow.three { grid-auto-columns: 1fr; }
       .sk-shellbits { margin-top: 10px; }
       .sk-tanks2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
