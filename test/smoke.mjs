@@ -11585,8 +11585,41 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
   check('the vacuum card carries the map, dock, tonight and deep clean', (() => {
     const pg = fs.readFileSync(new URL('../src/88c-sky-pages.js', import.meta.url), 'utf8');
     const v = pg.slice(pg.indexOf('  _skVacuum(v) {'), pg.indexOf('  _skLitter(l) {'));
-    return /data-sheet="\$\{psEsc\(v\.map_sheet\)\}"/.test(v) && /vacuum\.return_to_base/.test(v) && /this\._crewNightly\(v\)/.test(v) && /this\._crewDeep\(v\)/.test(v) && /this\._crewRooms\(v\)/.test(v);
+    return /data-sheet="\$\{psEsc\(v\.map_sheet\)\}"/.test(v) && /vacuum\.return_to_base/.test(v) && /this\._skTonightTile\(v\)/.test(v) && /this\._skDeepTile\(v\)/.test(v) && /this\._crewRooms\(v\)/.test(v) && /this\._skVacParts\(v\)/.test(v) &&
+      /data-crewmop=/.test(v) && /data-arm="cw:deep"/.test(v) && /data-skpart=/.test(v) && /path_width_m/.test(v) && /\[data-skvacfold\]/.test(skSrc);
   })());
+  /* v1.119.0: the tank dial. A missing tank and an empty one must not look the same. */
+  check('the tank dial draws a missing tank as "—" and an empty one as 0%, neither with an arc', () => {
+    const d = sk._skTankDial(null, 0);
+    return /aria-label="Dirty tank no reading"/.test(d) && /<b>—<\/b>/.test(d) && /<b>0<small>%<\/small><\/b>/.test(d) && !/class="d"/.test(d) && !/class="c"/.test(d);
+  });
+  check('the tank dial draws both arcs, each keyed by its tank icon', () => {
+    const d = sk._skTankDial(25, 75);
+    return /class="d" stroke-dasharray/.test(d) && /class="c" stroke-dasharray/.test(d) && /mdi:bucket-outline/.test(d) && /mdi:cup-water/.test(d) && /<b>25<small>/.test(d);
+  });
+  check('rooms and parts rest folded and open in place', () => {
+    const v = { entity: 'vacuum.j', name: 'Jeeves', room_select: 'select.rm', wear: [{ label: 'Filter', entity: 'sensor.flt' }] };
+    const h0 = sk._hass, keep = sk._skVacFolds;
+    sk._hass = { ...h0, states: { ...h0.states, 'select.rm': { state: '1F - Kitchen', attributes: { options: ['1F - Kitchen', '1F - Hall'] } }, 'sensor.flt': { state: '54', attributes: {} } } };
+    sk._skVacFolds = {}; const shut = sk._skVacuum(v);
+    sk._skVacFolds = { rooms: true, parts: true }; const open = sk._skVacuum(v);
+    sk._skVacFolds = keep; sk._hass = h0;
+    return /data-skvacfold="rooms"/.test(shut) && !/data-crew(pick|room)=/.test(shut) && !/data-skpart=/.test(shut) && /Parts · <span class="">Filter 54%/.test(shut) &&
+      /data-crew(pick|room)=/.test(open) && /data-skpart=/.test(open);
+  });
+  check('a vacuum with no tanks configured keeps the battery ring rather than a dial of dashes', () => {
+    const o = sk._skVacuum({ entity: 'vacuum.j', name: 'J' });
+    return !/sk-tdial/.test(o) && /sk-vring/.test(o) && /battery/.test(o);
+  });
+  check('tonight is one tile that flips: it asks for the OTHER value', () => {
+    const v = { nightly: { mop_flag: 'input_boolean.mopx' } }, h0 = sk._hass;
+    sk._hass = { ...h0, states: { ...h0.states, 'input_boolean.mopx': { state: 'on', attributes: {} } } };
+    const on = sk._skTonightTile(v);
+    sk._hass = { ...h0, states: { ...h0.states, 'input_boolean.mopx': { state: 'unavailable', attributes: {} } } };
+    const gone = sk._skTonightTile(v);
+    sk._hass = h0;
+    return /data-want="sweep"/.test(on) && /<b>Mop<\/b>/.test(on) && /<b>—<\/b>/.test(gone) && !/data-crewmop/.test(gone);
+  });
   check('the week rails draw at their own width, not a 340 viewBox scaled under half', () => {
     const r = sk._skRail({ from: Date.now() - 6 * 3600000, settledAt: Date.now() - 5.5 * 3600000, to: Date.now(), wokeAt: Date.now(), events: [Date.now() - 3 * 3600000], interventions: 1 }, false).svg;
     return /viewBox="0 0 160 21"/.test(r) && /height="12" rx="1.75" class="vis vcut"/.test(r);

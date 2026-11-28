@@ -762,6 +762,12 @@ Object.assign(PurdySkyCard.prototype, {
       `<button type="button" data-sksel="${psEsc(id)}" data-val="${psEsc(o)}" aria-selected="${o === st.state}">${psEsc(SK_SHORT[o] || psCrewWords(o) || o)}</button>`).join("")}</div></div>`;
   },
 
+  /* One dial carries both tanks: the outer arc is the dirty tank filling, the
+     inner is the clean water draining, each keyed by its tank icon and its own
+     reading in the middle. The battery ring it replaced said "100%" every time
+     the card was looked at — progress and a low battery ride the status line,
+     the only moments either is news. Rooms and parts fold like the options
+     line; mileage lives with the parts. (v1.119.0) */
   _skVacuum(v) {
     const h = this._hass;
     const st = pcState(h, v.entity) || "unavailable";
@@ -773,30 +779,21 @@ Object.assign(PurdySkyCard.prototype, {
       return base && h.states[base + suffix] ? base + suffix : null;
     };
     const dirty = pcNum(h, v.dirty_water), clean = pcNum(h, v.clean_water);
-    const wear = (v.wear || []).map((w) => ({ ...w, v: pcNum(h, w.entity) }));
-    const mi = v.mileage || {};
-    const area = pcNum(h, mi.area), runs = pcNum(h, mi.runs);
-    const miles = area != null && mi.path_width_m ? (area * 0.092903 / mi.path_width_m) / 1609.34 : null;
     const sel = v.room_select && h.states[v.room_select];
     const pick = sel ? String(sel.state).replace(/^\S+ - /, "") : "";
     const go = v.room_multi && sel && v.room_script ? this._crewGoMulti(v) : null;
+    const aside = busy && prog != null ? ` · ${Math.round(prog)}%`
+      : !busy && bat != null && bat < 100 && (v.dirty_water || v.clean_water) ? ` · battery ${Math.round(bat)}%` : "";
+    const rooms = this._crewRooms(v);
     return `<div class="sk-hd"><span class="sk-ico" style="--c:var(--ps-good)"><ha-icon icon="mdi:robot-vacuum"></ha-icon></span><span class="sk-hn">${psEsc(v.name || "Vacuum")}</span>
-        <span class="sk-status ${busy ? "good" : st === "error" ? "bad" : ""}">${psEsc(this._humanize(st))}${room && room !== "unknown" ? ` · ${psEsc(room)}` : ""}</span></div>
+        <span class="sk-status ${busy ? "good" : st === "error" ? "bad" : ""}">${psEsc(this._humanize(st))}${room && room !== "unknown" ? ` · ${psEsc(room)}` : ""}${psEsc(aside)}</span></div>
       <div class="sk-vtop">
-        <div class="sk-vring">${this._skRing(busy && prog != null ? prog : bat, 104, 10, "var(--ps-good)")}<div><b>${busy && prog != null ? Math.round(prog) : bat == null ? "—" : Math.round(bat)}<small>%</small></b><span>${busy && prog != null ? "done" : "battery"}</span></div></div>
-        <div class="sk-ctiles">
-          <div class="st3"><b>${dirty == null ? "—" : Math.round(dirty) + "%"}</b><span>Dirty tank</span></div>
-          <div class="st3"><b>${clean == null ? "—" : Math.round(clean) + "%"}</b><span>Clean water</span></div>
-          <div class="st3 wide"><b>${miles == null ? "—" : "≈" + miles.toFixed(1) + " mi"}</b><span>${runs == null ? "Lifetime" : `${Math.round(runs)} runs`}</span></div>
-        </div>
+        ${v.dirty_water || v.clean_water ? this._skTankDial(dirty, clean)
+          : `<div class="sk-vring">${this._skRing(bat, 104, 10, "var(--ps-good)")}<div><b>${bat == null ? "—" : Math.round(bat)}<small>%</small></b><span>battery</span></div></div>`}
+        <div class="sk-ctiles one">${this._skTonightTile(v)}${this._skDeepTile(v)}</div>
       </div>
-      ${wear.length ? `<div class="sk-wear" style="--n:${wear.length}">${wear.map((w, i) => `<div class="sk-wr${w.v != null && w.v <= (w.warn_below == null ? 20 : w.warn_below) ? " due" : ""}"
-          data-skpart="${i}" role="button" tabindex="0" aria-label="${psEsc(w.label)} ${w.v == null ? "no reading" : Math.round(w.v) + "%"}, hold to clean">
-          <span class="r">${w.v == null ? `<span class="hatch"></span>` : this._skRing(w.v, 44, 5, w.v <= (w.warn_below == null ? 20 : w.warn_below) ? "var(--ps-warn)" : "var(--ps-good)")}<b>${w.v == null ? "—" : Math.round(w.v) + "%"}</b></span>
-          <span>${psEsc(w.label)}</span></div>`).join("")}</div>
-        ` : ""}
       ${this._skVacOpts(v, sib)}
-      <div class="sk-vrooms">${this._crewRooms(v)}</div>
+      ${rooms ? this._skVacFold("rooms", "mdi:floor-plan", "Rooms", `<div class="sk-vrooms">${rooms}</div>`) : ""}
       <button class="sk-bigbtn pri wide vac" type="button" data-crewgo="${psEsc(v.entity)}" data-script="${psEsc(v.room_script || "")}"${go ? go.attrs : ""}>
         <ha-icon icon="${busy ? "mdi:pause" : "mdi:play"}"></ha-icon>${busy ? "Pause" : go ? psEsc(go.text) : pick ? `Clean ${psEsc(pick)}` : "Start cleaning"}</button>
       <div class="sk-btnrow three">
@@ -804,7 +801,82 @@ Object.assign(PurdySkyCard.prototype, {
         <button class="sk-bigbtn" type="button" data-crewact="vacuum.return_to_base" data-target="${psEsc(v.entity)}"><ha-icon icon="mdi:home-import-outline"></ha-icon>Dock</button>
         ${v.emptied_button ? `<button class="sk-bigbtn" type="button" data-crewact="input_button.press" data-target="${psEsc(v.emptied_button)}"><ha-icon icon="mdi:cup-water"></ha-icon>Emptied</button>` : ""}
       </div>
-      <div class="sk-shellbits">${this._crewNightly(v)}${this._crewDeep(v)}</div>`;
+      ${this._skVacParts(v)}`;
+  },
+
+  /* A missing tank draws no arc and "—"; an empty one draws no arc and "0%". */
+  _skTankDial(dirty, clean) {
+    const arc = (val, r, cls) => {
+      const C = 2 * Math.PI * r;
+      return `<circle cx="52" cy="52" r="${r}" class="tr"/>${val != null && val > 0
+        ? `<circle cx="52" cy="52" r="${r}" class="${cls}" stroke-dasharray="${(C * skClamp(val / 100)).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 52 52)"/>` : ""}`;
+    };
+    const line = (val, icon, cls, name) => `<span class="sk-tdl ${cls}" aria-label="${name} ${val == null ? "no reading" : Math.round(val) + "%"}"><ha-icon icon="${icon}"></ha-icon><b>${val == null ? "—" : `${Math.round(val)}<small>%</small>`}</b></span>`;
+    return `<div class="sk-vring sk-tdial"><svg viewBox="0 0 104 104" width="104" height="104" aria-hidden="true">${arc(dirty, 47, "d")}${arc(clean, 35, "c")}</svg>
+        <div>${line(dirty, "mdi:bucket-outline", "d", "Dirty tank")}${line(clean, "mdi:cup-water", "c", "Clean water")}</div></div>`;
+  },
+
+  /* Tonight as a tile: it shows what tonight IS and a tap flips it — the
+     shell's radio handler, handed the other value. While the bedtime run is
+     going the flag already describes tomorrow, so the tile says Running and
+     takes no tap; an unreadable flag says "—", never Sweep. */
+  _skTonightTile(v) {
+    const n = v.nightly || {};
+    if (!n.mop_flag) return "";
+    const h = this._hass;
+    const flag = pcState(h, n.mop_flag);
+    const running = n.active ? pcState(h, n.active) === "on" : false;
+    if (running) return `<div class="st3"><b>Running</b><span>Tonight</span></div>`;
+    if (flag !== "on" && flag !== "off") return `<div class="st3"><b>—</b><span>Tonight</span></div>`;
+    const mop = flag === "on";
+    const padOff = mop && psCrewWater(h, v).mopPad === false;
+    return `<button class="st3 sk-ttap" type="button" data-crewmop="${psEsc(n.mop_flag)}" data-want="${mop ? "sweep" : "mop"}" aria-label="Tonight: ${mop ? "sweep and mop" : "sweep"}. Tap to switch">
+        <b>${mop ? "Mop" : "Sweep"}</b><span class="${padOff ? "warn" : ""}">${padOff ? "Pad off · sweeps" : "Tonight"}</span></button>`;
+  },
+
+  /* The deep clean keeps the shell's two-tap arm (cw:deep): an hours-long
+     carpet pass is not something to land on by scrolling. */
+  _skDeepTile(v) {
+    const d = v.deep_clean || {};
+    if (!d.automation) return "";
+    const last = psParseTs(pcState(this._hass, d.last));
+    const days = last == null ? null : Math.floor((this._nowMs() - last) / 86400000);
+    const armed = this._armed === "cw:deep";
+    const age = last == null ? "Never" : days <= 0 ? "Today" : `${days}<small>d</small>`;
+    return `<button class="st3 sk-ttap ${armed ? "armed" : ""}" type="button" data-arm="cw:deep">
+        <b>${armed ? "Start?" : age}</b><span>${armed ? "Tap again" : "Deep clean"}</span></button>`;
+  },
+
+  _skVacFold(key, icon, label, body) {
+    const open = !!(this._skVacFolds && this._skVacFolds[key]);
+    return `<div class="sk-opts ${open ? "open" : ""}">
+        <button class="sk-optsum" type="button" data-skvacfold="${key}" aria-expanded="${open}">
+          <ha-icon icon="${icon}"></ha-icon><span class="ps-grow">${label}</span><ha-icon icon="${open ? "mdi:chevron-up" : "mdi:chevron-down"}"></ha-icon></button>
+        ${open ? body : ""}
+      </div>`;
+  },
+
+  /* Parts fold to the one that matters — the lowest — and open to the rings,
+     which still hold to the part sheet. Mileage rides in here. */
+  _skVacParts(v) {
+    const h = this._hass;
+    const wear = (v.wear || []).map((w) => ({ ...w, v: pcNum(h, w.entity) }));
+    const mi = v.mileage || {};
+    const area = pcNum(h, mi.area), runs = pcNum(h, mi.runs);
+    const miles = area != null && mi.path_width_m ? (area * 0.092903 / mi.path_width_m) / 1609.34 : null;
+    if (!wear.length && miles == null) return "";
+    const lim = (w) => (w.warn_below == null ? 20 : w.warn_below);
+    const read = wear.filter((w) => w.v != null).sort((a, b) => a.v - b.v);
+    const low = read[0];
+    const label = !wear.length ? "Lifetime" : low
+      ? `Parts · <span class="${low.v <= lim(low) ? "sk-warntx" : ""}">${psEsc(low.label)} ${Math.round(low.v)}%</span>`
+      : "Parts · no readings";
+    const rings = wear.length ? `<div class="sk-wear" style="--n:${wear.length}">${wear.map((w, i) => `<div class="sk-wr${w.v != null && w.v <= lim(w) ? " due" : ""}"
+          data-skpart="${i}" role="button" tabindex="0" aria-label="${psEsc(w.label)} ${w.v == null ? "no reading" : Math.round(w.v) + "%"}, hold to clean">
+          <span class="r">${w.v == null ? `<span class="hatch"></span>` : this._skRing(w.v, 44, 5, w.v <= lim(w) ? "var(--ps-warn)" : "var(--ps-good)")}<b>${w.v == null ? "—" : Math.round(w.v) + "%"}</b></span>
+          <span>${psEsc(w.label)}</span></div>`).join("")}</div>` : "";
+    const life = miles == null ? "" : `<div class="sk-st3" style="--n:2;margin-top:4px"><div class="st3"><b>≈${miles.toFixed(1)}<small>mi</small></b><span>Lifetime</span></div><div class="st3"><b>${runs == null ? "—" : Math.round(runs)}</b><span>Runs</span></div></div>`;
+    return this._skVacFold("parts", "mdi:tune-variant", label, rings + life);
   },
 
   /* The four selects are set once and read every day, so at rest they are ONE
