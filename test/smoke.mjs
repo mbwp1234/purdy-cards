@@ -11618,7 +11618,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
         (done.match(/class="op"/g) || []).length === 6 && /class="now"/.test(done) && /sk-sitrow fut/.test(done) && /We're home/.test(done) &&
         /sk-sittile/.test(tile) && /data-skto="sk-c-sitter"/.test(tile) && /h ago/.test(tile) && /Sitter · 20m/.test(tile) && /sk-sittile/.test(tiles) &&
         /Here now/.test(here) && /class="cap live"/.test(here) && /sk-sittile lit/.test(hereTile) && /<b>10<\/b><small>min/.test(hereTile) &&
-        house.lastIndexOf('sk-c-sitter') > house.lastIndexOf('data-sheet="notifications"') &&
+        house.lastIndexOf('sk-c-sitter') < house.lastIndexOf('data-sheet="notifications"') &&
         /* Marks sit at their time of day on a 0–100% track (a 10x divisor once
            crowded every visit and the now tick into the first tenth). */
         (() => { const m = /class="now" style="left:([0-9.]+)%/.exec(done); const d = new Date();
@@ -11974,6 +11974,47 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return /data-skto="sk-c-litter"/.test(t) && /data-skto="sk-c-washer"/.test(t) &&
       /id="sk-c-litter"/.test(hs) && /id="sk-c-washer"/.test(hs);
   });
+  check('House order: cards above (lights, vacuum, litter, server, sitter), washer and notifications as tiles below', () => {
+    const c = skCfg();
+    c.sections.find((x) => x.type === 'crew').litter = { entity: 'vacuum.lb', waste_drawer: 'sensor.dr' };
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass(); h.states['input_select.w'] = { state: 'Off', attributes: {} };
+    h.states['sensor.dr'] = { state: '40', attributes: {} }; h.states['vacuum.lb'] = { state: 'docked', attributes: {} };
+    s2._hass = h;
+    const hs = s2._skHouse();
+    const at = (re) => hs.search(re);
+    const order = [/id="sk-c-lights"/, /id="sk-c-crew"/, /id="sk-c-litter"/, /id="sk-c-washer"/].map(at);
+    return order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1])) &&
+      /<button class="sk-tile" type="button" id="sk-c-washer"/.test(hs) && !/sk-rowcard" type="button" data-sheet="notifications"/.test(hs) &&
+      !/id="sk-c-washer" data-skc="washer" data-info="[^"]*"[^>]*>\s*<div class="sk-hd"/.test(hs);
+  });
+  check('Home tiles run lights, server, vacuum, litter in that order', () => {
+    const c = skCfg();
+    c.sections.find((x) => x.type === 'crew').litter = { entity: 'vacuum.lb', waste_drawer: 'sensor.dr' };
+    c.server = { name: 'S', status: 'sensor.srv', meters: [] };
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass(); h.states['sensor.dr'] = { state: '40', attributes: {} }; h.states['vacuum.lb'] = { state: 'docked', attributes: {} };
+    h.states['sensor.srv'] = { state: 'online', attributes: {} };
+    s2._hass = h;
+    const t = s2._skTiles();
+    const i = [/data-skto="sk-c-lights"/, /data-skmode="systems"/, /data-skto="sk-c-crew"/, /data-skto="sk-c-litter"/].map((re) => t.search(re));
+    return i.every((v) => v >= 0) && i.every((v, k) => k === 0 || v > i[k - 1]);
+  });
+  check('Home carries Media only while something is on, and then only the sets that are on', () => {
+    const c = skCfg();
+    let np = c.sections.find((x) => x.type === 'nowplaying');
+    if (!np) { np = { type: 'nowplaying', key: 'npx' }; c.sections.push(np); }
+    np.tvs = [{ name: 'Living Room', media_player: 'media_player.tva' }, { name: 'Bedroom', media_player: 'media_player.tvb' }];
+    c.now_playing = { players: [] };
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass(); s2._hass = h;
+    h.states['media_player.tva'] = { state: 'off', attributes: {} }; h.states['media_player.tvb'] = { state: 'off', attributes: {} };
+    const quiet = s2._skMediaHome('home'), full = s2._skMediaHome();
+    h.states['media_player.tvb'] = { state: 'on', attributes: {} };
+    const one = s2._skMediaHome('home');
+    return quiet === '' && (full.match(/sk-mrow/g) || []).length === 2 && (one.match(/sk-mrow/g) || []).length === 1 && /Bedroom TV/.test(one) &&
+      /_skMediaHome\("home"\)/.test(skSrc);
+  });
   check('the litter card opens a stats sheet: weight, visits, when, drawer forecast, tiles, and keeps Cycle/Reset', () => {
     const c = skCfg();
     c.sections.find((x) => x.type === 'crew').litter = { entity: 'vacuum.lb', name: 'Litter box', waste_drawer: 'sensor.dr', litter_level: 'sensor.lv',
@@ -12195,7 +12236,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     const lo = mkVeh({ 'sensor.fuel': { state: '5', attributes: {} } }, Object.assign({}, VEH, { economy: { mpg: 18 } }));
     lo.s2._skHome([]); await settle(); await settle();
     check('under 30 mi of range the gauge turns amber (the fill-up automation\'s line)', /class="sk-vfuel low"/.test(lo.s2._skHome([]).html) && /≈24 mi/.test(lo.s2._skHome([]).html));
-    check('the House tab carries the truck as a row', /class="sk-card sk-rowcard" type="button" data-sknav="\/garage"/.test(a.s2._skHouse()) && /3 overdue · next Rear diff/.test(a.s2._skHouse()));
+    check('the truck lives on Home only: House draws no vehicle row, and the Home card opens the same panel', !/data-sknav/.test(a.s2._skHouse()) && /data-sknav="\/garage"/.test(a.s2._skHome([]).html));
     check('the vehicle sensors are watched (a top-level key the section walk never sees)', () => {
       const w = a.s2._collectWatched();
       return w.indexOf('sensor.over') >= 0 && w.indexOf('sensor.next') >= 0;
@@ -12243,7 +12284,7 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     check('a vehicle with no fuel sensor draws no gauge at all (only the truck has one)', (home2.html.match(/class="sk-vfuel"/g) || []).length === 1);
     check('the pill counts across vehicles', /3 due/.test(home2.pills));
     const house2 = t.s2._skHouse();
-    check('the House tab carries a row per vehicle', (house2.match(/sk-rowcard/g) || []).length >= 2 && /12 never logged/.test(house2) && /3 overdue · next Rear diff/.test(house2));
+    check('two vehicles: House draws no rows, Home opens each one', !/data-sknav/.test(house2) && /data-sknav="\/garage\?vehicle=Kona"/.test(home2.html));
     check('every vehicle\'s sensors are watched', t.s2._collectWatched().indexOf('sensor.k_over') >= 0);
     const t2 = mkTwo([{ id: 'y' }]);
     t2.s2._skHome([]); await settle(); await settle();

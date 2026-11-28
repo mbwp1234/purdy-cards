@@ -425,6 +425,8 @@ Object.assign(PurdySkyCard.prototype, {
     (np && only !== "music" ? np.tvs || [] : []).forEach((t) => {
       const st = pcState(h, t.media_player || t.remote);
       const on = st && st !== "off" && st !== "unavailable" && st !== "unknown";
+      /* Home shows only what is on; the Media tab keeps every set. */
+      if (only === "home" && !on) return;
       const app = pcState(h, t.app_sensor);
       const appOk = app && app !== "unknown" && app !== "unavailable";
       rows.push(`<button class="sk-mrow" type="button" data-sktab="media" data-face="watch">
@@ -576,23 +578,29 @@ Object.assign(PurdySkyCard.prototype, {
     const crew = this._skSec("crew");
     if (crew && crew.vacuum && crew.vacuum.entity) parts.push(P.vac = this._skCard("crew", this._skVacuum(crew.vacuum), null, "sk-pad"));
     if (crew && crew.litter && crew.litter.entity) parts.push(P.litter = this._skCard("litter", this._skLitter(crew.litter), null, "sk-pad"));
-    if (crew && crew.washer && crew.washer.entity) parts.push(P.washer = this._skCard("washer", this._skWasher(crew.washer), null, "sk-pad"));
     const s = this._sysCfg && this._sysCfg();
     if (s) parts.push(P.nas = this._skCard("nas", this._skNasCard(s)));
-    const veh = this._skVehicleRow();
-    if (veh) parts.push(P.veh = veh);
-    if ((this._config.sheets || {}).notifications) {
-      const n = this._logOpenCount();
-      parts.push(P.notes = `<button class="sk-card sk-rowcard" type="button" data-sheet="notifications">
-          <span class="sk-ico" style="--c:var(--ps-warn)"><ha-icon icon="mdi:bell-outline"></ha-icon></span>
-          <span class="ps-grow"><b>Notifications</b><small>${n ? `${n} unread` : "Everything read"}</small></span><ha-icon icon="mdi:chevron-right"></ha-icon></button>`);
-    }
     const sit = this._skSitter();
     if (sit) parts.push(P.sit = sit);
+    /* Your order (2026-11-27): cards above, tiles below. The washer and the
+       notification log are one fact each, so they are tiles. The vehicles
+       are not here: Home's Garage card opens the same /garage pages. The
+       notifications tile STAYS — while any fault is raised the bell opens
+       the alerts sheet, so this is the only way to the log. */
+    const tl = [];
+    if (crew && crew.washer && crew.washer.entity) tl.push(this._skWasherTile(crew.washer));
+    if ((this._config.sheets || {}).notifications) {
+      const n = this._logOpenCount();
+      tl.push(`<button class="sk-tile" type="button" data-sheet="notifications" aria-label="Notifications, ${n} unread">
+          <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-warn)"><ha-icon icon="mdi:bell-outline"></ha-icon></span></span>
+          <span class="sk-tv"><b>${n}</b><small>unread</small></span>
+          <span class="sk-tlab">Notifications</span></button>`);
+    }
+    if (tl.length) parts.push(P.tiles = `<div class="sk-tiles sk-housetiles">${tl.join("")}</div>`);
     /* The vacuum is the tallest thing in the house, so it gets a column of
        its own and the rest stack beside it. */
-    if (this._skHas("wide")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer], [P.vac], [P.nas, P.veh, P.notes, P.sit]], "sk-housecols");
-    if (this._skHas("split")) return parts[0] + this._skCols([[P.lights, P.litter, P.washer, P.nas], [P.vac, P.veh, P.notes, P.sit]], "sk-housecols");
+    if (this._skHas("wide")) return parts[0] + this._skCols([[P.lights, P.litter], [P.vac], [P.nas, P.sit, P.tiles]], "sk-housecols");
+    if (this._skHas("split")) return parts[0] + this._skCols([[P.lights, P.litter, P.nas], [P.vac, P.sit, P.tiles]], "sk-housecols");
     return parts.join("");
   },
 
@@ -865,6 +873,25 @@ Object.assign(PurdySkyCard.prototype, {
       </span></button>
       ${l.reset_button ? `<button class="sk-bigbtn wide ${err ? "pri" : ""} ${this._skArmed === "lr" ? "armed" : ""}" type="button" data-skarm="lr" data-skpress="${psEsc(l.reset_button)}">
           <ha-icon icon="mdi:restart"></ha-icon>${this._skArmed === "lr" ? "Tap again to reset" : err ? "Reset after clearing it" : "Reset"}</button>` : ""}`;
+  },
+
+  /* The washer as a House tile: how long since the last load, or what it is
+     doing now. Keeps the card's id so Home's running-washer tile still
+     scrolls here. */
+  _skWasherTile(w) {
+    const h = this._hass;
+    const st = String(pcState(h, w.entity) || "unknown");
+    const started = w.start_time && h.states[w.start_time] ? h.states[w.start_time].state : null;
+    const d = started ? new Date(started.replace(" ", "T")) : null;
+    const done = /done|finish|complete/i.test(st), run = /run|wash|spin|rinse/i.test(st);
+    const ago = d && !isNaN(d) ? (Date.now() - d.getTime()) / 3600000 : null;
+    const tv = run || done ? `<b>${psEsc(this._humanize(st))}</b>`
+      : ago == null ? `<b class="ps-nodata">—</b>`
+      : ago < 24 ? `<b>${Math.max(0, Math.round(ago))}</b><small>h ago</small>` : `<b>${Math.round(ago / 24)}</b><small>d ago</small>`;
+    return `<button class="sk-tile" type="button" id="sk-c-washer" data-skc="washer" data-info="${psEsc(w.entity)}" aria-label="${psEsc(w.name || "Washer")}, ${psEsc(this._humanize(st))}">
+        <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-cool)"><ha-icon icon="${psEsc(w.icon || "mdi:washing-machine")}"></ha-icon></span>${done ? `<span class="sk-warn"></span>` : ""}</span>
+        <span class="sk-tv">${tv}</span>
+        <span class="sk-tlab">${psEsc(w.name || "Washer")} · ${psEsc(run || done ? "now" : this._humanize(st))}</span></button>`;
   },
 
   _skWasher(w) {
