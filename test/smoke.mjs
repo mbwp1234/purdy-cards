@@ -11974,6 +11974,56 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
     return /data-skto="sk-c-litter"/.test(t) && /data-skto="sk-c-washer"/.test(t) &&
       /id="sk-c-litter"/.test(hs) && /id="sk-c-washer"/.test(hs);
   });
+  check('the litter card opens a stats sheet: weight, visits, when, drawer forecast, tiles, and keeps Cycle/Reset', () => {
+    const c = skCfg();
+    c.sections.find((x) => x.type === 'crew').litter = { entity: 'vacuum.lb', name: 'Litter box', waste_drawer: 'sensor.dr', litter_level: 'sensor.lv',
+      reset_button: 'button.lr', pet: { name: 'Cat', weight: 'sensor.wt', visits: 'sensor.vis', scoops: 'sensor.cyc' } };
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass();
+    Object.assign(h.states, { 'vacuum.lb': { state: 'docked', attributes: {} }, 'sensor.dr': { state: '27', attributes: {} },
+      'sensor.lv': { state: '90', attributes: {} }, 'sensor.wt': { state: '10.03', attributes: {} }, 'sensor.vis': { state: '3', attributes: {} },
+      'sensor.cyc': { state: '2369', attributes: {} } });
+    s2._hass = h;
+    const now = Date.now(), D = 864e5;
+    /* Not loaded: everything waits, nothing reads zero. */
+    s2._skLt = { at: now, busy: false };
+    const wait = s2._skLitterSheet();
+    /* 90 days of weight with two half-step days; visits 3/day at 8am, 1pm, 7pm; a drawer that fills 3%/day and was emptied 2 days ago. */
+    const wday = [];
+    for (let i = 90; i >= 1; i--) wday.push({ t: now - i * D, v: 10 + (i > 45 ? 0.1 : 0), lo: i === 40 || i === 41 ? 5.09 : 9.9, hi: 10.2 });
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    const vis = [{ t: d0.getTime() - 9 * D - 3600e3, s: '0' }];
+    for (let i = 9; i >= 0; i--) { const b = d0.getTime() - i * D; [8, 13, 19].forEach((hr, k) => { if (b + hr * 36e5 < now) vis.push({ t: b + hr * 36e5, s: String(k + 1) }); }); vis.push({ t: b + D - 60e3, s: '0' }); }
+    const dr = [];
+    for (let i = 60 * 24; i >= 1; i--) { const t = now - i * 36e5, age = (i / 24) % 20; dr.push({ t, v: i < 48 ? 21 - i / 8 : 10 + (20 - age) * 3 }); }
+    const cday = []; for (let i = 98; i >= 1; i--) cday.push({ t: now - i * D, v: 2369 - i * 3 });
+    const vac = [{ t: now - 9 * D, s: 'docked' }, { t: now - 4 * D, s: 'error' }, { t: now - 4 * D + 3600e3, s: 'docked' }];
+    s2._skLt = { at: now, busy: false, err: null, wday, w10: [{ t: now - 3 * D, v: 9.95 }, { t: now - 2 * D, v: 5.1 }, { t: now - D, v: 10.05 }], vis, vac, dr, cday, h0: d0.getTime() - 9 * D };
+    const sheet = s2._skLitterSheet();
+    s2._skLtR = '10';
+    const ten = s2._skLitterSheet();
+    s2._skLtR = undefined;
+    const weeks = s2._skLtWeeks(wday, now).filter(Boolean);
+    s2._sheet = 'litter';
+    const via = s2._sheetHtml([]);
+    s2._sheet = null;
+    s2._skLt = { at: now, busy: false, err: 'boom' };
+    const err = s2._skLitterSheet();
+    const card = s2._skHouse();
+    return /sk-ltchart wait/.test(wait) && /sk-ltbars wait/.test(wait) && !/>0<\/b>/.test(wait) &&
+      /<b>10\.03<\/b><small>lb/.test(sheet) && /−0\.1 lb · 3 mo/.test(sheet) && /class="band"/.test(sheet) &&
+      weeks.every((w) => w.lo > 9) &&
+      /data-skltr="10" aria-selected="true"/.test(ten) && /class="pt"/.test(ten) && /9\.95–10\.05/.test(ten) && !/5\.10/.test(ten) &&
+      /<b>3\.0<\/b><small>a day/.test(sheet) && (sheet.match(/class="sk-ltbar[ "]/g) || []).length === 10 && /Peak 7a–10a|Peak 6a–9a|Peak 8a–11a|Peak 11a–2p|Peak 12p–3p|Peak 1p–4p|Peak 5p–8p|Peak 6p–9p|Peak 7p–10p/.test(sheet) &&
+      (sheet.match(/class="sk-ltrow/g) || []).length === 10 &&
+      /Full ≈ /.test(sheet) && /class="proj"/.test(sheet) && /<b>27<\/b><small>%/.test(sheet) &&
+      /<b>1<\/b><span>Faults<\/span>/.test(sheet) && /<b>2,369<\/b><span>Cycles/.test(sheet) && /<b>90<small>%<\/small><\/b><span>Litter/.test(sheet) &&
+      /data-skltcycle="1"/.test(sheet) && /data-skarm="lrs" data-skpress="button\.lr"/.test(sheet) &&
+      /sk-lt"/.test(via) && /would not load — boom/.test(err) &&
+      /data-sheet="litter"/.test(card) && /data-skarm="lr"/.test(card);
+  });
+  check('the litter sheet is dispatched, bound and styled', /this\._sheet === "litter"\) return this\._skLitterSheet\(\)/.test(skSrc) &&
+    /this\._skLitterBind\(\);/.test(skSrc) && /SK_LITTER_STYLES;/.test(skSrc));
   check('the lights tile counts the way the Lights chip does', () => {
     const c = skCfg();
     c.sections.find((x) => x.type === 'lights').lights = [{ entity: 'light.a', name: 'Lamp' },

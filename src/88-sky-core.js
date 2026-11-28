@@ -453,6 +453,7 @@ class PurdySkyCard extends PurdyShellCard {
   _sheetHtml(faults) {
     if (this._sheet === "skpart") return this._skPartSheet();
     if (this._sheet === "lake") return this._skLakeSheet();
+    if (this._sheet === "litter") return this._skLitterSheet();
     return super._sheetHtml(faults);
   }
 
@@ -1196,6 +1197,7 @@ class PurdySkyCard extends PurdyShellCard {
   _skBind() {
     this._skJoelBind();
     this._skLakeBind();
+    this._skLitterBind();
     /* A card that is another app's front door (the Garage panel). */
     this._each("[data-sknav]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1602,6 +1604,6 @@ class PurdySkyCard extends PurdyShellCard {
   static get styles() {
     /* The shell's sheet speaks white-alpha; rewritten once so the same rules
        read on paper. */
-    return PurdyShellCard.styles.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg),") + SK_STYLES + SK_SKY_STYLES + SK_JOEL_STYLES;
+    return PurdyShellCard.styles.replace(/rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/g, "rgba(var(--sk-fg),") + SK_STYLES + SK_SKY_STYLES + SK_JOEL_STYLES + SK_LITTER_STYLES;
   }
 }
