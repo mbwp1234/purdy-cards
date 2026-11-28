@@ -213,7 +213,7 @@ Object.assign(PurdyShellCard.prototype, {
   _pvRing(st, o) {
     /* `full` closes the ring: at 46px a horseshoe's open foot read as a
        broken circle, and nothing sits in the gap to need it. */
-    const size = (o && o.size) || 28, stroke = o && o.full ? 3 : 2.2, r = size / 2 - stroke / 2 - 1.4;
+    const size = (o && o.size) || 28, stroke = (o && o.stroke) || (o && o.full ? 3 : 2.2), r = size / 2 - stroke / 2 - 1.4;
     const c = 2 * Math.PI * r;
     const arc = o && o.full ? c : pcRingArc(r);
     const cx = size / 2;

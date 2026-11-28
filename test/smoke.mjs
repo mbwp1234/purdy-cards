@@ -12095,7 +12095,72 @@ const { lightBand: plBand, lightFx: plFx, lightByte: plByte, treeStars: plTreeSt
       /data-sheet="litter"/.test(card) && /data-skarm="lr"/.test(card);
   });
   check('the litter sheet is dispatched, bound and styled', /this\._sheet === "litter"\) return this\._skLitterSheet\(\)/.test(skSrc) &&
-    /this\._skLitterBind\(\);/.test(skSrc) && /SK_LITTER_STYLES;/.test(skSrc));
+    /this\._skLitterBind\(\);/.test(skSrc) && /SK_LITTER_STYLES[ ;]/.test(skSrc));
+  /* v1.116.0: person, weather and notifications are Skylight's own sheets. */
+  check('the person, weather and notification sheets are dispatched, bound and styled', () =>
+    /this\._sheet === "person"\) return this\._skPersonSheet\(\)/.test(skSrc) && /this\._sheet === "wx"\) return this\._skWxSheet\(\)/.test(skSrc) &&
+    /this\._sheet === "notifications"\) return this\._skNotesSheet\(\)/.test(skSrc) && /this\._skSheetsBind\(\);/.test(skSrc) && /SK_SHEETS_STYLES;/.test(skSrc));
+  check('person sheet: the face carries the ring and opens the device page; a missing reading is a dash', () => {
+    const c = skCfg();
+    c.people = [{ entity: 'person.b', name: 'Bo', steps: 'sensor.st', distance: 'sensor.di', floors: 'sensor.fl', battery: 'sensor.bt' }];
+    const s2 = new SK(); s2.setConfig(c);
+    const h = d2Hass();
+    Object.assign(h.states, { 'person.b': { state: 'not_home', attributes: {}, last_changed: new Date().toISOString() },
+      'sensor.st': { state: '2051', attributes: {} }, 'sensor.di': { state: '1609', attributes: { unit_of_measurement: 'm' } },
+      'sensor.fl': { state: 'unavailable', attributes: {} }, 'sensor.bt': { state: '20', attributes: {} } });
+    s2._hass = h; s2._personPick = 0;
+    s2._personStats = () => ({ today: 2051, yest: 2766, goal: 4752, goalKind: 'avg', band: null, stats: { n: 6 },
+      week: [4446, 7179, null, 4938, 4681, 2766, 2051].map((v, i) => ({ steps: v, today: i === 6, at: Date.now() - (6 - i) * 864e5, key: 'k' + i })) });
+    s2._sheet = 'person';
+    const html = s2._sheetHtml([]);
+    return /data-info="person\.b"/.test(html) && /sk-ppface away/.test(html) && /<b>2,051<\/b>/.test(html) && />Away · /.test(html) &&
+      (html.match(/class="sk-ltbar/g) || []).length === 7 && /sk-ltbar none/.test(html) && /class="sk-pavg"/.test(html) &&
+      /<b>1\.0<small>mi<\/small><\/b>/.test(html) && /<b>—<\/b><span>Floors/.test(html) && /sk-ltank low/.test(html) &&
+      !/Marker is|Band is|behind this time/.test(html);
+  });
+  check('weather sheet: now + 24h, the week with Past/Next, tiles; no measured min/avg/max boxes or sentence', () => {
+    const s2 = new SK(); s2.setConfig(skCfg());
+    s2._hass = d2Hass();
+    const sec = s2._weatherSection();
+    const t0 = Date.now();
+    s2._wxHrs = Array.from({ length: 24 }, (_, i) => ({ ts: t0 + i * 36e5, t: 40 + (i > 10 && i < 18 ? 15 : 0), condition: 'cloudy', pop: i === 12 ? 60 : 2 }));
+    s2._wxFc = [{ ts: t0, lo: 39, hi: 49, today: true, pop: 2 }, { ts: t0 + 864e5, lo: 33, hi: 59, pop: 94, condition: 'rainy' }];
+    s2._wxStats = [{ ts: t0 - 864e5, min: 30, max: 50 }, { ts: t0, min: 39, max: 44, partial: true }];
+    s2._sheet = 'wx';
+    s2._wxPick = 'forecast';
+    const next = s2._sheetHtml([]);
+    s2._wxPick = 'history';
+    const past = s2._sheetHtml([]);
+    s2._wxHrs = null; s2._wxPick = null;
+    const wait = s2._sheetHtml([]);
+    return !!sec && /sk-ltchart sk-wxh/.test(next) && /class="rn"/.test(next) && /class="ext"/.test(next) &&
+      /data-wxrail="forecast" aria-selected="true"/.test(next) && /data-wxrail="history" aria-selected="true"/.test(past) &&
+      /sk-weekrail/.test(past) && /mdi:umbrella/.test(next) && !/ps-wxtiles|ps-wxnote|Measured/.test(next) &&
+      /Reading the forecast/.test(wait);
+  });
+  check('notification sheet: Needs you / FYI, duplicates folded into one row, updates folded, titles shortened, restore kept', () => {
+    const s2 = new SK(); s2.setConfig(skCfg());
+    s2._hass = d2Hass();
+    const iso = new Date(Date.now() - 2 * 864e5).toISOString();
+    const it = (uid, summary, desc, status) => ({ uid, summary, description: desc, status: status || 'needs_action' });
+    s2._skNt = { sig: 'x', busy: false, items: [
+      it('a', 'Kitchen + Office offline', `[off] warn · not reporting since Wed 1:33 PM · raised ${iso}`),
+      it('b', 'Truck service overdue', `[truck] warn · Log it in Garage · raised ${iso}`),
+      it('c', '1 low batteries', `[batt] info · Bedroom Temp/Humid · raised ${iso}`),
+      it('d', '1 low batteries', `[batt] info · Bedroom Temp/Humid · raised ${iso}`),
+      it('e', 'Notice [NAS] - Version update c553..28a9', `[unraid] info · A new version of Avidemux is available · raised ${iso}`),
+      it('f', 'System', `[unraid] info · A new Unraid OS version is available: 7.4.1 · raised ${iso}`),
+      it('g', 'Old thing', `[x] info · gone · raised ${iso}`, 'completed')] };
+    s2._skNtLoad = () => {};
+    s2._sheet = 'notifications';
+    const html = s2._sheetHtml([]);
+    const n = (re) => (html.match(re) || []).length;
+    return /Needs you/.test(html) && /FYI/.test(html) && n(/data-skntst="completed"/g) === 5 && /data-sknt="c,d"/.test(html) &&
+      /<b>Kitchen \+ Office<\/b><small>Offline since Wed 1:33 PM/.test(html) && /<b>Truck service<\/b><small>Overdue/.test(html) &&
+      /<b>Bedroom Temp\/Humid<\/b><small>Battery low/.test(html) && /<b>Avidemux<\/b><small>Update/.test(html) &&
+      /<b>Unraid OS 7\.4\.1<\/b>/.test(html) && /data-skntst="needs_action"/.test(html) && /data-skntall="nt:hist"/.test(html) &&
+      /data-skntall="nt:all"/.test(html) && /data-skntall="nt:fyi"/.test(html) && !/ps-host/.test(html);
+  });
   check('the lights tile counts the way the Lights chip does', () => {
     const c = skCfg();
     c.sections.find((x) => x.type === 'lights').lights = [{ entity: 'light.a', name: 'Lamp' },
