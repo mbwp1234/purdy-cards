@@ -399,6 +399,11 @@ const server = http.createServer(async (req, res) => {
 
     if (u.pathname === "/h/refused") return json(res, 200, { refused });
 
+    /* Which bundle this server is serving. shoot.mjs compares it with the one
+       it would have picked, because a server left running from another clone
+       serves THAT clone's bundle and the shot looks like the change failing. */
+    if (u.pathname === "/h/info") return json(res, 200, { bundle: BUNDLE, patches: path.join(HERE, "patches") });
+
     return send(res, 404, "text/plain", "not found");
   } catch (e) {
     console.error("  500 " + u.pathname + ": " + (e && e.stack || e));

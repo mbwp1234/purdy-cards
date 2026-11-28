@@ -101,6 +101,15 @@ Three consequences worth internalising:
 
 Rules that keep it cheap:
 
+- **Cheapest question first.** `--text` (no image) → `--measure` (section
+  heights as one line) → `--clip <selector>` (one card, ~130–180 tokens) → a
+  full phone (~440) → a desk (~1.7k). Every line prints its `~N tok`.
+- **Write a probe once.** `--js-file probe.js` instead of re-sending a long
+  `--js` string on every iteration.
+- **Mockups go through the same pipe.** `--shot name:390x844:@mockup.html`
+  photographs a local HTML file with the phone's insets, and takes `--clip`.
+- **`test/smoke.mjs` is quiet**: failures and a count. `-v` for every PASS line
+  (~30k tokens — never needed to know the suite passed).
 - **Shoot only what changed** (`shoot.mjs phone-joel`), not all 13.
 - **Always pass `view_path=`** to `ha_config_get_dashboard` — 6× cheaper than the
   whole dashboard, and the `config_hash` still covers the full config so a
@@ -184,4 +193,15 @@ so it cannot change the layout it is describing).
 | `--out` | `~/purdy-shots` |
 | `--dpr` | `1` |
 | `--base` | `http://127.0.0.1:8099` |
-| `CHROME_BIN` | `/Applications/Google Chrome.app/…/Google Chrome` |
+| `CHROME_BIN` | Google Chrome, else a Playwright-cached Chrome for Testing |
+| `--text` | off — skip the PNG, print status/notes/measure/js only |
+| `--measure [sel]` | off — children's heights; default `#ps-col`, Skylight's visible stack, or `main` |
+| `--clip <sel>` | off — screenshot only that element (in the card's shadow root, else the document) |
+| `--js-file <path>` | — `--js` read from a file |
+| `--quiet` | off — print only BAD shots |
+| `--env` / `--url` (shoot) | passed to the server when shoot.mjs starts it |
+
+`shoot.mjs` starts `server.mjs` itself if nothing answers on `:8099` (log in
+`$TMPDIR/purdy-shoot-server.log`), and warns when the server that IS answering
+serves a different `purdy-cards.js` from the one in the cwd — the stale-server
+trap, caught instead of photographed.
