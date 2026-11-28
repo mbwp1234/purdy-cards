@@ -12688,7 +12688,15 @@ Object.assign(PurdyShellCard.prototype, {
             ${this._config.dismiss_store ? `<button class="ps-x" type="button" data-dismiss="${i}"
               aria-label="Dismiss ${psEsc(f.title)}">
               <svg viewBox="0 0 24 24" class="ps-ico"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}
-          </div>`).join("")}
+          </div>`).join("")}${
+          
+
+          (this._config.sheets || {}).notifications ? (() => {
+            const n = this._logOpenCount();
+            return `<button class="ps-ar ps-arlog" type="button" data-sheet="notifications">
+              <span class="ps-grow"><span class="ps-at">All notifications</span><span class="ps-ad">${n ? `${n} unread` : "Everything read"}</span></span>
+              <svg viewBox="0 0 24 24" class="ps-ico"><path d="M9 6l6 6-6 6"/></svg></button>`;
+          })() : ""}
         </div>`;
     }
 
@@ -22385,6 +22393,7 @@ const PS_STYLES = `
       .ps-ar { display: flex; align-items: center; gap: 9px; padding: 9px 0;
                border-top: 1px solid var(--ps-hair-soft); cursor: pointer; }
       .ps-ar:first-of-type { border-top: 0; }
+      .ps-arlog { width: 100%; text-align: left; }
       .ps-at { display: block; font-size: var(--pc-fs-md); font-weight: 650; }
       .ps-ad { display: block; font-size: var(--pc-fs-xs); color: var(--ps-muted); }
 
@@ -27541,10 +27550,11 @@ const SK_HGROUPS = [
   { key: "lights", name: "Lights", icon: "mdi:lightbulb-outline", c: "var(--sk-lamp)", dx: -163, dy: -83 },
   { key: "clean", name: "Cleaning", icon: "mdi:robot-vacuum", c: "var(--ps-good)", dx: -133, dy: -157 },
   { key: "pets", name: "Pets", icon: "mdi:cat", c: "var(--sk-litter)", dx: -72, dy: -208 },
-  { key: "server", name: "Server", icon: "mdi:server", c: "var(--sk-nas)", dx: 6, dy: -225 },
+  
+  { key: "server", name: "Server", icon: "mdi:server", c: "var(--sk-nas)", dx: 6, dy: -225, mode: "systems" },
 ];
 
-const SK_HGROUP_OF = { "sk-c-lights": "lights", "sk-c-crew": "clean", "sk-c-washer": "clean", "sk-c-litter": "pets", "sk-c-sitter": "pets", "sk-c-nas": "server" };
+const SK_HGROUP_OF = { "sk-c-lights": "lights", "sk-c-crew": "clean", "sk-c-washer": "clean", "sk-c-litter": "pets", "sk-c-sitter": "pets" };
 
 
 
@@ -27710,7 +27720,7 @@ class PurdySkyCard extends PurdyShellCard {
         <section class="sk-view" data-v="house"><div class="sk-stack" id="sk-house"></div></section>
         <section class="sk-view sk-sys" data-v="sys"><div class="sk-stack" id="sk-sys"></div></section>
         <footer class="sk-foot" id="sk-foot"><div class="sk-brand" id="sk-brand"></div><div class="sk-mini" id="sk-mini"></div><button class="sk-fanx" type="button" data-skfanx="1" tabindex="-1" aria-label="Close"></button><nav class="sk-dock" id="sk-dock" aria-label="Tabs"></nav><div class="sk-fan" id="sk-fan">${
-          SK_HGROUPS.map((g, n) => `<button class="sk-fanb" type="button" data-skhg="${g.key}" style="--c:${g.c};--dx:${g.dx}px;--dy:${g.dy}px;--d:${n}" tabindex="-1"><span class="orb"><span class="sk-ico"><ha-icon icon="${g.icon}"></ha-icon></span></span><span class="sk-fanl">${g.name}</span></button>`).join("")}</div></footer>
+          SK_HGROUPS.map((g, n) => `<button class="sk-fanb" type="button" ${g.mode ? `data-skmode="${g.mode}"` : `data-skhg="${g.key}"`} style="--c:${g.c};--dx:${g.dx}px;--dy:${g.dy}px;--d:${n}" tabindex="-1"><span class="orb"><span class="sk-ico"><ha-icon icon="${g.icon}"></ha-icon></span></span><span class="sk-fanl">${g.name}</span></button>`).join("")}</div></footer>
       </div>
       <div id="ps-sheetslot"></div>`;
     this._mounted = true;
@@ -28770,6 +28780,9 @@ class PurdySkyCard extends PurdyShellCard {
     }));
     this._each("[data-skback]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
+      
+
+      if (!this._skHas("tab")) { this._skGo(this._skTab || "home"); return; }
       this._skGo("house", { to: "sk-c-nas" });
     }));
     this._each("[data-skbell]", (el) => el.addEventListener("click", (e) => {
@@ -30794,29 +30807,19 @@ Object.assign(PurdySkyCard.prototype, {
     
 
 
-
-
     const tl = [];
     if (crew && crew.washer && crew.washer.entity) tl.push(this._skWasherTile(crew.washer));
-    if ((this._config.sheets || {}).notifications) {
-      const n = this._logOpenCount();
-      tl.push(`<button class="sk-tile" type="button" data-sheet="notifications" aria-label="Notifications, ${n} unread">
-          <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-warn)"><ha-icon icon="mdi:bell-outline"></ha-icon></span></span>
-          <span class="sk-tv"><b>${n}</b><small>unread</small></span>
-          <span class="sk-tlab">Notifications</span></button>`);
-    }
     if (tl.length) parts.push(P.tiles = `<div class="sk-tiles sk-housetiles">${tl.join("")}</div>`);
     
 
     if (!this._skHas("tab")) {
-      const g = SK_HGROUPS.find((x) => x.key === this._skHg) || SK_HGROUPS[0];
+      const g = SK_HGROUPS.find((x) => x.key === this._skHg && !x.mode) || SK_HGROUPS[0];
       const tile = (t) => (t ? `<div class="sk-tiles sk-housetiles">${t}</div>` : "");
       const page = {
         lights: [P.lights],
         clean: [P.vac, tile(crew && crew.washer && crew.washer.entity ? this._skWasherTile(crew.washer) : "")],
         pets: [P.litter, P.sit],
-        server: [P.nas, tile(tl.find((x) => /data-sheet="notifications"/.test(x)) || "")],
-      }[g.key];
+      }[g.key] || [P.lights];
       return this._skTitle(g.name) + page.filter(Boolean).join("");
     }
     
@@ -31151,7 +31154,9 @@ Object.assign(PurdySkyCard.prototype, {
       perf: () => `<div class="sk-card sk-pad sk-shellpage">${this._syPerf(s)}</div>`,
       alerts: () => `<div class="sk-card sk-pad sk-shellpage">${this._syAlerts(s)}</div>`,
     }[page.key];
-    return `<button class="sk-back" type="button" data-skback="1"><ha-icon icon="mdi:chevron-left"></ha-icon>House</button>
+    
+    const backTo = this._skHas("tab") ? "House" : ((SK_TABS.find((t) => t.key === (this._skTab || "home")) || SK_TABS[0]).name);
+    return `<button class="sk-back" type="button" data-skback="1"><ha-icon icon="mdi:chevron-left"></ha-icon>${psEsc(backTo)}</button>
       ${this._skTitle(s.name || "Server", `<span class="sk-status big ${online ? "good" : "bad"}">${online ? `Up ${psEsc(up && up !== "unknown" ? up : "")}` : r.ok ? psEsc(String(r.st.state)) : "No data"}</span>`)}
       ${tabs}${body ? (this._skHas("tab") ? `<div class="sk-sysbody pg-${psEsc(page.key)}">${body()}</div>` : body()) : ""}`;
   },

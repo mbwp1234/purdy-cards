@@ -584,32 +584,22 @@ Object.assign(PurdySkyCard.prototype, {
     if (s) parts.push(P.nas = this._skCard("nas", this._skNasCard(s)));
     const sit = this._skSitter();
     if (sit) parts.push(P.sit = sit);
-    /* Your order (2026-11-27): cards above, tiles below. The washer and the
-       notification log are one fact each, so they are tiles. The vehicles
-       are not here: Home's Garage card opens the same /garage pages. The
-       notifications tile STAYS — while any fault is raised the bell opens
-       the alerts sheet, so this is the only way to the log. */
+    /* Cards above, the washer as a tile below. The vehicles are not here:
+       Home's Garage card opens the same /garage pages. The notification log
+       is reached from the bell — its alerts list ends in a row to the log. */
     const tl = [];
     if (crew && crew.washer && crew.washer.entity) tl.push(this._skWasherTile(crew.washer));
-    if ((this._config.sheets || {}).notifications) {
-      const n = this._logOpenCount();
-      tl.push(`<button class="sk-tile" type="button" data-sheet="notifications" aria-label="Notifications, ${n} unread">
-          <span class="sk-trow"><span class="sk-ico" style="--c:var(--ps-warn)"><ha-icon icon="mdi:bell-outline"></ha-icon></span></span>
-          <span class="sk-tv"><b>${n}</b><small>unread</small></span>
-          <span class="sk-tlab">Notifications</span></button>`);
-    }
     if (tl.length) parts.push(P.tiles = `<div class="sk-tiles sk-housetiles">${tl.join("")}</div>`);
     /* The phone: one page at a time, picked from the dock's fan. The washer
-       rides with the vacuum, the notification log with the server. */
+       rides with the vacuum; the fan's Server opens the PurdyNAS page. */
     if (!this._skHas("tab")) {
-      const g = SK_HGROUPS.find((x) => x.key === this._skHg) || SK_HGROUPS[0];
+      const g = SK_HGROUPS.find((x) => x.key === this._skHg && !x.mode) || SK_HGROUPS[0];
       const tile = (t) => (t ? `<div class="sk-tiles sk-housetiles">${t}</div>` : "");
       const page = {
         lights: [P.lights],
         clean: [P.vac, tile(crew && crew.washer && crew.washer.entity ? this._skWasherTile(crew.washer) : "")],
         pets: [P.litter, P.sit],
-        server: [P.nas, tile(tl.find((x) => /data-sheet="notifications"/.test(x)) || "")],
-      }[g.key];
+      }[g.key] || [P.lights];
       return this._skTitle(g.name) + page.filter(Boolean).join("");
     }
     /* The vacuum is the tallest thing in the house, so it gets a column of
@@ -944,7 +934,9 @@ Object.assign(PurdySkyCard.prototype, {
       perf: () => `<div class="sk-card sk-pad sk-shellpage">${this._syPerf(s)}</div>`,
       alerts: () => `<div class="sk-card sk-pad sk-shellpage">${this._syAlerts(s)}</div>`,
     }[page.key];
-    return `<button class="sk-back" type="button" data-skback="1"><ha-icon icon="mdi:chevron-left"></ha-icon>House</button>
+    /* The back link names where it goes: on the phone, the tab you came from. */
+    const backTo = this._skHas("tab") ? "House" : ((SK_TABS.find((t) => t.key === (this._skTab || "home")) || SK_TABS[0]).name);
+    return `<button class="sk-back" type="button" data-skback="1"><ha-icon icon="mdi:chevron-left"></ha-icon>${psEsc(backTo)}</button>
       ${this._skTitle(s.name || "Server", `<span class="sk-status big ${online ? "good" : "bad"}">${online ? `Up ${psEsc(up && up !== "unknown" ? up : "")}` : r.ok ? psEsc(String(r.st.state)) : "No data"}</span>`)}
       ${tabs}${body ? (this._skHas("tab") ? `<div class="sk-sysbody pg-${psEsc(page.key)}">${body()}</div>` : body()) : ""}`;
   },

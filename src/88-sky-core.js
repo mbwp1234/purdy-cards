@@ -52,10 +52,11 @@ const SK_HGROUPS = [
   { key: "lights", name: "Lights", icon: "mdi:lightbulb-outline", c: "var(--sk-lamp)", dx: -163, dy: -83 },
   { key: "clean", name: "Cleaning", icon: "mdi:robot-vacuum", c: "var(--ps-good)", dx: -133, dy: -157 },
   { key: "pets", name: "Pets", icon: "mdi:cat", c: "var(--sk-litter)", dx: -72, dy: -208 },
-  { key: "server", name: "Server", icon: "mdi:server", c: "var(--sk-nas)", dx: 6, dy: -225 },
+  /* Server is not a House page: it opens the PurdyNAS page itself. */
+  { key: "server", name: "Server", icon: "mdi:server", c: "var(--sk-nas)", dx: 6, dy: -225, mode: "systems" },
 ];
 /* Which page a card lives on, so a Home tile lands on the right one. */
-const SK_HGROUP_OF = { "sk-c-lights": "lights", "sk-c-crew": "clean", "sk-c-washer": "clean", "sk-c-litter": "pets", "sk-c-sitter": "pets", "sk-c-nas": "server" };
+const SK_HGROUP_OF = { "sk-c-lights": "lights", "sk-c-crew": "clean", "sk-c-washer": "clean", "sk-c-litter": "pets", "sk-c-sitter": "pets" };
 
 /* Which tab a section belongs to — a collapsed section on Home opens its tab
    rather than expanding in place. */
@@ -221,7 +222,7 @@ class PurdySkyCard extends PurdyShellCard {
         <section class="sk-view" data-v="house"><div class="sk-stack" id="sk-house"></div></section>
         <section class="sk-view sk-sys" data-v="sys"><div class="sk-stack" id="sk-sys"></div></section>
         <footer class="sk-foot" id="sk-foot"><div class="sk-brand" id="sk-brand"></div><div class="sk-mini" id="sk-mini"></div><button class="sk-fanx" type="button" data-skfanx="1" tabindex="-1" aria-label="Close"></button><nav class="sk-dock" id="sk-dock" aria-label="Tabs"></nav><div class="sk-fan" id="sk-fan">${
-          SK_HGROUPS.map((g, n) => `<button class="sk-fanb" type="button" data-skhg="${g.key}" style="--c:${g.c};--dx:${g.dx}px;--dy:${g.dy}px;--d:${n}" tabindex="-1"><span class="orb"><span class="sk-ico"><ha-icon icon="${g.icon}"></ha-icon></span></span><span class="sk-fanl">${g.name}</span></button>`).join("")}</div></footer>
+          SK_HGROUPS.map((g, n) => `<button class="sk-fanb" type="button" ${g.mode ? `data-skmode="${g.mode}"` : `data-skhg="${g.key}"`} style="--c:${g.c};--dx:${g.dx}px;--dy:${g.dy}px;--d:${n}" tabindex="-1"><span class="orb"><span class="sk-ico"><ha-icon icon="${g.icon}"></ha-icon></span></span><span class="sk-fanl">${g.name}</span></button>`).join("")}</div></footer>
       </div>
       <div id="ps-sheetslot"></div>`;
     this._mounted = true;
@@ -1281,6 +1282,9 @@ class PurdySkyCard extends PurdyShellCard {
     }));
     this._each("[data-skback]", (el) => el.addEventListener("click", (e) => {
       e.stopPropagation();
+      /* On the phone PurdyNAS is reached from a Home tile or the fan, and
+         House has no NAS card to land on: back goes to the tab you were on. */
+      if (!this._skHas("tab")) { this._skGo(this._skTab || "home"); return; }
       this._skGo("house", { to: "sk-c-nas" });
     }));
     this._each("[data-skbell]", (el) => el.addEventListener("click", (e) => {
