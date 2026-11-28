@@ -382,9 +382,11 @@ Object.assign(PurdySkyCard.prototype, {
   /* ============================================================ WEATHER === */
 
   /* The week as capsules on one shared scale: the shape before any number. */
-  _skWeekRail() {
+  /* `rowsIn` draws another set of days on the same rail — the weather sheet's
+     Past tab hands it the measured record. */
+  _skWeekRail(rowsIn) {
     const sec = this._weatherSection();
-    const rows = (this._wxFc || []).slice(0, (sec && sec.days) || 7);
+    const rows = rowsIn || (this._wxFc || []).slice(0, (sec && sec.days) || 7);
     if (!rows.length) return `<div class="sk-empty">${this._wxFcErr ? "The forecast would not load" : "Reading the forecast…"}</div>`;
     const W = 340, H = 196, top = 22, bot = 148;
     const vals = rows.flatMap((d) => [d.lo, d.hi]).filter((v) => v != null);
